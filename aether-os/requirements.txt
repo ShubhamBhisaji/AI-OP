@@ -1,0 +1,21 @@
+# Aether AI Operating System — Python dependencies
+# Install with: pip install -r requirements.txt
+
+# ── Core AI providers ──────────────────────────────────────────────────
+# Uncomment the providers you want to use.
+
+openai>=1.30.0                 # OpenAI GPT-4o, GPT-4, etc.
+anthropic>=0.25.0              # Anthropic Claude 3.x
+google-generativeai>=0.5.0     # Google Gemini
+ollama>=0.1.8                  # Ollama (local LLMs)
+huggingface-hub>=0.22.0        # HuggingFace Inference API
+
+# ── Optional LLM frameworks ────────────────────────────────────────────
+# langchain>=0.2.0
+# langchain-openai>=0.1.0
+# crewai>=0.28.0
+# langgraph>=0.0.40
+
+# ── Utilities ─────────────────────────────────────────────────────────
+python-dotenv>=1.0.0           # Load .env files for API keys
+pyyaml>=6.0.1                  # Parse YAML agent configs
