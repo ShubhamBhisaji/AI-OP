@@ -1,0 +1,16 @@
+{
+  "recommendations": [
+    "github.copilot",
+    "github.copilot-chat",
+    "ms-python.python",
+    "ms-python.debugpy",
+    "ms-python.vscode-pylance",
+    "ms-python.black-formatter",
+    "charliermarsh.ruff",
+    "njpwerner.autodocstring",
+    "usernamehw.errorlens",
+    "streetsidesoftware.code-spell-checker",
+    "tamasfe.even-better-toml",
+    "redhat.vscode-yaml"
+  ]
+}

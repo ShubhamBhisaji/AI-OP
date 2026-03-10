@@ -1,0 +1,15 @@
+{
+  "id": "9cf3cfba-9651-4e62-acf6-489a46174143",
+  "name": "astroapp1",
+  "role": "astrology",
+  "tools": [],
+  "skills": [],
+  "performance": {
+    "tasks_completed": 0,
+    "tasks_failed": 0,
+    "success_rate": 0.0
+  },
+  "version": "1.0.0",
+  "created_at": "2026-03-10T06:45:39.775816",
+  "history": []
+}
