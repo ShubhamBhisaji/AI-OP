@@ -76,6 +76,16 @@ class AIAdapter:
         }
         return dispatch[self.provider](messages, **kwargs)
 
+    async def async_chat(self, messages: list[dict[str, str]], **kwargs) -> str:
+        """
+        Async wrapper for chat() — runs the blocking call in a thread pool
+        so the asyncio event loop is never blocked by a slow network request.
+        (Fix 2 — Asynchronous Execution)
+        """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.chat(messages, **kwargs))
+
     def switch(self, provider: str, model: str | None = None) -> None:
         """Hot-swap to a different AI provider without recreating the adapter."""
         provider = provider.lower()

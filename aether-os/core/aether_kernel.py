@@ -18,6 +18,7 @@ from core.orchestrator import Orchestrator
 from tools.tool_manager import ToolManager
 from ai.ai_adapter import AIAdapter
 from memory.memory_manager import MemoryManager
+from utils.json_parser import extract_json, ParseError
 
 logging.basicConfig(level=logging.INFO, format="[Aether] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -60,10 +61,10 @@ class AetherKernel:
     # Agent management
     # ------------------------------------------------------------------
 
-    def create_agent(self, name: str, role: str, tools: list[str] | None = None) -> BaseAgent:
+    def create_agent(self, name: str, role: str, tools: list[str] | None = None, permission_level: int = 1) -> BaseAgent:
         """Create a new agent and register it (fast path, no AI research)."""
-        agent = self.factory.create(name=name, role=role, tools=tools or [])
-        logger.info("Agent '%s' created with role: %s", name, role)
+        agent = self.factory.create(name=name, role=role, tools=tools or [], permission_level=permission_level)
+        logger.info("Agent '%s' created with role: %s, permission_level: %d", name, role, permission_level)
         return agent
 
     def build_agent(
@@ -72,6 +73,7 @@ class AetherKernel:
         role: str,
         context: str = "",
         progress=None,
+        permission_level: int = 1,
     ) -> BaseAgent:
         """
         Smart agent builder — three-step AI research pipeline:
@@ -81,7 +83,6 @@ class AetherKernel:
 
         Returns the fully configured BaseAgent (registered in the registry).
         """
-        import json, re
         from factory.agent_factory import AGENT_PRESETS
 
         def _prog(step: int, total: int, msg: str) -> None:
@@ -124,14 +125,8 @@ class AetherKernel:
             f"- Only include tools this agent genuinely needs"
         )
         skills_raw = self.ai_adapter.chat([{"role": "user", "content": skills_prompt}])
-        skills_clean = re.sub(r"```(?:json)?|```", "", skills_raw).strip()
-        sm = re.search(r"\{.*\}", skills_clean, re.DOTALL)
-        skills_data: dict = {}
-        if sm:
-            try:
-                skills_data = json.loads(sm.group())
-            except json.JSONDecodeError:
-                pass
+        # Fix 3 — use robust structured JSON parser instead of fragile regex
+        skills_data: dict = extract_json(skills_raw, safe=True, default={})
 
         skills: list[str] = [str(s) for s in skills_data.get("skills", [])]
         tools:  list[str] = [str(t) for t in skills_data.get("tools",  [])]
@@ -163,7 +158,7 @@ class AetherKernel:
         instructions = self.ai_adapter.chat([{"role": "user", "content": instr_prompt}])
 
         # ── Build and register the agent ─────────────────────────────
-        agent = self.factory.create(name=name, role=role, tools=tools, skills=skills)
+        agent = self.factory.create(name=name, role=role, tools=tools, skills=skills, permission_level=permission_level)
         agent.profile["instructions"]     = instructions
         agent.profile["research_summary"] = research[:600]
         self.registry.register(agent)   # persist updated profile
@@ -274,7 +269,7 @@ class AetherKernel:
         progress(step, total, message) — optional progress callback.
         Returns dict with 'system_name', 'agents', 'manifest_path', 'error'.
         """
-        import json, re
+        import json
         from datetime import datetime
 
         def _prog(step: int, total: int, msg: str) -> None:
@@ -329,14 +324,11 @@ class AetherKernel:
             f"- Together they must cover ALL aspects of: {description}\n"
         )
         raw = self.ai_adapter.chat(messages=[{"role": "user", "content": roster_prompt}])
-        raw_clean = re.sub(r"```(?:json)?|```", "", raw).strip()
-        m = re.search(r"\{.*\}", raw_clean, re.DOTALL)
-        if not m:
-            return {"error": "AI did not return valid JSON for agent roster.", "raw": raw}
+        # Fix 3 — robust JSON parsing instead of regex
         try:
-            blueprint = json.loads(m.group())
-        except json.JSONDecodeError as e:
-            return {"error": f"JSON parse error: {e}", "raw": raw}
+            blueprint = extract_json(raw)
+        except ParseError as e:
+            return {"error": f"AI did not return valid JSON for agent roster: {e}", "raw": raw}
 
         agent_defs = blueprint.get("agents", [])
         if len(agent_defs) < 3:
@@ -400,16 +392,10 @@ class AetherKernel:
             skills_raw = self.ai_adapter.chat(
                 messages=[{"role": "user", "content": skills_prompt}]
             )
-            skills_clean = re.sub(r"```(?:json)?|```", "", skills_raw).strip()
-            sm = re.search(r"\{.*\}", skills_clean, re.DOTALL)
-            skills_data: dict = {}
-            if sm:
-                try:
-                    skills_data = json.loads(sm.group())
-                except json.JSONDecodeError:
-                    pass
-            askills = [str(s) for s in skills_data.get("skills", [])]
-            atools  = [str(t) for t in skills_data.get("tools",  [])]
+            # Fix 3 — robust JSON parsing
+            skills_data_a: dict = extract_json(skills_raw, safe=True, default={})
+            askills = [str(s) for s in skills_data_a.get("skills", [])]
+            atools  = [str(t) for t in skills_data_a.get("tools",  [])]
 
             # ── 3c: Write instructions (system prompt) ────────────────
             _next(f"[{aname}] Writing instructions...")
@@ -510,7 +496,7 @@ class AetherKernel:
         as its system prompt.
         Returns dict with 'output', 'agents_used', 'error'.
         """
-        import json, re
+        import json
 
         # Load manifest
         manifest_path = self._systems_dir() / f"{system_name}.json"
@@ -539,15 +525,9 @@ class AetherKernel:
         routing_raw = self.ai_adapter.chat(
             messages=[{"role": "user", "content": routing_prompt}]
         )
-        routing_clean = re.sub(r"```(?:json)?|```", "", routing_raw).strip()
-        rm = re.search(r"\{.*\}", routing_clean, re.DOTALL)
-        if rm:
-            try:
-                routing = json.loads(rm.group())
-            except json.JSONDecodeError:
-                routing = {"agents": [agents_info[0]["name"]], "strategy": "single"}
-        else:
-            routing = {"agents": [agents_info[0]["name"]], "strategy": "single"}
+        # Fix 3 — robust JSON parsing
+        routing = extract_json(routing_raw, safe=True,
+                               default={"agents": [agents_info[0]["name"]] if agents_info else [], "strategy": "single"})
 
         selected_names = routing.get("agents", [])
         strategy = routing.get("strategy", "single")

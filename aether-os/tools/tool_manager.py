@@ -1,6 +1,22 @@
 """
 ToolManager — Central registry for all tools available to Aether agents.
 Tools are callable functions that agents can invoke during task execution.
+
+RBAC (Fix 6)
+------------
+Each tool has a minimum *permission level* (0–3).  Agents carry a
+`permission_level` in their profile.  A tool call is rejected if the
+agent's level is lower than the tool's required level.
+
+Levels
+------
+  0 — GUEST      : read-only, safe utilities only
+  1 — STANDARD   : file reading, web search, analysis
+  2 — ELEVATED   : file writing, code analysis, local files
+  3 — ADMIN      : code runner, terminal, security tool
+
+Additionally, DESTRUCTIVE and HIGH_RISK tools (see security.approval_gate)
+require interactive human approval before they execute (Fix 1).
 """
 
 from __future__ import annotations
@@ -8,13 +24,65 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from security.approval_gate import ALL_GUARDED_TOOLS, ApprovalGate
+
 logger = logging.getLogger(__name__)
+
+# ── Minimum permission level required to call each tool ──────────────────────
+# (0=guest, 1=standard, 2=elevated, 3=admin)
+TOOL_PERMISSIONS: dict[str, int] = {
+    # Level 0 — safe utilities
+    "calculator":       0,
+    "datetime_tool":    0,
+    "hash_tool":        0,
+    "base64_tool":      0,
+    "regex_tool":       0,
+    "text_analyzer":    0,
+    "json_tool":        0,
+    "markdown_tool":    0,
+    "url_tool":         0,
+    "template_tool":    0,
+    "diff_tool":        0,
+    # Level 1 — standard operations (network + read)
+    "web_search":       1,
+    "http_client":      1,
+    "browser_tool":     1,
+    "file_reader":      1,
+    "directory_scanner":1,
+    "csv_tool":         1,
+    "note_taker":       1,
+    "analytics_tool":   1,
+    "system_info":      1,
+    # Level 2 — elevated (writes + code inspection)
+    "file_writer":      2,
+    "local_file_tool":  2,
+    "code_analyzer":    2,
+    "code_search":      2,
+    "linter_tool":      2,
+    "code_formatter":   2,
+    "pdf_tool":         2,
+    "media_tool":       2,
+    # Level 3 — admin only
+    "code_runner":      3,
+    "terminal_tool":    3,
+    "security_tool":    3,
+}
+
+# Default level for any tool not listed above
+_DEFAULT_TOOL_PERMISSION = 1
+
+
+class PermissionDenied(PermissionError):
+    """Raised when an agent lacks the permission level for a tool."""
 
 
 class ToolManager:
     """
     Registers and provides tools to agents.
     Tools are plain Python callables: fn(input: str) -> str.
+
+    All calls go through RBAC permission checks (Fix 6).
+    Destructive/high-risk tool calls go through the ApprovalGate (Fix 1).
     """
 
     def __init__(self):
@@ -31,10 +99,41 @@ class ToolManager:
     def has(self, name: str) -> bool:
         return name in self._tools
 
-    def call(self, name: str, *args, **kwargs) -> Any:
+    def call(self, name: str, *args, agent_name: str = "unknown", agent_level: int = 1, **kwargs) -> Any:
+        """
+        Invoke a tool by name, enforcing RBAC and approval gate.
+
+        Parameters
+        ----------
+        name         : Registered tool name.
+        *args        : Positional arguments forwarded to the tool function.
+        agent_name   : Name of the calling agent (for audit logs and approval prompt).
+        agent_level  : Agent's integer permission level (0-3).
+        **kwargs     : Keyword arguments forwarded to the tool function.
+        """
         fn = self._tools.get(name)
         if fn is None:
             raise KeyError(f"Tool '{name}' is not registered.")
+
+        # ── RBAC check ────────────────────────────────────────────────
+        required = TOOL_PERMISSIONS.get(name, _DEFAULT_TOOL_PERMISSION)
+        if agent_level < required:
+            raise PermissionDenied(
+                f"Agent '{agent_name}' (level {agent_level}) cannot use '{name}' "
+                f"(requires level {required})."
+            )
+
+        # ── Approval gate for destructive / high-risk tools ───────────
+        if name in ALL_GUARDED_TOOLS:
+            arg_parts = [repr(a)[:80] for a in args]
+            kwarg_parts = [f"{k}={repr(v)[:60]}" for k, v in kwargs.items()]
+            args_summary = ", ".join(arg_parts + kwarg_parts) or "(no args)"
+            ApprovalGate.request(
+                tool_name=name,
+                agent_name=agent_name,
+                args_summary=args_summary,
+            )
+
         return fn(*args, **kwargs)
 
     def list_tools(self) -> list[str]:

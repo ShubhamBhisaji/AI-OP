@@ -74,12 +74,14 @@ class AgentFactory:
         role: str | None = None,
         tools: list[str] | None = None,
         skills: list[str] | None = None,
+        permission_level: int = 1,
     ) -> BaseAgent:
         """
         Create an agent.
 
         If `name` matches a preset key, preset defaults are used unless
         overridden by explicit `role`, `tools`, or `skills` arguments.
+        `permission_level` sets the agent's RBAC level (0–3, default 1).
         """
         preset = AGENT_PRESETS.get(name, {})
         resolved_role = role or preset.get("role", name.replace("_", " ").title())
@@ -93,22 +95,32 @@ class AgentFactory:
                     "Tool '%s' requested by agent '%s' is not registered in ToolManager.", tool, name
                 )
 
-        agent = BaseAgent(name=name, role=resolved_role, tools=resolved_tools, skills=resolved_skills)
+        agent = BaseAgent(
+            name=name,
+            role=resolved_role,
+            tools=resolved_tools,
+            skills=resolved_skills,
+            permission_level=permission_level,
+        )
         self.registry.register(agent)
-        logger.info("AgentFactory: created and registered agent '%s' (%s).", name, resolved_role)
+        logger.info(
+            "AgentFactory: created and registered agent '%s' (%s) level=%d.",
+            name, resolved_role, permission_level,
+        )
         return agent
 
     def create_from_config(self, config: dict[str, Any]) -> BaseAgent:
         """
         Create an agent from a configuration dict (e.g. parsed from JSON/YAML).
 
-        Expected keys: name, role, tools (list), skills (list)
+        Expected keys: name, role, tools (list), skills (list), permission_level (int)
         """
         name = config["name"]
         role = config.get("role")
         tools = config.get("tools", [])
         skills = config.get("skills", [])
-        return self.create(name=name, role=role, tools=tools, skills=skills)
+        permission_level = int(config.get("permission_level", 1))
+        return self.create(name=name, role=role, tools=tools, skills=skills, permission_level=permission_level)
 
     @staticmethod
     def list_presets() -> list[str]:
