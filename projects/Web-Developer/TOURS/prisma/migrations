@@ -1,0 +1,139 @@
+-- Create the 'User' table
+CREATE TABLE "User" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "name" TEXT,
+    "email" TEXT NOT NULL UNIQUE,
+    "emailVerified" TIMESTAMP(3),
+    "image" TEXT,
+    "hashedPassword" TEXT,
+    "bio" TEXT,
+    "socialMediaLinks" JSONB,
+    "travelGoals" TEXT,
+    "pastTrips" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create the 'Account' table for authentication
+CREATE TABLE "Account" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "provider" TEXT NOT NULL,
+    "providerAccountId" TEXT NOT NULL,
+    "refresh_token" TEXT,
+    "access_token" TEXT,
+    "expires_at" INTEGER,
+    "token_type" TEXT,
+    "scope" TEXT,
+    "id_token" TEXT,
+    "session_state" TEXT,
+    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE
+);
+
+-- Create the 'Session' table for authentication
+CREATE TABLE "Session" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "sessionToken" TEXT NOT NULL UNIQUE,
+    "userId" TEXT NOT NULL,
+    "expires" TIMESTAMP(3) NOT NULL,
+    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE
+);
+
+-- Create the 'VerificationToken' table for email verification
+CREATE TABLE "VerificationToken" (
+    "identifier" TEXT NOT NULL,
+    "token" TEXT NOT NULL UNIQUE,
+    "expires" TIMESTAMP(3) NOT NULL,
+    PRIMARY KEY ("identifier", "token")
+);
+
+-- Create the 'Category' table
+CREATE TABLE "Category" (
+    "id" SERIAL PRIMARY KEY,
+    "name" TEXT NOT NULL UNIQUE,
+    "slug" TEXT NOT NULL UNIQUE
+);
+
+-- Create the 'Tag' table
+CREATE TABLE "Tag" (
+    "id" SERIAL PRIMARY KEY,
+    "name" TEXT NOT NULL UNIQUE,
+    "slug" TEXT NOT NULL UNIQUE
+);
+
+-- Create the 'Post' table
+CREATE TABLE "Post" (
+    "id" SERIAL PRIMARY KEY,
+    "title" TEXT NOT NULL,
+    "slug" TEXT NOT NULL UNIQUE,
+    "content" TEXT NOT NULL,
+    "excerpt" TEXT,
+    "published" BOOLEAN NOT NULL DEFAULT FALSE,
+    "authorId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "categoryId" INTEGER,
+    "reportedCount" INTEGER DEFAULT 0,
+    FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("categoryId") REFERENCES "Category"("id") ON DELETE SET NULL
+);
+
+-- Create the junction table for Post and Tag relationship (many-to-many)
+CREATE TABLE "_Post_tags" (
+    "A" INTEGER NOT NULL,
+    "B" INTEGER NOT NULL,
+    FOREIGN KEY ("A") REFERENCES "Post"("id") ON DELETE CASCADE,
+    FOREIGN KEY ("B") REFERENCES "Tag"("id") ON DELETE CASCADE,
+    UNIQUE ("A", "B")
+);
+
+-- Create index for the junction table
+CREATE INDEX "_Post_tags_B_index" ON "_Post_tags"("B");
+
+-- Create index for email verification token
+CREATE INDEX "VerificationToken_token_idx" ON "VerificationToken"("token");
+
+-- Create index for user email
+CREATE INDEX "User_email_idx" ON "User"("email");
+
+-- Create index for account provider and providerAccountId
+CREATE INDEX "Account_provider_providerAccountId_idx" ON "Account"("provider", "providerAccountId");
+
+-- Create index for session sessionToken
+CREATE INDEX "Session_sessionToken_idx" ON "Session"("sessionToken");
+
+-- Create index for post slug
+CREATE INDEX "Post_slug_idx" ON "Post"("slug");
+
+-- Create index for post categoryId
+CREATE INDEX "Post_categoryId_idx" ON "Post"("categoryId");
+
+-- Create index for post authorId
+CREATE INDEX "Post_authorId_idx" ON "Post"("authorId");
+
+-- Create index for category slug
+CREATE INDEX "Category_slug_idx" ON "Category"("slug");
+
+-- Create index for tag slug
+CREATE INDEX "Tag_slug_idx" ON "Tag"("slug");
+
+-- Add a trigger to update 'updatedAt' timestamp for User table
+CREATE OR REPLACE FUNCTION trigger_set_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updatedAt = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER set_timestamp
+BEFORE UPDATE ON "User"
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+-- Add a trigger to update 'updatedAt' timestamp for Post table
+CREATE TRIGGER set_timestamp_post
+BEFORE UPDATE ON "Post"
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();

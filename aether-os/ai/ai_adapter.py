@@ -20,22 +20,21 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_PROVIDERS = ("github", "openai", "claude", "gemini", "ollama", "huggingface")
 
-# GitHub Models endpoint — free with any GitHub account, higher limits with Copilot Pro
+# GitHub Models REST endpoint (models.inference.ai.azure.com)
+# Works with any GitHub PAT — free tier, no Copilot subscription needed.
 _GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com"
 
-# Models available via GitHub token (Copilot Pro — as shown in VS Code model picker)
+# Confirmed working model IDs on the GitHub Models REST API (tested March 2026)
+# NOTE: The GitHub Copilot Chat models (Claude, GPT-5.x, Gemini) listed at
+# docs.github.com/en/copilot/reference/ai-models/model-comparison are only
+# available through the Copilot Chat interface (VS Code etc.), NOT the REST API.
 _GITHUB_MODELS = [
-    # OpenAI
-    "gpt-5.4",
-    "gpt-5.3-codex",
-    # Anthropic
-    "claude-opus-4-6",
-    "claude-sonnet-4-6",        # default — best balance of speed & quality
-    "claude-opus-4-5",
-    "claude-sonnet-4",
-    "claude-haiku-4-5",
-    # Google
-    "gemini-3-pro",
+    # Free on all plans (multiplier: 0) — confirmed via REST API
+    "gpt-4.1",          # best general-purpose, default
+    "gpt-5-mini",       # GPT-5 mini — free tier, fast
+    "gpt-4o",           # reliable baseline
+    "gpt-4o-mini",      # fastest / cheapest
+    "gpt-4.1-mini",     # lighter gpt-4.1 variant
 ]
 
 
@@ -87,20 +86,125 @@ class AIAdapter:
         logger.info("AIAdapter switched: provider=%s model=%s", self.provider, self.model)
 
     # ------------------------------------------------------------------
+    # Shared OpenAI-compatible REST helper (no SDK)
+    # ------------------------------------------------------------------
+
+    def _openai_compat_chat(
+        self,
+        endpoint: str,
+        api_key: str,
+        messages: list[dict],
+        **kwargs,
+    ) -> str:
+        """POST to any OpenAI-compatible /chat/completions endpoint using stdlib urllib.
+        Auto-retries with gpt-4o if the configured model is not available on the endpoint.
+        """
+        import json as _json
+        import urllib.request
+        import urllib.error
+
+        # GitHub Models fallback order — confirmed working with standard PAT
+        _GITHUB_FALLBACKS = [
+            "gpt-4.1",      # best general-purpose, free tier
+            "gpt-5-mini",   # GPT-5 mini, free tier
+            "gpt-4o",       # reliable baseline
+            "gpt-4o-mini",  # lightest option
+            "gpt-4.1-mini",
+        ]
+
+        def _do_request(model_name: str) -> str:
+            payload: dict = {"model": model_name, "messages": messages}
+            for k, v in kwargs.items():
+                if k == "stream":
+                    continue
+                payload[k] = v
+            body = _json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                endpoint,
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+            return data["choices"][0]["message"]["content"] or ""
+
+        # First attempt with the currently configured model
+        import time as _time
+        _MAX_RATE_RETRIES = 3
+        _rate_attempt = 0
+
+        while True:
+            try:
+                return _do_request(self.model)
+            except urllib.error.HTTPError as exc:
+                try:
+                    detail = _json.loads(exc.read().decode("utf-8"))
+                except Exception:
+                    detail = {}
+                err_code = detail.get("error", {}).get("code", "")
+                err_msg  = detail.get("error", {}).get("message", str(exc))
+
+                # Auto-wait and retry on 429 rate limit (up to 3 times)
+                if exc.code == 429:
+                    _rate_attempt += 1
+                    if _rate_attempt <= _MAX_RATE_RETRIES:
+                        # Try to read Retry-After header, else default 65s
+                        _wait = 65
+                        try:
+                            _wait = int(exc.headers.get("Retry-After", 65)) + 2
+                        except Exception:
+                            pass
+                        print(f"\n  ⏳ Rate limit hit — waiting {_wait}s before retry "
+                              f"({_rate_attempt}/{_MAX_RATE_RETRIES})...")
+                        _time.sleep(_wait)
+                        continue  # retry the while loop
+                    raise RuntimeError(
+                        f"API error (429): {err_msg} — rate limit persists after "
+                        f"{_MAX_RATE_RETRIES} retries."
+                    ) from exc
+
+                # If model not found, walk the fallback list and retry
+                if exc.code == 400 and err_code == "unknown_model":
+                    tried = {self.model}
+                    for fallback in _GITHUB_FALLBACKS:
+                        if fallback in tried:
+                            continue
+                        tried.add(fallback)
+                        try:
+                            result = _do_request(fallback)
+                            # Persist the working model so future calls use it directly
+                            import logging as _log
+                            _log.getLogger(__name__).info(
+                                "Model '%s' not available, switched to '%s'",
+                                self.model, fallback
+                            )
+                            self.model = fallback
+                            return result
+                        except urllib.error.HTTPError:
+                            continue
+                    raise RuntimeError(
+                        f"API error ({exc.code}): {err_msg} "
+                        f"(tried: {', '.join(tried)})"
+                    ) from exc
+
+                raise RuntimeError(f"API error ({exc.code}): {err_msg}") from exc
+            except Exception as exc:
+                raise RuntimeError(f"API error: {exc}") from exc
+
+    # ------------------------------------------------------------------
     # Provider implementations
     # ------------------------------------------------------------------
 
     def _chat_github(self, messages: list[dict], **kwargs) -> str:
         """
         GitHub Models — free AI access using a GitHub Personal Access Token.
-        Supports: gpt-4o, gpt-4o-mini, Meta-Llama-3.1-70B-Instruct,
-                  Phi-3.5-MoE-instruct, Mistral-large, Cohere-command-r+, and more.
+        Uses stdlib urllib — no openai SDK required.
         Get your free token at: https://github.com/settings/tokens
         """
-        try:
-            from openai import OpenAI  # type: ignore
-        except ImportError:
-            raise ImportError("Install openai: pip install openai")
         token = os.environ.get("GITHUB_TOKEN")
         if not token:
             raise EnvironmentError(
@@ -108,32 +212,23 @@ class AIAdapter:
                 "Get a free token at https://github.com/settings/tokens\n"
                 "Then add GITHUB_TOKEN=<token> to your .env file."
             )
-        client = OpenAI(
-            base_url=_GITHUB_MODELS_ENDPOINT,
+        return self._openai_compat_chat(
+            endpoint=f"{_GITHUB_MODELS_ENDPOINT}/chat/completions",
             api_key=token,
-        )
-        response = client.chat.completions.create(
-            model=self.model,
             messages=messages,
             **kwargs,
         )
-        return response.choices[0].message.content or ""
 
     def _chat_openai(self, messages: list[dict], **kwargs) -> str:
-        try:
-            from openai import OpenAI  # type: ignore
-        except ImportError:
-            raise ImportError("Install openai: pip install openai")
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY environment variable not set.")
-        client = OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model=self.model,
+        return self._openai_compat_chat(
+            endpoint="https://api.openai.com/v1/chat/completions",
+            api_key=api_key,
             messages=messages,
             **kwargs,
         )
-        return response.choices[0].message.content or ""
 
     def _chat_claude(self, messages: list[dict], **kwargs) -> str:
         try:
@@ -159,19 +254,61 @@ class AIAdapter:
         return response.content[0].text if response.content else ""
 
     def _chat_gemini(self, messages: list[dict], **kwargs) -> str:
-        try:
-            import google.generativeai as genai  # type: ignore
-        except ImportError:
-            raise ImportError("Install google-generativeai: pip install google-generativeai")
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            raise EnvironmentError("GEMINI_API_KEY environment variable not set.")
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(self.model)
-        # Flatten messages to a single prompt for simplicity
-        prompt = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages)
-        response = model.generate_content(prompt)
-        return response.text or ""
+            raise EnvironmentError(
+                "GEMINI_API_KEY not set.\n"
+                "Get a free key at https://aistudio.google.com/apikey\n"
+                "Then add GEMINI_API_KEY=<key> to your .env file."
+            )
+
+        # Convert messages → Gemini REST format
+        # {"contents": [{"role": "user"|"model", "parts": [{"text": "..."}]}]}
+        contents = []
+        system_instruction: str | None = None
+        for m in messages:
+            role = m["role"]
+            if role == "system":
+                system_instruction = m["content"]
+                continue
+            gemini_role = "model" if role == "assistant" else "user"
+            contents.append({"role": gemini_role, "parts": [{"text": m["content"]}]})
+
+        payload: dict = {"contents": contents}
+        if system_instruction:
+            payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
+
+        # Direct REST API using stdlib urllib — no extra packages needed.
+        # POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=KEY
+        endpoint = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.model}:generateContent?key={api_key}"
+        )
+
+        import json as _json
+        import urllib.request
+        import urllib.error
+
+        body = _json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = _json.loads(exc.read().decode("utf-8"))
+                msg = detail.get("error", {}).get("message", str(exc))
+            except Exception:
+                msg = str(exc)
+            raise RuntimeError(f"Gemini API error ({exc.code}): {msg}") from exc
+        except Exception as exc:
+            raise RuntimeError(f"Gemini API error: {exc}") from exc
 
     def _chat_ollama(self, messages: list[dict], **kwargs) -> str:
         try:
@@ -199,11 +336,24 @@ class AIAdapter:
     @staticmethod
     def _default_model(provider: str) -> str:
         defaults = {
-            "github": "claude-sonnet-4-6",   # best balance — 1x rate, Copilot Pro
+            "github": "gpt-4.1",              # best free-tier model on GitHub Models REST API
             "openai": "gpt-4o",
-            "claude": "claude-sonnet-4-6",
-            "gemini": "gemini-1.5-pro",
-            "ollama": "llama3",
+            "claude": "claude-sonnet-4.6",
+            "gemini": "gemini-2.5-flash-lite",
+            "ollama": "qwen2.5-coder:7b",    # top-rated local model for agentic coding
             "huggingface": "mistralai/Mistral-7B-Instruct-v0.2",
         }
         return defaults.get(provider, "unknown")
+
+    # Recommended Ollama models (shown in setup wizards)
+    OLLAMA_RECOMMENDED = [
+        ("qwen2.5-coder:7b",       "Qwen2.5-Coder 7B   — best for code/agents (8GB VRAM)"),
+        ("qwen2.5-coder:14b",      "Qwen2.5-Coder 14B  — higher quality (12GB VRAM)"),
+        ("qwen2.5-coder:32b",      "Qwen2.5-Coder 32B  — top code quality (20GB+ VRAM)"),
+        ("deepseek-coder-v2:16b",  "DeepSeek-Coder-V2 16B — Python/JS/agents (16GB VRAM)"),
+        ("qwen3:30b",              "Qwen3 30B  — 128k ctx, advanced tool calling (20GB+ VRAM)"),
+        ("minimax-m2",             "MiniMax-M2 — 1M context, state-of-art agentic (high VRAM)"),
+        ("llama3.3:70b",           "Llama 3.3 70B — general purpose, 128k ctx (40GB+ VRAM)"),
+        ("wizardlm2:7b",           "WizardLM2 7B — fast, low-resource (8GB VRAM)"),
+        ("llama3.2:3b",            "Llama 3.2 3B  — ultra-fast, minimal hardware (4GB VRAM)"),
+    ]

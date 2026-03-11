@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-900 text-gray-100 font-sans;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-bold;
+  }
+
+  a {
+    @apply text-blue-400 hover:underline;
+  }
+
+  img {
+    @apply max-w-full h-auto;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-md font-semibold;
+  }
+
+  .btn-primary {
+    @apply bg-blue-600 text-white hover:bg-blue-700;
+  }
+
+  .btn-secondary {
+    @apply bg-gray-700 text-white hover:bg-gray-800;
+  }
+
+  .card {
+    @apply bg-gray-800 rounded-lg shadow-md overflow-hidden;
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2 border border-gray-700 rounded-md bg-gray-800 text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500;
+  }
+}
+
+/* Basic styling for the rich text editor */
+.ProseMirror {
+  @apply min-h-[200px] border border-gray-700 rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-blue-500;
+  background-color: #1f2937; /* Dark background for the editor */
+  color: #e5e7eb; /* Light text color */
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3,
+.ProseMirror h4,
+.ProseMirror h5,
+.ProseMirror h6 {
+  @apply mt-6 mb-3 font-bold;
+}
+
+.ProseMirror p {
+  @apply mt-2 mb-4;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  @apply ml-6 my-4 list-disc;
+}
+
+.ProseMirror li {
+  @apply mb-2;
+}
+
+.ProseMirror a {
+  @apply text-blue-400 hover:underline;
+}
+
+.ProseMirror strong {
+  @apply font-bold;
+}
+
+.ProseMirror em {
+  @apply italic;
+}
+
+.ProseMirror code {
+  @apply font-mono bg-gray-700 px-1 py-0.5 rounded-md;
+}
+
+.ProseMirror pre {
+  @apply overflow-x-auto p-3 my-4 rounded-md;
+  background-color: #111827; /* Very dark background for code blocks */
+}
+
+.ProseMirror pre code {
+  @apply font-mono block px-0 py-0;
+  background-color: transparent;
+}
+
+.ProseMirror blockquote {
+  @apply border-l-4 border-gray-700 pl-4 italic text-gray-400 my-4;
+}
+
+.ProseMirror img {
+  @apply max-w-full h-auto my-4 rounded-md;
+}

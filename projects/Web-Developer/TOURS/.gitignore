@@ -1,0 +1,53 @@
+# Logs
+logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Directory: /dist
+dist/
+
+# Directory: /.next/
+.next/cache
+
+# Build output
+.next/
+dist/
+
+# Next.js
+.next/standalone
+
+# Node modules
+node_modules/
+
+# IDE directories
+.idea
+.vscode
+*.iml
+*.ipr
+*.iws
+
+# dotenv
+.env*.local
+
+# Editor directories and files
+.DS_Store
+.editorconfig
+*.sublime-project
+*.sublime-workspace
+
+# Prisma
+.prisma/
+
+# Cloudinary CLI logs
+.cloudinary-cli.log
+
+# NextAuth.js sessions (if using file-based sessions)
+.next-auth-sessions/

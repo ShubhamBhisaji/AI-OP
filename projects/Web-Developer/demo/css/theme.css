@@ -1,0 +1,53 @@
+```
+@custom-shop-dark {
+  --primary-color: #333;
+  --primary-text-color: #fff;
+  --background-color: #f9f9f9;
+  --text-color: #333;
+  --accent-color: #4CAF50;
+  --background-transition: all 0.3s ease-in-out;
+  --text-transition: all 0.3s ease-in-out;
+
+  @media (max-width: 768px) {
+    --background-color: #f9f9f9;
+    --text-color: #333;
+    --accent-color: #4CAF50;
+    --background-transition: all 0.2s ease-in-out;
+    --text-transition: all 0.2s ease-in-out;
+  }
+
+  @media (max-width: 480px) {
+    --text-color: #444;
+    --accent-color: #4CAF50;
+    --background-color: #f9f9f9;
+    --background-transition: all 0.1s ease-in-out;
+    --text-transition: all 0.1s ease-in-out;
+  }
+}
+
+@custom-shop-light {
+  --primary-color: #e83e8c;
+  --primary-text-color: #333;
+  --background-color: #fff;
+  --text-color: #444;
+  --accent-color: #ff9800;
+  --background-transition: all 0.3s ease-in-out;
+  --text-transition: all 0.3s ease-in-out;
+
+  @media (max-width: 768px) {
+    --background-color: #fff;
+    --text-color: #333;
+    --accent-color: #e83e8c;
+    --background-transition: all 0.2s ease-in-out;
+    --text-transition: all 0.2s ease-in-out;
+  }
+
+  @media (max-width: 480px) {
+    --text-color: #444;
+    --accent-color: #ff9800;
+    --background-color: #fff;
+    --background-transition: all 0.1s ease-in-out;
+    --text-transition: all 0.1s ease-in-out;
+  }
+}
+```
