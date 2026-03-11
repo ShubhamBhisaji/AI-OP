@@ -45,6 +45,12 @@ class AIAdapter:
     Usage:
         adapter = AIAdapter(provider="openai", model="gpt-4o")
         response = adapter.chat([{"role": "user", "content": "Hello!"}])
+
+    Token tracking (Fix 4)
+    ----------------------
+    After every OpenAI-compatible call, token usage is captured and stored
+    on the instance.  Access via `adapter.usage` or `adapter.total_tokens`.
+    Running totals are also accumulated across all calls in the session.
     """
 
     def __init__(self, provider: str = "github", model: str | None = None):
@@ -55,6 +61,17 @@ class AIAdapter:
             )
         self.provider = provider
         self.model = model or self._default_model(provider)
+        # ── Token tracking (Fix 4) ────────────────────────────────────
+        self.usage: dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        self._session_usage: dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
         logger.info("AIAdapter initialized: provider=%s model=%s", self.provider, self.model)
 
     # ------------------------------------------------------------------
@@ -140,6 +157,27 @@ class AIAdapter:
             )
             with urllib.request.urlopen(req, timeout=60) as resp:
                 data = _json.loads(resp.read().decode("utf-8"))
+
+            # ── Fix 4: capture token usage ────────────────────────────
+            raw_usage = data.get("usage") or {}
+            pt  = int(raw_usage.get("prompt_tokens",     0))
+            ct  = int(raw_usage.get("completion_tokens", 0))
+            tt  = int(raw_usage.get("total_tokens",      pt + ct))
+            self.usage = {
+                "prompt_tokens": pt,
+                "completion_tokens": ct,
+                "total_tokens": tt,
+            }
+            self._session_usage["prompt_tokens"]     += pt
+            self._session_usage["completion_tokens"] += ct
+            self._session_usage["total_tokens"]      += tt
+            if tt:
+                logger.info(
+                    "Token usage — prompt: %d, completion: %d, total: %d "
+                    "(session total: %d)",
+                    pt, ct, tt, self._session_usage["total_tokens"],
+                )
+
             return data["choices"][0]["message"]["content"] or ""
 
         # First attempt with the currently configured model
@@ -342,6 +380,19 @@ class AIAdapter:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @property
+    def total_tokens(self) -> int:
+        """Running total of tokens consumed in this session."""
+        return self._session_usage["total_tokens"]
+
+    def session_usage_summary(self) -> dict[str, int]:
+        """Return a copy of the accumulated token counts for this session."""
+        return dict(self._session_usage)
+
+    def reset_session_usage(self) -> None:
+        """Reset the session token counters to zero."""
+        self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     @staticmethod
     def _default_model(provider: str) -> str:

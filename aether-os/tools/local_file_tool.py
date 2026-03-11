@@ -4,6 +4,8 @@ delete, and scaffold files/directories anywhere on the local filesystem.
 
 All destructive actions (delete, overwrite) require the caller to pass
 confirm="yes" to prevent accidental data loss.
+
+Fix 1 — @require_approval: any agent call goes through the ApprovalGate first.
 """
 
 from __future__ import annotations
@@ -13,6 +15,8 @@ import os
 import shutil
 import stat
 from pathlib import Path
+
+from security.approval_gate import require_approval
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +29,7 @@ _BLOCKED_ROOTS = [
 ]
 
 
+@require_approval
 def local_file_tool(
     action: str,
     path: str,

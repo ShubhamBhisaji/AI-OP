@@ -53,10 +53,33 @@ class WorkflowEngine:
     Supports single-agent execution (sync + async) and sequential pipelines.
     """
 
-    def __init__(self, registry, ai_adapter, memory):
+    def __init__(self, registry, ai_adapter, memory, tool_manager=None):
         self.registry = registry
         self.ai_adapter = ai_adapter
         self.memory = memory
+        self.tool_manager = tool_manager
+
+    # ------------------------------------------------------------------
+    # RBAC-enforced tool call (Fix 3 — RBAC wiring)
+    # ------------------------------------------------------------------
+
+    def call_tool(self, agent, tool_name: str, *args, **kwargs):
+        """
+        Invoke a tool on behalf of an agent, enforcing RBAC and the
+        approval gate based on agent.permission_level.
+
+        Always prefer this helper over calling tool_manager directly so that
+        the agent's permission level is consistently applied.
+        """
+        if self.tool_manager is None:
+            raise RuntimeError("WorkflowEngine: tool_manager not wired — cannot call tools.")
+        return self.tool_manager.call(
+            tool_name,
+            *args,
+            agent_name=getattr(agent, "name", "unknown"),
+            agent_level=getattr(agent, "permission_level", 1),
+            **kwargs,
+        )
 
     # ------------------------------------------------------------------
     # Single agent execution (synchronous)

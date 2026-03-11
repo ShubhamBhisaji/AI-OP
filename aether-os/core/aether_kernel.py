@@ -46,6 +46,7 @@ class AetherKernel:
             registry=self.registry,
             ai_adapter=self.ai_adapter,
             memory=self.memory,
+            tool_manager=self.tool_manager,
         )
         self.team_manager = TeamManager(registry=self.registry)
         self.orchestrator = Orchestrator(
@@ -175,14 +176,73 @@ class AetherKernel:
         logger.info("Agent '%s' upgraded.", name)
 
     def run_agent(self, name: str, task: str) -> Any:
-        """Run a named agent on a given task."""
+        """Run a named agent on a given task and save token usage to memory."""
         agent = self.registry.get(name)
         if agent is None:
             raise KeyError(f"Agent '{name}' not found in registry.")
-        logger.info("Running agent '%s' on task: %s", name, task)
+        logger.info(
+            "Running agent '%s' (permission=%s) on task: %s",
+            name, agent.permission_level, task,
+        )
         result = self.workflow_engine.execute(agent=agent, task=task)
         self.memory.save(key=f"{name}:last_result", value=result)
+        # Persist token usage so it can be queried later
+        usage = self.ai_adapter.usage
+        if usage.get("total_tokens"):
+            self.memory.save(key=f"{name}:last_token_usage", value=usage)
+            self.memory.save(
+                key="session:total_tokens",
+                value=self.ai_adapter.total_tokens,
+            )
         return result
+
+    async def run_agent_async(self, name: str, task: str) -> Any:
+        """Non-blocking async version of run_agent."""
+        agent = self.registry.get(name)
+        if agent is None:
+            raise KeyError(f"Agent '{name}' not found in registry.")
+        logger.info(
+            "Running agent '%s' async (permission=%s) on task: %s",
+            name, agent.permission_level, task,
+        )
+        result = await self.workflow_engine.execute_async(agent=agent, task=task)
+        self.memory.save(key=f"{name}:last_result", value=result)
+        usage = self.ai_adapter.usage
+        if usage.get("total_tokens"):
+            self.memory.save(key=f"{name}:last_token_usage", value=usage)
+        return result
+
+    async def run_pipeline_async(self, agent_names: list[str], task: str) -> str:
+        """Async sequential pipeline — each agent's output feeds the next."""
+        agents = [self.registry.get(n) for n in agent_names]
+        missing = [n for n, a in zip(agent_names, agents) if a is None]
+        if missing:
+            raise KeyError(f"Agents not found: {missing}")
+        return await self.workflow_engine.run_pipeline_async(agents=agents, task=task)
+
+    async def broadcast_async(self, agent_names: list[str], task: str) -> list[dict]:
+        """Run all agents concurrently on the same task."""
+        import asyncio
+        agents = [self.registry.get(n) for n in agent_names]
+        missing = [n for n, a in zip(agent_names, agents) if a is None]
+        if missing:
+            raise KeyError(f"Agents not found: {missing}")
+        raw = await self.workflow_engine.run_broadcast_async(agents=agents, task=task)
+        return [
+            {"agent": name, "result": res}
+            for name, res in zip(agent_names, raw)
+        ]
+
+    def run_tool(self, agent_name: str, tool_name: str, *args, **kwargs) -> Any:
+        """
+        Explicit RBAC-enforced tool call from outside the workflow.
+        Useful for CLI / API endpoints that want to invoke a tool on
+        behalf of a registered agent.
+        """
+        agent = self.registry.get(agent_name)
+        if agent is None:
+            raise KeyError(f"Agent '{agent_name}' not found.")
+        return self.workflow_engine.call_tool(agent, tool_name, *args, **kwargs)
 
     def list_agents(self) -> list[str]:
         """Return a list of all registered agent names."""

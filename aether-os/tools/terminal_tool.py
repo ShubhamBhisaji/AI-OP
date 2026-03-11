@@ -2,10 +2,14 @@
 
 Only whitelisted commands are allowed. No shell injection, no destructive
 operations. Each command runs in a subprocess with a hard timeout.
+
+Fix 1 — @require_approval: any agent call goes through the ApprovalGate first.
 """
 from __future__ import annotations
 import os, re, sys, shlex, subprocess, shutil, platform, logging
 from pathlib import Path
+
+from security.approval_gate import require_approval
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +65,7 @@ _ALLOWED: dict[str, tuple[str, str | None]] = {
 }
 
 
+@require_approval
 def terminal_tool(command: str, action: str = "run", cwd: str = "") -> str:
     """
     Execute terminal commands safely within a strict allowlist.

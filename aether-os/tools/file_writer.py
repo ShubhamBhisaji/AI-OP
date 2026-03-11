@@ -1,6 +1,8 @@
 """
 file_writer — Tool that writes text content to a file on disk.
 Agents use this to save generated code, reports, or any text output.
+
+Fix 1 — @require_approval: any agent write goes through the ApprovalGate first.
 """
 
 from __future__ import annotations
@@ -9,12 +11,15 @@ import logging
 import os
 from pathlib import Path
 
+from security.approval_gate import require_approval
+
 logger = logging.getLogger(__name__)
 
 # All agent-generated files are written under this directory by default
 _OUTPUT_DIR = Path(__file__).parent.parent / "agent_output"
 
 
+@require_approval
 def file_writer(filename: str, content: str, output_dir: str | None = None) -> str:
     """
     Write `content` to a file named `filename`.

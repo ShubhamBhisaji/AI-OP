@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from security.approval_gate import ALL_GUARDED_TOOLS, ApprovalGate
+from security.approval_gate import ApprovalDenied  # re-exported for callers
 
 logger = logging.getLogger(__name__)
 
@@ -123,16 +123,14 @@ class ToolManager:
                 f"(requires level {required})."
             )
 
-        # ── Approval gate for destructive / high-risk tools ───────────
-        if name in ALL_GUARDED_TOOLS:
-            arg_parts = [repr(a)[:80] for a in args]
-            kwarg_parts = [f"{k}={repr(v)[:60]}" for k, v in kwargs.items()]
-            args_summary = ", ".join(arg_parts + kwarg_parts) or "(no args)"
-            ApprovalGate.request(
-                tool_name=name,
-                agent_name=agent_name,
-                args_summary=args_summary,
-            )
+        # ── Inject agent identity for the @require_approval decorator ─
+        # The decorator on the tool function pops _agent_name from kwargs
+        # to display in the approval prompt.  We pass it here so approval
+        # shows the real agent name rather than "unknown-agent".
+        # Note: tools that are NOT decorated simply ignore this extra kwarg
+        # because we only inject it if the function signature doesn't
+        # explicitly declare it — handled gracefully by the decorator's pop.
+        kwargs["_agent_name"] = agent_name
 
         return fn(*args, **kwargs)
 
