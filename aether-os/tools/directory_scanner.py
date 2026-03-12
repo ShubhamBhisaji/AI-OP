@@ -5,7 +5,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DANGEROUS_SEGMENTS = {"windows", "system32", "syswow64", "program files"}
+# Absolute scan sandbox — no directory listing may escape the project root (Bug 3 fix)
+_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 
 def directory_scanner(path: str = ".", action: str = "list", pattern: str = "") -> str:
@@ -29,9 +30,10 @@ def directory_scanner(path: str = ".", action: str = "list", pattern: str = "") 
     pattern = (pattern or "").strip()
     p = Path(path.strip()).resolve()
 
-    lower_parts = [seg.lower() for seg in p.parts]
-    if any(seg in _DANGEROUS_SEGMENTS for seg in lower_parts):
-        return "Error: Access to system directories is not allowed."
+    # Sandbox check — prevent scanning outside project root (Bug 3 fix)
+    _pr = str(_PROJECT_ROOT)
+    if not (str(p) == _pr or str(p).startswith(_pr + os.sep)):
+        return "❌ Security Violation: Path Traversal detected. Scanning is confined to the project directory."
 
     if not p.exists():
         return f"Error: Path not found — {p}"

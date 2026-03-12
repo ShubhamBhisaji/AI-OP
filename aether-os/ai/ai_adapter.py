@@ -12,6 +12,7 @@ Quickest start (no paid API key needed):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -72,6 +73,9 @@ class AIAdapter:
             "completion_tokens": 0,
             "total_tokens": 0,
         }
+        # Limit concurrent AI requests to 3 — prevents HTTP 429 rate-limit blowouts
+        # when many async subtasks launch simultaneously (Bug 1 fix)
+        self._semaphore = asyncio.Semaphore(3)
         logger.info("AIAdapter initialized: provider=%s model=%s", self.provider, self.model)
 
     # ------------------------------------------------------------------
@@ -97,11 +101,13 @@ class AIAdapter:
         """
         Async wrapper for chat() — runs the blocking call in a thread pool
         so the asyncio event loop is never blocked by a slow network request.
+        Rate-limited to 3 concurrent requests via _semaphore to prevent 429 errors
+        when asyncio.gather() fans out many subtasks simultaneously (Bug 1 fix).
         (Fix 2 — Asynchronous Execution)
         """
-        import asyncio
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: self.chat(messages, **kwargs))
+        async with self._semaphore:
+            return await loop.run_in_executor(None, lambda: self.chat(messages, **kwargs))
 
     def switch(self, provider: str, model: str | None = None) -> None:
         """Hot-swap to a different AI provider without recreating the adapter."""

@@ -364,7 +364,6 @@ class WorkflowEngine:
         is never blocked by a slow network call.
         """
         logger.info("WorkflowEngine[async]: executing agent '%s'", agent.name)
-        loop = asyncio.get_event_loop()
         prompt = self._build_prompt(agent=agent, task=task)
         messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
 
@@ -372,10 +371,8 @@ class WorkflowEngine:
         if len(messages) > _MAX_HISTORY_MESSAGES:
             messages = messages[:1] + messages[-(_MAX_HISTORY_MESSAGES - 1):]
 
-        # Run the blocking chat call off the main thread
-        result = await loop.run_in_executor(
-            None, lambda: self.ai_adapter.chat(messages=messages)
-        )
+        # Rate-limited async call — semaphore enforced inside async_chat (Bug 1 fix)
+        result = await self.ai_adapter.async_chat(messages=messages)
 
         if result.strip().startswith("BEYOND_SCOPE:"):
             agent.record_result(success=False)
@@ -400,9 +397,7 @@ class WorkflowEngine:
             # Prune before retry to prevent context-window blowout (Bug 1)
             if len(messages) > _MAX_HISTORY_MESSAGES:
                 messages = messages[:1] + messages[-(_MAX_HISTORY_MESSAGES - 1):]
-            result = await loop.run_in_executor(
-                None, lambda: self.ai_adapter.chat(messages=messages)
-            )
+            result = await self.ai_adapter.async_chat(messages=messages)
 
         success = not _looks_like_error(result)
         agent.record_result(success=success)

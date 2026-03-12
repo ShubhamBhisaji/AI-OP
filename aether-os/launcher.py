@@ -29,7 +29,16 @@ from tkinter import ttk
 # Place it here (module level) so it fires even before __name__ == '__main__'.
 multiprocessing.freeze_support()
 
-_PORT = 8501
+
+def find_free_port() -> int:
+    """Find an available TCP port so a stale process never blocks re-launch (Bug 4 fix)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+
+
+_PORT = find_free_port()   # dynamically assigned — never clashes with a stale instance
 _HOST = "127.0.0.1"
 _URL  = f"http://{_HOST}:{_PORT}"
 

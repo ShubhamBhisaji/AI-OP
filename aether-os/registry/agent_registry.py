@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -69,11 +70,20 @@ class AgentRegistry:
     def _save(self) -> None:
         if not self._persist:
             return
+        # Atomic write: write to .tmp then rename so an interrupted write never
+        # leaves the registry file blank or partially written (Bug 2 fix)
+        tmp = Path(str(_REGISTRY_FILE) + ".tmp")
         try:
             data = {name: agent.to_dict() for name, agent in self._agents.items()}
-            _REGISTRY_FILE.write_text(json.dumps(data, indent=2))
+            tmp.write_text(json.dumps(data, indent=2))
+            os.replace(tmp, _REGISTRY_FILE)
         except OSError as exc:
             logger.error("Failed to persist registry: %s", exc)
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
 
     def _load(self) -> None:
         try:

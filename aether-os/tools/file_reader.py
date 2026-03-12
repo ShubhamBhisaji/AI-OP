@@ -5,8 +5,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Directories the tool will refuse to escape above
-_DANGEROUS_SEGMENTS = {"windows", "system32", "syswow64", "program files"}
+# Absolute read sandbox — no read may escape the project root directory (Bug 3 fix)
+_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+# Block access to sensitive configuration files regardless of location
+_SENSITIVE_NAMES = {".env", ".env.local", ".env.production", ".env.example", "secrets.json"}
 
 def file_reader(path: str, action: str = "read", lines: str = "") -> str:
     """
@@ -29,12 +31,18 @@ def file_reader(path: str, action: str = "read", lines: str = "") -> str:
         return "Error: 'path' must be a non-empty string."
 
     action = (action or "read").strip().lower()
-    p = Path(path.strip())
+    raw = Path(path.strip())
+    # Resolve relative paths against the project root, not CWD (Bug 3 fix)
+    p = ((_PROJECT_ROOT / raw) if not raw.is_absolute() else raw).resolve()
 
-    # Basic safety check — reject paths that try to navigate dangerous system dirs
-    lower_parts = [seg.lower() for seg in p.parts]
-    if any(seg in _DANGEROUS_SEGMENTS for seg in lower_parts):
-        return "Error: Access to system directories is not allowed."
+    # Sandbox check — prevent path traversal outside project root (Bug 3 fix)
+    _pr = str(_PROJECT_ROOT)
+    if not (str(p) == _pr or str(p).startswith(_pr + os.sep)):
+        return "❌ Security Violation: Path Traversal detected. Access is confined to the project directory."
+
+    # Block sensitive configuration files regardless of location
+    if p.name.lower() in _SENSITIVE_NAMES or p.name.lower().startswith(".env"):
+        return "❌ Security Violation: Access to environment/secrets files is not allowed."
 
     if action == "exists":
         return str(p.exists())

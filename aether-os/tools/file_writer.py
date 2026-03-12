@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 # All agent-generated files are written under this directory by default
 _OUTPUT_DIR = Path(__file__).parent.parent / "agent_output"
+# Absolute write sandbox — the resolved path of every write must start here (Bug 3 fix)
+_WRITE_SANDBOX = _OUTPUT_DIR.resolve()
 
 
 @require_approval
@@ -36,13 +38,15 @@ def file_writer(filename: str, content: str, output_dir: str | None = None) -> s
     if not filename or not isinstance(filename, str):
         return "Error: filename must be a non-empty string."
 
-    # Sanitize: reject absolute paths and path traversal attempts
-    clean_name = os.path.normpath(filename)
-    if os.path.isabs(clean_name) or clean_name.startswith(".."):
-        return f"Error: invalid filename '{filename}'. Must be a relative path."
-
-    base = Path(output_dir) if output_dir else _OUTPUT_DIR
-    target = base / clean_name
+    # Resolve the full target path and sandbox-check it (Bug 3 fix)
+    base = (Path(output_dir) if output_dir else _OUTPUT_DIR).resolve()
+    target = (base / os.path.normpath(filename)).resolve()
+    _sb = str(_WRITE_SANDBOX) + os.sep
+    if not (str(target) == str(_WRITE_SANDBOX) or str(target).startswith(_sb)):
+        return (
+            f"❌ Security Violation: Path '{filename}' escapes the write sandbox. "
+            f"Writes are confined to: {_WRITE_SANDBOX}"
+        )
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -281,10 +281,19 @@ class MemoryManager:
     def _flush(self) -> None:
         if not self._persist:
             return
+        # Atomic write: write to .tmp then rename so an interrupted write never
+        # leaves the store file blank or partially written (Bug 2 fix)
+        tmp = Path(str(_MEMORY_FILE) + ".tmp")
         try:
-            _MEMORY_FILE.write_text(json.dumps(self._store, indent=2, default=str))
+            tmp.write_text(json.dumps(self._store, indent=2, default=str))
+            os.replace(tmp, _MEMORY_FILE)
         except OSError as exc:
             logger.error("MemoryManager: failed to persist memory: %s", exc)
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
 
     def _load(self) -> None:
         try:
