@@ -1121,6 +1121,257 @@ class AetherKernel:
         )
         files_written.append("README.md")
 
+        # ── 8. server.py — FastAPI "black box" server (Method 1) ─────────
+        server_py = export_dir / "server.py"
+        server_requirements = sorted(
+            set(self._BASE_REQUIREMENTS)
+            | {"fastapi", "uvicorn[standard]"}
+            | {p for t in agent_tools for p in self._TOOL_DEPENDENCIES.get(t, [])}
+        )
+        server_py.write_text(
+            textwrap.dedent(f"""\
+            \"\"\"
+            FastAPI server wrapper for agent: {name}
+            Exposes the agent as a REST API so callers never see source code.
+
+            Start:
+                pip install fastapi \"uvicorn[standard]\"
+                uvicorn server:app --host 0.0.0.0 --port 8000
+
+            Endpoints:
+                GET  /health          — liveness probe
+                GET  /agent           — agent metadata
+                POST /run             — run a task  {{\"task\": \"...\"}}
+                GET  /history         — last 50 results
+            \"\"\"
+            from __future__ import annotations
+            import os, sys, json, logging
+            from datetime import datetime
+            from collections import deque
+            _ROOT = os.path.dirname(os.path.abspath(__file__))
+            sys.path.insert(0, _ROOT)
+
+            from fastapi import FastAPI, HTTPException
+            from fastapi.middleware.cors import CORSMiddleware
+            from pydantic import BaseModel
+            from core.env_loader import load_env as _lenv
+            _lenv(os.path.join(_ROOT, ".env"))
+
+            from core.aether_kernel import AetherKernel
+            from agents.base_agent import BaseAgent as _BA
+
+            logging.basicConfig(level=logging.INFO, format="[server] %(levelname)s: %(message)s")
+            logger = logging.getLogger(__name__)
+
+            # ── Boot kernel & load agent profile ─────────────────────────
+            _provider = os.environ.get("AETHER_DEFAULT_PROVIDER", "github")
+            _model    = os.environ.get("AETHER_DEFAULT_MODEL") or None
+            kernel    = AetherKernel(ai_provider=_provider, model=_model or "gpt-4.1")
+
+            with open(os.path.join(_ROOT, "agent_profile.json"), encoding="utf-8") as _f:
+                _profile = json.load(_f)
+
+            _agent_name = _profile["name"]
+            _agent = kernel.factory.create(
+                name        = _agent_name,
+                role        = _profile["role"],
+                tools       = _profile.get("tools", []),
+                skills      = _profile.get("skills", []),
+                permission_level = _profile.get("permission_level", 1),
+            )
+            _agent.profile["instructions"] = _profile.get("instructions", "")
+            kernel.registry.register(_agent)
+
+            _history: deque[dict] = deque(maxlen=50)
+
+            # ── FastAPI app ───────────────────────────────────────────────
+            app = FastAPI(title="{name}", description="{agent.role}", version="1.0.0")
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+            )
+
+            class TaskRequest(BaseModel):
+                task: str
+
+            @app.get("/health")
+            def health():
+                return {{"status": "ok", "agent": _agent_name}}
+
+            @app.get("/agent")
+            def agent_info():
+                return {{
+                    "name":   _agent_name,
+                    "role":   _profile["role"],
+                    "skills": _profile.get("skills", []),
+                    "tools":  _profile.get("tools", []),
+                }}
+
+            @app.post("/run")
+            def run_task(body: TaskRequest):
+                if not body.task.strip():
+                    raise HTTPException(status_code=400, detail="task must not be empty")
+                logger.info("Task received: %s", body.task[:120])
+                result = kernel.run_agent(_agent_name, body.task)
+                entry = {{"task": body.task, "result": result, "ts": datetime.utcnow().isoformat()}}
+                _history.appendleft(entry)
+                return {{"result": result}}
+
+            @app.get("/history")
+            def history():
+                return list(_history)
+
+            if __name__ == "__main__":
+                import uvicorn
+                uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)
+            """),
+            encoding="utf-8",
+        )
+        files_written.append("server.py")
+
+        # server_requirements.txt (superset of main requirements + FastAPI)
+        (export_dir / "server_requirements.txt").write_text(
+            "\n".join(server_requirements) + "\n", encoding="utf-8"
+        )
+        files_written.append("server_requirements.txt")
+
+        # ── 9. build_exe.bat — PyInstaller one-file executable (Method 2) ─
+        build_bat = export_dir / "build_exe.bat"
+        build_bat.write_text(
+            textwrap.dedent(f"""\
+            @echo off
+            :: Build a standalone Windows .exe for agent: {name}
+            :: Requires: pip install pyinstaller
+            title Build EXE — {name}
+            cd /d "%~dp0"
+
+            echo.
+            echo  Building standalone executable for {name}...
+            echo  This may take 1-3 minutes on first run.
+            echo.
+
+            pip install pyinstaller --quiet
+
+            pyinstaller ^
+                --onefile ^
+                --name "{name}" ^
+                --add-data "agent_profile.json;." ^
+                --add-data ".env;." ^
+                --hidden-import chromadb ^
+                --hidden-import openai ^
+                --hidden-import anthropic ^
+                --hidden-import yaml ^
+                run_agent.py
+
+            if %errorlevel%==0 (
+                echo.
+                echo  ✓ Build successful!
+                echo  Executable: dist\\{name}.exe
+            ) else (
+                echo.
+                echo  ✗ Build failed. Check the output above for errors.
+            )
+            pause
+            """),
+            encoding="utf-8",
+        )
+        files_written.append("build_exe.bat")
+
+        # build_exe.sh — same for Linux/macOS
+        build_sh = export_dir / "build_exe.sh"
+        build_sh.write_text(
+            textwrap.dedent(f"""\
+            #!/usr/bin/env bash
+            # Build a standalone binary for agent: {name}
+            # Requires: pip install pyinstaller
+            set -e
+            cd "$(dirname "$0")"
+
+            echo "Building standalone binary for {name}..."
+            pip install pyinstaller --quiet
+
+            pyinstaller \\
+                --onefile \\
+                --name "{name}" \\
+                --add-data "agent_profile.json:." \\
+                --add-data ".env:." \\
+                --hidden-import chromadb \\
+                --hidden-import openai \\
+                --hidden-import anthropic \\
+                --hidden-import yaml \\
+                run_agent.py
+
+            echo "✓ Build successful! Binary: dist/{name}"
+            """),
+            encoding="utf-8",
+        )
+        files_written.append("build_exe.sh")
+
+        # ── 10. Dockerfile — bytecode-only Docker image (Method 3) ──────
+        dockerfile = export_dir / "Dockerfile"
+        dockerfile.write_text(
+            textwrap.dedent(f"""\
+            # Dockerfile for agent: {name}
+            # Compiles Python source to bytecode and removes .py files so the
+            # operator's source code and prompts are never visible to the user.
+            #
+            # Build:  docker build -t {name.lower().replace(" ", "-")} .
+            # Run:    docker run -it --env-file .env {name.lower().replace(" ", "-")}
+            # Server: docker run -p 8000:8000 --env-file .env {name.lower().replace(" ", "-")} uvicorn server:app --host 0.0.0.0 --port 8000
+
+            FROM python:3.11-slim
+
+            # Install system deps
+            RUN apt-get update && apt-get install -y --no-install-recommends \\
+                    gcc build-essential && \\
+                rm -rf /var/lib/apt/lists/*
+
+            WORKDIR /app
+
+            # Install Python dependencies first (layer-cached)
+            COPY requirements.txt .
+            RUN pip install --no-cache-dir -r requirements.txt
+
+            # Copy all source files
+            COPY . .
+
+            # Compile every .py file to .pyc bytecode in-place (-b = beside source)
+            # then delete the readable .py sources to protect IP.
+            RUN python -m compileall -b -q . && \\
+                find . -name "*.py" -not -name "*.pyc" -type f -delete && \\
+                find . -name "__pycache__" -type d -exec rm -rf {{}} + 2>/dev/null || true
+
+            # Non-root user for security
+            RUN useradd -m agentuser
+            USER agentuser
+
+            # Default: interactive CLI mode
+            # Override CMD when running the server:
+            #   docker run ... uvicorn server:app --host 0.0.0.0 --port 8000
+            CMD ["python", "run_agent.pyc"]
+            """),
+            encoding="utf-8",
+        )
+        files_written.append("Dockerfile")
+
+        # .dockerignore — exclude build artefacts and secrets from the image
+        dockerignore = export_dir / ".dockerignore"
+        dockerignore.write_text(
+            textwrap.dedent("""\
+            __pycache__/
+            *.pyc
+            *.pyo
+            .env
+            dist/
+            build/
+            *.spec
+            memory/memory_store.json
+            memory/chroma_store/
+            """),
+            encoding="utf-8",
+        )
+        files_written.append(".dockerignore")
+
         return {"output_dir": str(export_dir), "files": files_written, "error": None}
 
     def export_system(self, system_name: str, agent_names: list[str]) -> dict:
