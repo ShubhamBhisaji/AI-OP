@@ -560,8 +560,11 @@ class WorkflowEngine:
         tools_str = ", ".join(agent.profile.get("tools", [])) or "none"
         instructions = agent.profile.get("instructions", "")
         instr_block = f"\nInstructions:\n{instructions}\n" if instructions else ""
+        # Global system instructions — set via Train AI page or kernel.memory
+        sys_instr = self.memory.load("system_instructions", default="", namespace="global")
+        sys_block = f"\nGlobal System Instructions:\n{sys_instr}\n" if sys_instr else ""
         return (
-            f"You are a {agent.role}.{instr_block}\n"
+            f"You are a {agent.role}.{sys_block}{instr_block}\n"
             f"Your skills: {skills_str}.\n"
             f"Available tools: {tools_str}.\n\n"
             f"IMPORTANT RULE: You ONLY handle tasks that are directly related to "

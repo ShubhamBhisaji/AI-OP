@@ -1776,7 +1776,146 @@ class AetherKernel:
         )
         files_written.append("build_ui_exe.bat")
 
-        # ── 12. Dockerfile — bytecode-only Docker image (Method 3) ──────
+        # ── 12. agent_app.py — Streamlit single-agent dashboard ─────────
+        #    Mirrors the main AetherAi Master Dashboard but scoped to ONE agent.
+        #    Launch with: python -m streamlit run agent_app.py
+        #    Or double-click:  Start_Agent.bat
+        agent_app_py = export_dir / "agent_app.py"
+        agent_app_py.write_text(
+            textwrap.dedent(f"""\
+            \"\"\"
+            agent_app.py -- AetherAi-A Master AI  |  Agent: {name}
+            Streamlit single-agent dashboard.
+
+            Run:  python -m streamlit run agent_app.py
+            Or double-click: Start_Agent.bat
+            \"\"\"
+            from __future__ import annotations
+            import os, sys, json
+
+            _ROOT = os.path.dirname(os.path.abspath(__file__))
+            sys.path.insert(0, _ROOT)
+
+            import streamlit as st
+            from core.env_loader import load_env
+            from core.aether_kernel import AetherKernel
+            from core.workflow_engine import WorkflowFeedback, HITLAction
+
+            st.set_page_config(
+                page_title="{name} -- AetherAi",
+                page_icon="\\u26a1",
+                layout="wide",
+            )
+
+            st.markdown(\"\"\"
+            <style>
+                [data-testid="stSidebar"] {{ background: #0e1117; }}
+                .stChatMessage {{ border-radius: 12px; }}
+            </style>
+            \"\"\", unsafe_allow_html=True)
+
+            @st.cache_resource(show_spinner="Booting agent {name}...")
+            def boot_agent():
+                load_env(os.path.join(_ROOT, ".env"))
+                with open(os.path.join(_ROOT, "agent_profile.json"), encoding="utf-8") as _f:
+                    profile = json.load(_f)
+                provider = os.environ.get("AETHER_DEFAULT_PROVIDER",
+                           os.environ.get("AI_PROVIDER", "github"))
+                model    = os.environ.get("AETHER_DEFAULT_MODEL",
+                           os.environ.get("AI_MODEL", "gpt-4.1")) or "gpt-4.1"
+                kernel = AetherKernel(ai_provider=provider, model=model)
+                kernel.set_hitl(
+                    enabled=True,
+                    callback=lambda cp: WorkflowFeedback(action=HITLAction.APPROVE),
+                )
+                agent = kernel.factory.create(
+                    name=profile["name"],
+                    role=profile["role"],
+                    tools=profile.get("tools", []),
+                    skills=profile.get("skills", []),
+                    permission_level=profile.get("permission_level", 1),
+                )
+                agent.profile["instructions"] = profile.get("instructions", "")
+                kernel.registry.register(agent)
+                return kernel, agent
+
+            kernel, agent = boot_agent()
+
+            # Sidebar
+            with st.sidebar:
+                st.title("\\u26a1 AetherAi Agent")
+                st.subheader("{name}")
+                st.caption(f"Role: {{agent.role}}")
+                st.divider()
+                skills = agent.profile.get("skills", [])
+                if skills:
+                    st.subheader("Skills")
+                    for s in skills[:20]:
+                        st.text(f"  \\u2022 {{s}}")
+                    if len(skills) > 20:
+                        st.caption(f"  ...and {{len(skills)-20}} more")
+                st.divider()
+                st.caption(f"AI: `{{kernel.ai_adapter.provider}}` / `{{kernel.ai_adapter.model}}`")
+                if st.button("\\U0001f5d1\\ufe0f  Clear Chat"):
+                    st.session_state.chat_history = []
+                    st.rerun()
+
+            st.header("\\U0001f4ac Chat with {name}")
+            st.markdown(f"*{{agent.role}}*")
+
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
+
+            for msg in st.session_state.chat_history:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+            if prompt := st.chat_input("Give {name} a task..."):
+                st.session_state.chat_history.append({{"role": "user", "content": prompt}})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                with st.chat_message("assistant"):
+                    with st.spinner("\\u26a1 {name} is working..."):
+                        try:
+                            result = str(kernel.workflow_engine.execute(agent, prompt))
+                        except Exception as exc:
+                            result = f"**Error:** {{exc}}"
+                    st.markdown(result)
+                    st.session_state.chat_history.append({{"role": "assistant", "content": result}})
+            """),
+            encoding="utf-8",
+        )
+        files_written.append("agent_app.py")
+
+        # ── 13. Start_Agent.bat — double-click Streamlit launcher ────────
+        start_bat = export_dir / "Start_Agent.bat"
+        start_bat.write_text(
+            textwrap.dedent(f"""\
+            @echo off
+            title {name} -- AetherAi Agent
+            echo.
+            echo  ====================================================
+            echo   AetherAi-A Master AI  --  {name}
+            echo  ====================================================
+            echo.
+            cd /d "%~dp0"
+            python --version >nul 2>&1 || (
+                echo  ERROR: Python not found. Install Python 3.10+ and add to PATH.
+                pause & exit /b 1
+            )
+            python -m streamlit --version >nul 2>&1 || (
+                echo  Installing Streamlit...
+                python -m pip install streamlit --quiet
+            )
+            echo  Launching {name} dashboard...
+            python -m streamlit run agent_app.py --server.headless false --browser.gatherUsageStats false
+            pause
+            """),
+            encoding="utf-8",
+        )
+        files_written.append("Start_Agent.bat")
+
+        # ── 14. Dockerfile — bytecode-only Docker image (Method 3) ──────
         dockerfile = export_dir / "Dockerfile"
         dockerfile.write_text(
             textwrap.dedent(f"""\
