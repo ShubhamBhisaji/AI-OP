@@ -13,6 +13,18 @@ import argparse
 import sys
 import os
 
+# ── Force UTF-8 output on Windows CMD so Unicode chars print correctly ───
+try:
+    import ctypes as _ctypes
+    _ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    _ctypes.windll.kernel32.SetConsoleCP(65001)
+except Exception:
+    pass
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 # Make sure the project root is on the path so all module imports resolve
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

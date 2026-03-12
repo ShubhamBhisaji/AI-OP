@@ -1121,7 +1121,115 @@ class AetherKernel:
         )
         files_written.append("README.md")
 
-        # ── 8. server.py — FastAPI "black box" server (Method 1) ─────────
+        # ── 8. index.html — Tailwind CSS chat UI ─────────────────────────
+        #    Served by server.py at GET / and bundled into the UI .exe.
+        _html_tpl = (
+            "<!DOCTYPE html>\n"
+            "<html lang=\"en\">\n"
+            "<head>\n"
+            "  <meta charset=\"UTF-8\" />\n"
+            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n"
+            "  <title>__AGENT_NAME__ \u2014 AetherAi-A Master AI</title>\n"
+            "  <script src=\"https://cdn.tailwindcss.com\"></script>\n"
+            "  <style>\n"
+            "    body { font-family: system-ui, sans-serif; }\n"
+            "    #messages { scroll-behavior: smooth; }\n"
+            "    .msg-user { background: #1d4ed8; color: #fff; }\n"
+            "    .msg-ai   { background: #1e293b; color: #e2e8f0; }\n"
+            "    .thinking { animation: pulse 1.2s ease-in-out infinite; }\n"
+            "    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }\n"
+            "  </style>\n"
+            "</head>\n"
+            "<body class=\"bg-gray-950 text-gray-100 min-h-screen flex flex-col\">\n"
+            "\n"
+            "  <!-- Header -->\n"
+            "  <header class=\"bg-gray-900 border-b border-gray-700 px-6 py-4 flex items-center gap-3 shadow-lg\">\n"
+            "    <div class=\"w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center font-bold text-white text-sm\">AI</div>\n"
+            "    <div>\n"
+            "      <h1 class=\"font-semibold text-white text-base\">__AGENT_NAME__</h1>\n"
+            "      <p class=\"text-xs text-gray-400\">__AGENT_ROLE__ &mdash; AetherAi-A Master AI</p>\n"
+            "    </div>\n"
+            "    <span id=\"status-dot\" class=\"ml-auto w-2.5 h-2.5 rounded-full bg-green-400\" title=\"Online\"></span>\n"
+            "  </header>\n"
+            "\n"
+            "  <!-- Chat window -->\n"
+            "  <main class=\"flex-1 overflow-y-auto px-4 py-6 space-y-4\" id=\"messages\">\n"
+            "    <div class=\"flex gap-3\">\n"
+            "      <div class=\"w-8 h-8 rounded-full bg-blue-700 flex-shrink-0 flex items-center justify-center text-xs font-bold\">AI</div>\n"
+            "      <div class=\"msg-ai rounded-2xl rounded-tl-sm px-4 py-3 max-w-3xl text-sm leading-relaxed shadow\">\n"
+            "        Hello! I'm <strong>__AGENT_NAME__</strong>. How can I help you today?\n"
+            "      </div>\n"
+            "    </div>\n"
+            "  </main>\n"
+            "\n"
+            "  <!-- Input bar -->\n"
+            "  <footer class=\"bg-gray-900 border-t border-gray-700 px-4 py-4\">\n"
+            "    <form id=\"chat-form\" class=\"flex gap-3 max-w-4xl mx-auto\">\n"
+            "      <input id=\"task-input\" type=\"text\" placeholder=\"Type your message\u2026\"\n"
+            "             autocomplete=\"off\"\n"
+            "             class=\"flex-1 bg-gray-800 border border-gray-600 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500\" />\n"
+            "      <button type=\"submit\"\n"
+            "              class=\"bg-blue-600 hover:bg-blue-700 active:scale-95 transition text-white font-semibold px-5 py-3 rounded-xl text-sm shadow\"\n"
+            "      >Send</button>\n"
+            "    </form>\n"
+            "    <p class=\"text-center text-xs text-gray-600 mt-2\">Powered by AetherAi-A Master AI &bull; Running locally</p>\n"
+            "  </footer>\n"
+            "\n"
+            "<script>\n"
+            "const messagesEl = document.getElementById('messages');\n"
+            "const form       = document.getElementById('chat-form');\n"
+            "const inp        = document.getElementById('task-input');\n"
+            "\n"
+            "function appendMsg(role, text) {\n"
+            "  const isUser = role === 'user';\n"
+            "  const avatar = isUser ? 'You' : 'AI';\n"
+            "  const row = document.createElement('div');\n"
+            "  row.className = 'flex gap-3' + (isUser ? ' flex-row-reverse' : '');\n"
+            "  const bubble = document.createElement('div');\n"
+            "  bubble.className = (isUser ? 'msg-user rounded-tr-sm' : 'msg-ai rounded-tl-sm')\n"
+            "    + ' rounded-2xl px-4 py-3 max-w-3xl text-sm leading-relaxed shadow whitespace-pre-wrap';\n"
+            "  bubble.textContent = text;\n"
+            "  const av = document.createElement('div');\n"
+            "  av.className = 'w-8 h-8 rounded-full ' + (isUser ? 'bg-indigo-600' : 'bg-blue-700')\n"
+            "    + ' flex-shrink-0 flex items-center justify-center text-xs font-bold';\n"
+            "  av.textContent = avatar;\n"
+            "  row.appendChild(av); row.appendChild(bubble);\n"
+            "  messagesEl.appendChild(row);\n"
+            "  messagesEl.scrollTop = messagesEl.scrollHeight;\n"
+            "  return bubble;\n"
+            "}\n"
+            "\n"
+            "form.addEventListener('submit', async (e) => {\n"
+            "  e.preventDefault();\n"
+            "  const task = inp.value.trim();\n"
+            "  if (!task) return;\n"
+            "  inp.value = '';\n"
+            "  appendMsg('user', task);\n"
+            "  const thinking = appendMsg('ai', 'Thinking\u2026');\n"
+            "  try {\n"
+            "    const res  = await fetch('/run', {\n"
+            "      method: 'POST',\n"
+            "      headers: {'Content-Type': 'application/json'},\n"
+            "      body: JSON.stringify({ task }),\n"
+            "    });\n"
+            "    const data = await res.json();\n"
+            "    thinking.textContent = data.result || data.detail || 'No response.';\n"
+            "  } catch (err) {\n"
+            "    thinking.textContent = 'Error: could not reach the agent server.';\n"
+            "  }\n"
+            "});\n"
+            "</script>\n"
+            "</body>\n"
+            "</html>\n"
+        )
+        index_html = export_dir / "index.html"
+        index_html.write_text(
+            _html_tpl.replace("__AGENT_NAME__", name).replace("__AGENT_ROLE__", agent.role),
+            encoding="utf-8",
+        )
+        files_written.append("index.html")
+
+        # ── 9. server.py — FastAPI "black box" server (Method 1) ─────────
         server_py = export_dir / "server.py"
         server_requirements = sorted(
             set(self._BASE_REQUIREMENTS)
@@ -1220,6 +1328,22 @@ class AetherKernel:
             @app.get("/history")
             def history():
                 return list(_history)
+
+            # ── UI route — serves index.html for the browser UI ───────────
+            from fastapi.responses import HTMLResponse
+
+            def get_resource_path(relative_path: str) -> str:
+                \"\"\"Resolve a bundled resource path, whether running as script or .exe.\"\"\"
+                if hasattr(sys, "_MEIPASS"):
+                    return os.path.join(sys._MEIPASS, relative_path)
+                return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
+            @app.get("/", response_class=HTMLResponse)
+            def serve_ui():
+                \"\"\"Serves the frontend chat UI (index.html).\"\"\"
+                html_path = get_resource_path("index.html")
+                with open(html_path, "r", encoding="utf-8") as _hf:
+                    return _hf.read()
 
             if __name__ == "__main__":
                 import uvicorn
@@ -1508,7 +1632,151 @@ class AetherKernel:
         )
         files_written.append("build_exe.sh")
 
-        # ── 10. Dockerfile — bytecode-only Docker image (Method 3) ──────
+        # ── 10. gui_launcher.py — desktop UI launcher (Method 4) ─────────
+        #    Starts the FastAPI server in a background thread and opens the
+        #    agent UI automatically in the user's default web browser.
+        #    Compile with build_ui_exe.bat for a true double-click .exe.
+        gui_launcher_py = export_dir / "gui_launcher.py"
+        gui_launcher_py.write_text(
+            textwrap.dedent(f"""\
+            \"\"\"
+            gui_launcher.py — Desktop launcher for agent: {name}
+
+            Starts the FastAPI server in a background thread and automatically
+            opens the browser to the Tailwind chat UI (GET /).
+
+            Compile to a standalone .exe with:  build_ui_exe.bat
+            \"\"\"
+            from __future__ import annotations
+            import threading
+            import webbrowser
+            import uvicorn
+            import time
+            import sys
+            import os
+
+            _ROOT = os.path.dirname(os.path.abspath(__file__))
+            sys.path.insert(0, _ROOT)
+
+            from core.env_loader import load_env as _lenv
+            _lenv(os.path.join(_ROOT, ".env"))
+
+            from server import app  # noqa: E402  (import after path setup)
+
+            _PORT = 8000
+            _HOST = "127.0.0.1"
+            _URL  = f"http://{{_HOST}}:{{_PORT}}"
+
+
+            def _start_server() -> None:
+                \"\"\"Run the FastAPI server silently in a background thread.\"\"\"
+                uvicorn.run(app, host=_HOST, port=_PORT, log_level="critical")
+
+
+            if __name__ == "__main__":
+                print("\u26a1 Starting AetherAi-A Master AI Agent Environment...")
+                print("Please wait while the AI loads into memory...")
+
+                # 1. Start the API server in a daemon thread
+                server_thread = threading.Thread(target=_start_server, daemon=True)
+                server_thread.start()
+
+                # 2. Give the server a moment to bind the port
+                time.sleep(2)
+
+                # 3. Open the UI in the user's default browser
+                webbrowser.open(_URL)
+
+                print(f"\n\u2705 UI launched in your web browser!  ({{_URL}})")
+                print("\u26a0\ufe0f  DO NOT CLOSE THIS WINDOW. Closing it will turn off the AI Agent.")
+
+                # 4. Keep the process alive so the daemon server thread stays up
+                try:
+                    while True:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    print("\nShutting down AetherAi-A Master AI Agent...")
+                    sys.exit(0)
+            """),
+            encoding="utf-8",
+        )
+        files_written.append("gui_launcher.py")
+
+        # ── 11. build_ui_exe.bat — compiles gui_launcher → AetherAgent_UI.exe
+        safe_ui_name = name.replace(" ", "-") + "_UI"
+        build_ui_bat = export_dir / "build_ui_exe.bat"
+        build_ui_bat.write_text(
+            textwrap.dedent(f"""\
+            @echo off
+            :: ================================================================
+            :: Build standalone Windows UI .exe  — Agent: {name}
+            :: Produces a double-clickable .exe that opens the Tailwind chat UI
+            :: automatically in Chrome/Edge (no server knowledge needed).
+            :: ================================================================
+            title Build UI EXE  —  {name}
+            cd /d "%~dp0"
+
+            echo.
+            echo  Installing required packages...
+            pip install pyinstaller uvicorn fastapi pydantic --quiet
+
+            echo.
+            echo  Compiling {name} with browser UI...
+            echo  (This may take 1-3 minutes — please wait)
+            echo.
+
+            pyinstaller --onefile ^
+                --name "{safe_ui_name}" ^
+                --add-data "index.html;." ^
+                --add-data "agent_profile.json;." ^
+                --add-data "registry/registry_store.json;registry" ^
+                --hidden-import chromadb ^
+                --hidden-import chromadb.api ^
+                --hidden-import openai ^
+                --hidden-import anthropic ^
+                --hidden-import yaml ^
+                --hidden-import pydantic ^
+                --hidden-import uvicorn ^
+                --hidden-import uvicorn.logging ^
+                --hidden-import uvicorn.loops ^
+                --hidden-import uvicorn.loops.auto ^
+                --hidden-import uvicorn.protocols ^
+                --hidden-import uvicorn.protocols.http ^
+                --hidden-import uvicorn.protocols.http.auto ^
+                --collect-submodules chromadb ^
+                --collect-submodules tiktoken_ext ^
+                gui_launcher.py
+
+            if %errorlevel%==0 (
+                echo.
+                echo  ============================================================
+                echo   ^[OK^]  Build complete!
+                echo.
+                echo   Your UI executable is in the  dist\  folder:
+                echo     dist\{safe_ui_name}.exe
+                echo.
+                echo   HOW TO USE:
+                echo     1. Copy dist\{safe_ui_name}.exe to your client / tester
+                echo     2. They must place a .env file in the SAME folder
+                echo        containing their AI provider API key
+                echo        (e.g.  GITHUB_TOKEN=ghp_...)
+                echo     3. Double-click the .exe — Chrome/Edge will open the UI
+                echo.
+                echo   TIP: Right-click exe ^> Properties ^> Unblock if Windows
+                echo        Defender shows a SmartScreen warning
+                echo  ============================================================
+            ) else (
+                echo.
+                echo  [FAIL]  Build failed — check the output above for errors.
+            )
+            echo.
+            pause
+            """),
+            encoding="utf-8",
+        )
+        files_written.append("build_ui_exe.bat")
+
+        # ── 12. Dockerfile — bytecode-only Docker image (Method 3) ──────
         dockerfile = export_dir / "Dockerfile"
         dockerfile.write_text(
             textwrap.dedent(f"""\

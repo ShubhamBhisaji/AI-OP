@@ -1,0 +1,783 @@
+('C:\\Users\\Tecbunny '
+ 'Solutions\\Downloads\\AI-OP\\aether-os\\build\\AetherAi_MasterAI\\AetherAi_MasterAI.pkg',
+ {'BINARY': True,
+  'DATA': True,
+  'EXECUTABLE': True,
+  'EXTENSION': True,
+  'PYMODULE': True,
+  'PYSOURCE': True,
+  'PYZ': False,
+  'SPLASH': True,
+  'SYMLINK': False},
+ [('pyi-contents-directory _internal', '', 'OPTION'),
+  ('PYZ-00.pyz',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\build\\AetherAi_MasterAI\\PYZ-00.pyz',
+   'PYZ'),
+  ('struct',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\build\\AetherAi_MasterAI\\localpycs\\struct.pyc',
+   'PYMODULE'),
+  ('pyimod01_archive',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\build\\AetherAi_MasterAI\\localpycs\\pyimod01_archive.pyc',
+   'PYMODULE'),
+  ('pyimod02_importers',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\build\\AetherAi_MasterAI\\localpycs\\pyimod02_importers.pyc',
+   'PYMODULE'),
+  ('pyimod03_ctypes',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\build\\AetherAi_MasterAI\\localpycs\\pyimod03_ctypes.pyc',
+   'PYMODULE'),
+  ('pyimod04_pywin32',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\build\\AetherAi_MasterAI\\localpycs\\pyimod04_pywin32.pyc',
+   'PYMODULE'),
+  ('pyiboot01_bootstrap',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\PyInstaller\\loader\\pyiboot01_bootstrap.py',
+   'PYSOURCE'),
+  ('pyi_rth_pkgutil',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks\\pyi_rth_pkgutil.py',
+   'PYSOURCE'),
+  ('pyi_rth_multiprocessing',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks\\pyi_rth_multiprocessing.py',
+   'PYSOURCE'),
+  ('pyi_rth_inspect',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks\\pyi_rth_inspect.py',
+   'PYSOURCE'),
+  ('main',
+   'C:\\Users\\Tecbunny Solutions\\Downloads\\AI-OP\\aether-os\\main.py',
+   'PYSOURCE'),
+  ('python310.dll',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\python310.dll',
+   'BINARY'),
+  ('_decimal.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_decimal.pyd',
+   'EXTENSION'),
+  ('_hashlib.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_hashlib.pyd',
+   'EXTENSION'),
+  ('unicodedata.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\unicodedata.pyd',
+   'EXTENSION'),
+  ('select.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\select.pyd',
+   'EXTENSION'),
+  ('_socket.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_socket.pyd',
+   'EXTENSION'),
+  ('_lzma.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_lzma.pyd',
+   'EXTENSION'),
+  ('_bz2.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_bz2.pyd',
+   'EXTENSION'),
+  ('_multiprocessing.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_multiprocessing.pyd',
+   'EXTENSION'),
+  ('pyexpat.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\pyexpat.pyd',
+   'EXTENSION'),
+  ('_ssl.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_ssl.pyd',
+   'EXTENSION'),
+  ('_queue.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_queue.pyd',
+   'EXTENSION'),
+  ('_overlapped.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_overlapped.pyd',
+   'EXTENSION'),
+  ('_asyncio.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_asyncio.pyd',
+   'EXTENSION'),
+  ('_uuid.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_uuid.pyd',
+   'EXTENSION'),
+  ('_zoneinfo.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_zoneinfo.pyd',
+   'EXTENSION'),
+  ('pydantic_core\\_pydantic_core.cp310-win_amd64.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\pydantic_core\\_pydantic_core.cp310-win_amd64.pyd',
+   'EXTENSION'),
+  ('_ctypes.pyd',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\_ctypes.pyd',
+   'EXTENSION'),
+  ('api-ms-win-crt-filesystem-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-filesystem-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-convert-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-convert-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-environment-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-environment-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-heap-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-heap-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-runtime-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-runtime-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-conio-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-conio-l1-1-0.dll',
+   'BINARY'),
+  ('VCRUNTIME140.dll',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\VCRUNTIME140.dll',
+   'BINARY'),
+  ('api-ms-win-crt-string-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-string-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-process-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-process-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-time-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-time-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-math-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-math-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-stdio-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-stdio-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-crt-locale-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-locale-l1-1-0.dll',
+   'BINARY'),
+  ('libcrypto-1_1.dll',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\libcrypto-1_1.dll',
+   'BINARY'),
+  ('api-ms-win-crt-utility-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-crt-utility-l1-1-0.dll',
+   'BINARY'),
+  ('libssl-1_1.dll',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\libssl-1_1.dll',
+   'BINARY'),
+  ('api-ms-win-core-synch-l1-2-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-synch-l1-2-0.dll',
+   'BINARY'),
+  ('libffi-7.dll',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\DLLs\\libffi-7.dll',
+   'BINARY'),
+  ('ucrtbase.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\ucrtbase.dll',
+   'BINARY'),
+  ('api-ms-win-core-util-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-util-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-debug-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-debug-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-fibers-l1-1-1.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-fibers-l1-1-1.dll',
+   'BINARY'),
+  ('api-ms-win-core-synch-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-synch-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-console-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-console-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-fibers-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-fibers-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-namedpipe-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-namedpipe-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-sysinfo-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-sysinfo-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-memory-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-memory-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-heap-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-heap-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-timezone-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-timezone-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-localization-l1-2-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-localization-l1-2-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-libraryloader-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-libraryloader-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-kernel32-legacy-l1-1-1.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-kernel32-legacy-l1-1-1.dll',
+   'BINARY'),
+  ('api-ms-win-core-interlocked-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-interlocked-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-errorhandling-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-errorhandling-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-processthreads-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-processthreads-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-file-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-file-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-sysinfo-l1-2-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-sysinfo-l1-2-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-processenvironment-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-processenvironment-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-handle-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-handle-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-rtlsupport-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-rtlsupport-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-file-l2-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-file-l2-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-profile-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-profile-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-file-l1-2-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-file-l1-2-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-datetime-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-datetime-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-string-l1-1-0.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-string-l1-1-0.dll',
+   'BINARY'),
+  ('api-ms-win-core-processthreads-l1-1-1.dll',
+   'C:\\Program Files\\Eclipse '
+   'Adoptium\\jdk-17.0.18.8-hotspot\\bin\\api-ms-win-core-processthreads-l1-1-1.dll',
+   'BINARY'),
+  ('agents\\__pycache__\\base_agent.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\agents\\__pycache__\\base_agent.cpython-310.pyc',
+   'DATA'),
+  ('agents\\base_agent.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\agents\\base_agent.py',
+   'DATA'),
+  ('ai\\__pycache__\\ai_adapter.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\ai\\__pycache__\\ai_adapter.cpython-310.pyc',
+   'DATA'),
+  ('ai\\ai_adapter.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\ai\\ai_adapter.py',
+   'DATA'),
+  ('cli\\__pycache__\\agent_window.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\cli\\__pycache__\\agent_window.cpython-310.pyc',
+   'DATA'),
+  ('cli\\__pycache__\\command_interface.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\cli\\__pycache__\\command_interface.cpython-310.pyc',
+   'DATA'),
+  ('cli\\agent_window.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\cli\\agent_window.py',
+   'DATA'),
+  ('cli\\api_key_manager.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\cli\\api_key_manager.py',
+   'DATA'),
+  ('cli\\command_interface.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\cli\\command_interface.py',
+   'DATA'),
+  ('core\\__pycache__\\aether_kernel.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\__pycache__\\aether_kernel.cpython-310.pyc',
+   'DATA'),
+  ('core\\__pycache__\\env_loader.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\__pycache__\\env_loader.cpython-310.pyc',
+   'DATA'),
+  ('core\\__pycache__\\orchestrator.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\__pycache__\\orchestrator.cpython-310.pyc',
+   'DATA'),
+  ('core\\__pycache__\\team_manager.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\__pycache__\\team_manager.cpython-310.pyc',
+   'DATA'),
+  ('core\\__pycache__\\workflow_engine.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\__pycache__\\workflow_engine.cpython-310.pyc',
+   'DATA'),
+  ('core\\aether_kernel.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\aether_kernel.py',
+   'DATA'),
+  ('core\\env_loader.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\env_loader.py',
+   'DATA'),
+  ('core\\orchestrator.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\orchestrator.py',
+   'DATA'),
+  ('core\\team_manager.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\team_manager.py',
+   'DATA'),
+  ('core\\workflow_engine.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\core\\workflow_engine.py',
+   'DATA'),
+  ('factory\\__pycache__\\agent_factory.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\factory\\__pycache__\\agent_factory.cpython-310.pyc',
+   'DATA'),
+  ('factory\\agent_factory.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\factory\\agent_factory.py',
+   'DATA'),
+  ('memory\\__pycache__\\memory_manager.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\memory\\__pycache__\\memory_manager.cpython-310.pyc',
+   'DATA'),
+  ('memory\\memory_manager.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\memory\\memory_manager.py',
+   'DATA'),
+  ('memory\\memory_store.json',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\memory\\memory_store.json',
+   'DATA'),
+  ('registry\\__pycache__\\agent_registry.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\registry\\__pycache__\\agent_registry.cpython-310.pyc',
+   'DATA'),
+  ('registry\\agent_registry.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\registry\\agent_registry.py',
+   'DATA'),
+  ('registry\\registry_store.json',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\registry\\registry_store.json',
+   'DATA'),
+  ('security\\__init__.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\security\\__init__.py',
+   'DATA'),
+  ('security\\__pycache__\\__init__.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\security\\__pycache__\\__init__.cpython-310.pyc',
+   'DATA'),
+  ('security\\__pycache__\\approval_gate.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\security\\__pycache__\\approval_gate.cpython-310.pyc',
+   'DATA'),
+  ('security\\approval_gate.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\security\\approval_gate.py',
+   'DATA'),
+  ('skills\\__pycache__\\skill_engine.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\skills\\__pycache__\\skill_engine.cpython-310.pyc',
+   'DATA'),
+  ('skills\\skill_engine.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\skills\\skill_engine.py',
+   'DATA'),
+  ('tools\\__pycache__\\analytics_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\analytics_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\base64_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\base64_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\browser_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\browser_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\calculator.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\calculator.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\code_analyzer.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\code_analyzer.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\code_formatter.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\code_formatter.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\code_runner.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\code_runner.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\code_search.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\code_search.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\csv_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\csv_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\datetime_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\datetime_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\diff_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\diff_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\directory_scanner.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\directory_scanner.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\file_reader.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\file_reader.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\file_writer.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\file_writer.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\hash_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\hash_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\http_client.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\http_client.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\json_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\json_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\linter_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\linter_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\local_file_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\local_file_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\markdown_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\markdown_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\media_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\media_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\note_taker.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\note_taker.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\pdf_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\pdf_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\regex_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\regex_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\security_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\security_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\system_info.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\system_info.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\template_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\template_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\terminal_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\terminal_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\text_analyzer.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\text_analyzer.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\tool_manager.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\tool_manager.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\url_tool.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\url_tool.cpython-310.pyc',
+   'DATA'),
+  ('tools\\__pycache__\\web_search.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\__pycache__\\web_search.cpython-310.pyc',
+   'DATA'),
+  ('tools\\analytics_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\analytics_tool.py',
+   'DATA'),
+  ('tools\\base64_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\base64_tool.py',
+   'DATA'),
+  ('tools\\browser_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\browser_tool.py',
+   'DATA'),
+  ('tools\\calculator.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\calculator.py',
+   'DATA'),
+  ('tools\\code_analyzer.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\code_analyzer.py',
+   'DATA'),
+  ('tools\\code_formatter.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\code_formatter.py',
+   'DATA'),
+  ('tools\\code_runner.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\code_runner.py',
+   'DATA'),
+  ('tools\\code_search.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\code_search.py',
+   'DATA'),
+  ('tools\\csv_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\csv_tool.py',
+   'DATA'),
+  ('tools\\datetime_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\datetime_tool.py',
+   'DATA'),
+  ('tools\\diff_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\diff_tool.py',
+   'DATA'),
+  ('tools\\directory_scanner.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\directory_scanner.py',
+   'DATA'),
+  ('tools\\file_reader.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\file_reader.py',
+   'DATA'),
+  ('tools\\file_writer.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\file_writer.py',
+   'DATA'),
+  ('tools\\hash_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\hash_tool.py',
+   'DATA'),
+  ('tools\\http_client.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\http_client.py',
+   'DATA'),
+  ('tools\\json_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\json_tool.py',
+   'DATA'),
+  ('tools\\linter_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\linter_tool.py',
+   'DATA'),
+  ('tools\\local_file_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\local_file_tool.py',
+   'DATA'),
+  ('tools\\markdown_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\markdown_tool.py',
+   'DATA'),
+  ('tools\\media_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\media_tool.py',
+   'DATA'),
+  ('tools\\note_taker.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\note_taker.py',
+   'DATA'),
+  ('tools\\pdf_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\pdf_tool.py',
+   'DATA'),
+  ('tools\\regex_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\regex_tool.py',
+   'DATA'),
+  ('tools\\security_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\security_tool.py',
+   'DATA'),
+  ('tools\\system_info.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\system_info.py',
+   'DATA'),
+  ('tools\\template_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\template_tool.py',
+   'DATA'),
+  ('tools\\terminal_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\terminal_tool.py',
+   'DATA'),
+  ('tools\\text_analyzer.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\text_analyzer.py',
+   'DATA'),
+  ('tools\\tool_manager.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\tool_manager.py',
+   'DATA'),
+  ('tools\\url_tool.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\url_tool.py',
+   'DATA'),
+  ('tools\\web_search.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\tools\\web_search.py',
+   'DATA'),
+  ('utils\\__init__.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\utils\\__init__.py',
+   'DATA'),
+  ('utils\\__pycache__\\__init__.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\utils\\__pycache__\\__init__.cpython-310.pyc',
+   'DATA'),
+  ('utils\\__pycache__\\json_parser.cpython-310.pyc',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\utils\\__pycache__\\json_parser.cpython-310.pyc',
+   'DATA'),
+  ('utils\\json_parser.py',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\utils\\json_parser.py',
+   'DATA'),
+  ('certifi\\py.typed',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\certifi\\py.typed',
+   'DATA'),
+  ('certifi\\cacert.pem',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\certifi\\cacert.pem',
+   'DATA'),
+  ('ollama-0.6.1.dist-info\\INSTALLER',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\ollama-0.6.1.dist-info\\INSTALLER',
+   'DATA'),
+  ('ollama-0.6.1.dist-info\\METADATA',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\ollama-0.6.1.dist-info\\METADATA',
+   'DATA'),
+  ('ollama-0.6.1.dist-info\\licenses\\LICENSE',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\ollama-0.6.1.dist-info\\licenses\\LICENSE',
+   'DATA'),
+  ('pydantic-2.12.5.dist-info\\METADATA',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\pydantic-2.12.5.dist-info\\METADATA',
+   'DATA'),
+  ('pydantic-2.12.5.dist-info\\INSTALLER',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\pydantic-2.12.5.dist-info\\INSTALLER',
+   'DATA'),
+  ('pydantic-2.12.5.dist-info\\WHEEL',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\pydantic-2.12.5.dist-info\\WHEEL',
+   'DATA'),
+  ('ollama-0.6.1.dist-info\\RECORD',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\ollama-0.6.1.dist-info\\RECORD',
+   'DATA'),
+  ('pydantic-2.12.5.dist-info\\licenses\\LICENSE',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\pydantic-2.12.5.dist-info\\licenses\\LICENSE',
+   'DATA'),
+  ('ollama-0.6.1.dist-info\\WHEEL',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\ollama-0.6.1.dist-info\\WHEEL',
+   'DATA'),
+  ('pydantic-2.12.5.dist-info\\RECORD',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\pydantic-2.12.5.dist-info\\RECORD',
+   'DATA'),
+  ('ollama-0.6.1.dist-info\\REQUESTED',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\ollama-0.6.1.dist-info\\REQUESTED',
+   'DATA'),
+  ('base_library.zip',
+   'C:\\Users\\Tecbunny '
+   'Solutions\\Downloads\\AI-OP\\aether-os\\build\\AetherAi_MasterAI\\base_library.zip',
+   'DATA')],
+ 'python310.dll',
+ False,
+ False,
+ False,
+ [],
+ None,
+ None,
+ None)

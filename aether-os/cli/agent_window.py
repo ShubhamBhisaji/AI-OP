@@ -19,6 +19,18 @@ import threading
 import time
 from pathlib import Path
 
+# ── Force UTF-8 output so Unicode box-drawing chars work in Windows CMD ──
+try:
+    import ctypes as _ctypes
+    _ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    _ctypes.windll.kernel32.SetConsoleCP(65001)
+except Exception:
+    pass
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 # Make project root importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -61,10 +73,10 @@ class Spinner:
         self._stop_event = threading.Event()
         self._thread = None
         try:
-            sys.stdout.write("⠋\r")
+            sys.stdout.write("\u280b\r")
             sys.stdout.flush()
             self._frames = self._FRAMES
-        except UnicodeEncodeError:
+        except (UnicodeEncodeError, Exception):
             self._frames = self._FRAMES_ASCII
 
     def _spin(self):
@@ -217,11 +229,11 @@ def _check_scope(kernel, agent, task: str) -> tuple[bool, str]:
 
 
 def _banner(agent_name: str, role: str, provider: str, model: str, skills: list) -> str:
-    sep = "═" * 52
+    sep = "=" * 60
     skill_str = ", ".join(skills) if skills else "none"
     return f"""
 {sep}
-  AetherAi-A MASTER AI — {agent_name.upper()}
+  AetherAi-A MASTER AI -- {agent_name.upper()}
   Role     : {role}
   AI       : {provider} / {model}
   Skills   : {skill_str}
@@ -1310,7 +1322,10 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
                 history.append({"role": "assistant", "content": str(response)})
                 print(f"\n  {agent_name}: {response}\n")
 
-    input("\n  Press Enter to close this window...")
+    try:
+        input("\n  Press Enter to close this window...")
+    except (EOFError, KeyboardInterrupt):
+        pass
 
 
 def main():
@@ -1328,17 +1343,23 @@ def main():
         run_agent_window(args.agent_name, args.provider, args.model)
     except KeyboardInterrupt:
         print("\n  Interrupted.")
-        input("\n  Press Enter to close...")
+        try:
+            input("\n  Press Enter to close...")
+        except (EOFError, KeyboardInterrupt):
+            pass
     except Exception as exc:
         import traceback
         print("\n" + "=" * 60)
-        print("  AetherAi-A MASTER AI — ERROR")
+        print("  AetherAi-A MASTER AI -- ERROR")
         print("=" * 60)
         print(f"\n  Agent  : {args.agent_name}")
         print(f"  Error  : {exc}\n")
         traceback.print_exc()
         print()
-        input("  Press Enter to close this window...")
+        try:
+            input("  Press Enter to close this window...")
+        except (EOFError, KeyboardInterrupt):
+            pass
 
 
 if __name__ == "__main__":

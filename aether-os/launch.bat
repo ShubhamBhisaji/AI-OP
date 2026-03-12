@@ -1,5 +1,5 @@
 @echo off
-title Aether AI OS
+title AetherAi-A Master AI
 color 0A
 cd /d "%~dp0"
 

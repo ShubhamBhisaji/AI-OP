@@ -29,11 +29,11 @@ class Spinner:
         self._thread: threading.Thread | None = None
         # Detect if the terminal supports Unicode
         try:
-            sys.stdout.write("⠋")
+            sys.stdout.write("\u280b")
             sys.stdout.write("\r")
             sys.stdout.flush()
             self._frames = self._FRAMES
-        except UnicodeEncodeError:
+        except (UnicodeEncodeError, Exception):
             self._frames = self._FRAMES_ASCII
 
     def _spin(self) -> None:
@@ -60,12 +60,11 @@ class Spinner:
 
 
 BANNER = r"""
-  ___       _   _
- / _ \     | | | |
-/ /_\ \ ___| |_| |__   ___ _ __
-|  _  |/ _ \ __| '_ \ / _ \ '__|
-| | | |  __/ |_| | | |  __/ |
-\_| |_/\___|\__|_| |_|\___|_|
+    _       _   _                     _    ___ 
+   / \  ___| |_| |__   ___ _ __      / \  |_ _|
+  / _ \/ _ \ __| '_ \ / _ \ '__|    / _ \  | | 
+ / ___ \  __/ |_| | | |  __/ |     / ___ \ | | 
+/_/   \_\___|\__|_| |_|\___|_|    /_/   \_\___|
 
   AetherAi-A Master AI  v1.0.0
   Type 'help' for commands.
@@ -530,10 +529,14 @@ class CommandInterface:
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
         # CREATE_NEW_CONSOLE opens a real new CMD window — no shell quoting needed.
+        # PYTHONUTF8=1 forces Python inside the new window to use UTF-8 I/O from startup.
+        child_env = os.environ.copy()
+        child_env["PYTHONUTF8"] = "1"
         subprocess.Popen(
-            [py, script, name, "--provider", provider, "--model", model],
+            [py, script, name, "--provider", provider, "--model", model or ""],
             creationflags=subprocess.CREATE_NEW_CONSOLE,
             cwd=project_root,
+            env=child_env,
         )
         print(f"  Opened agent '{name}' in a new window.")
 
