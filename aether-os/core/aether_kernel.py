@@ -1,5 +1,5 @@
 """
-AetherKernel — Central controller and orchestrator of the Aether AI OS.
+AetherKernel — Central controller and orchestrator of AetherAi-A Master AI.
 Manages all subsystems: agents, workflows, tools, memory, and AI adapters.
 """
 
@@ -26,18 +26,18 @@ from ai.ai_adapter import AIAdapter
 from memory.memory_manager import MemoryManager
 from utils.json_parser import extract_json, ParseError
 
-logging.basicConfig(level=logging.INFO, format="[Aether] %(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="[AetherAi] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
 class AetherKernel:
     """
-    The central kernel of the Aether AI Operating System.
+    The central kernel of AetherAi-A Master AI.
     All subsystems are initialized and coordinated here.
     """
 
     def __init__(self, ai_provider: str = "openai", model: str = "gpt-4o"):
-        logger.info("Booting Aether OS kernel...")
+        logger.info("Booting AetherAi-A Master AI kernel...")
         self.ai_adapter = AIAdapter(provider=ai_provider, model=model)
         self.memory = MemoryManager()
         self.registry = AgentRegistry()
@@ -62,7 +62,7 @@ class AetherKernel:
         )
         # Wire AI adapter into skill engine after creation
         self.skill_engine.ai_adapter = self.ai_adapter
-        logger.info("Aether OS kernel ready.")
+        logger.info("AetherAi-A Master AI kernel ready.")
 
     # ------------------------------------------------------------------
     # HITL control (Fix 8)
@@ -873,7 +873,7 @@ class AetherKernel:
         env_example = export_dir / ".env.example"
         # Write a clean .env with empty values
         blank_env = (
-            "# Aether Agent — AI Configuration\n"
+            "# AetherAi-A Master AI Agent — AI Configuration\n"
             "# Run python run_agent.py to configure interactively (first launch)\n\n"
             "AETHER_DEFAULT_PROVIDER=\n"
             "AETHER_DEFAULT_MODEL=\n\n"
@@ -920,7 +920,7 @@ class AetherKernel:
                 \"\"\"Interactive wizard to configure AI provider on first launch.\"\"\"
                 _env_path = os.path.join(_ROOT, ".env")
                 print("\\n" + "="*60)
-                print("  {name} — Aether Agent  |  First-time Setup")
+                print("  {name} — AetherAi-A Master AI Agent  |  First-time Setup")
                 print("="*60)
                 print("  Choose your AI provider:\\n")
                 _providers = [
@@ -991,7 +991,7 @@ class AetherKernel:
 
                 # Write to .env
                 _lines = [
-                    "# Aether Agent — AI Configuration\\n",
+                    "# AetherAi-A Master AI Agent — AI Configuration\\n",
                     f"AETHER_DEFAULT_PROVIDER={{_provider}}\\n",
                     f"AETHER_DEFAULT_MODEL={{_model}}\\n",
                 ]
@@ -1007,7 +1007,7 @@ class AetherKernel:
 
             def main():
                 parser = argparse.ArgumentParser(
-                    description="Aether Agent: {name} ({agent.role})"
+                    description="AetherAi-A Master AI Agent: {name} ({agent.role})"
                 )
                 parser.add_argument("--task",     default=None)
                 parser.add_argument("--provider", default=None)
@@ -1036,7 +1036,7 @@ class AetherKernel:
         bat.write_text(
             textwrap.dedent(f"""\
             @echo off
-            title {name} — Aether Agent
+            title {name} — AetherAi-A Master AI Agent
             color 0B
             cd /d "%~dp0"
 
@@ -1084,7 +1084,7 @@ class AetherKernel:
         readme = export_dir / "README.md"
         readme.write_text(
             textwrap.dedent(f"""\
-            # Aether Agent: {name}
+            # AetherAi-A Master AI Agent: {name}
 
             **Role:** {agent.role}
             **Skills:** {', '.join(agent.profile.get('skills', []))}
@@ -1235,73 +1235,274 @@ class AetherKernel:
         )
         files_written.append("server_requirements.txt")
 
-        # ── 9. build_exe.bat — PyInstaller one-file executable (Method 2) ─
+        # ── 9. build_exe.bat — Windows build script (Method 2) ──────────
+        #    Offers PyInstaller (fast) OR Nuitka (harder to decompile).
+        #    Handles Windows Defender warnings and code-signing guidance.
+        safe_name = name.replace(" ", "-")
+        hidden_imports = " ^\n                --hidden-import ".join([
+            "chromadb", "chromadb.api", "chromadb.db",
+            "openai", "anthropic", "yaml", "dotenv",
+            "tiktoken", "tiktoken_ext", "tiktoken_ext.openai_public",
+        ])
         build_bat = export_dir / "build_exe.bat"
         build_bat.write_text(
             textwrap.dedent(f"""\
             @echo off
-            :: Build a standalone Windows .exe for agent: {name}
-            :: Requires: pip install pyinstaller
-            title Build EXE — {name}
+            :: ================================================================
+            :: Build standalone Windows .exe  —  Agent: {name}
+            :: ================================================================
+            :: Choose your compiler:
+            ::   1 = PyInstaller  (fast build,  ~50MB,  basic obfuscation)
+            ::   2 = Nuitka       (slow build,  ~30MB,  C compilation — much
+            ::                     harder to decompile than PyInstaller)
+            ::
+            :: Windows Defender note:
+            ::   Unsigned .exe files may trigger SmartScreen / Defender.
+            ::   To suppress this for trusted testers:
+            ::     a) Submit to Microsoft:  https://www.microsoft.com/en-us/wdsi/filesubmission
+            ::     b) Sign with a code-signing cert (signtool.exe — see SIGNING section below)
+            ::     c) Ask tester to right-click → Properties → Unblock
+            :: ================================================================
+            title Build  —  {name}
             cd /d "%~dp0"
+            set NAME={safe_name}
 
             echo.
-            echo  Building standalone executable for {name}...
-            echo  This may take 1-3 minutes on first run.
+            echo  ============================================================
+            echo    Build: %NAME%
+            echo  ============================================================
             echo.
+            echo  Choose compiler:
+            echo    [1]  PyInstaller  (recommended for quick distribution)
+            echo    [2]  Nuitka       (C-compiled, significantly harder to
+            echo                       reverse-engineer; requires a C compiler)
+            echo.
+            set /p CHOICE=  Enter 1 or 2 [default: 1]: 
+            if "%CHOICE%"=="2" goto :nuitka
+            goto :pyinstaller
 
+            :: ── PyInstaller ──────────────────────────────────────────────
+            :pyinstaller
+            echo.
+            echo  Installing PyInstaller...
             pip install pyinstaller --quiet
+            echo  Building (this takes 1-3 minutes)...
+            echo.
 
             pyinstaller ^
                 --onefile ^
-                --name "{name}" ^
+                --name "%NAME%" ^
                 --add-data "agent_profile.json;." ^
-                --add-data ".env;." ^
-                --hidden-import chromadb ^
-                --hidden-import openai ^
-                --hidden-import anthropic ^
-                --hidden-import yaml ^
+                --add-data ".env.example;." ^
+                --hidden-import {hidden_imports} ^
+                --collect-submodules chromadb ^
+                --collect-submodules tiktoken_ext ^
+                --strip ^
+                --noupx ^
                 run_agent.py
 
             if %errorlevel%==0 (
                 echo.
-                echo  ✓ Build successful!
-                echo  Executable: dist\\{name}.exe
+                echo  ✓ PyInstaller build successful!
+                echo  Output:  dist\\%NAME%.exe
+                echo.
+                echo  -----------------------------------------------------------
+                echo  WINDOWS DEFENDER  —  if the .exe is flagged as suspicious:
+                echo    Option A: Right-click the .exe → Properties → click Unblock
+                echo    Option B: Submit for analysis:
+                echo              https://www.microsoft.com/en-us/wdsi/filesubmission
+                echo    Option C: Sign the binary (see SIGNING section in this file)
+                echo  -----------------------------------------------------------
             ) else (
                 echo.
-                echo  ✗ Build failed. Check the output above for errors.
+                echo  ✗ Build failed. See output above.
             )
+            goto :signing_info
+
+            :: ── Nuitka ───────────────────────────────────────────────────
+            :nuitka
+            echo.
+            echo  Installing Nuitka (requires a C compiler — MinGW or MSVC)...
+            pip install nuitka ordered-set --quiet
+            echo  Building with Nuitka (this takes 5-15 minutes on first run)...
+            echo  Nuitka compiles Python to C then to native machine code.
+            echo  The result is significantly harder to reverse-engineer.
+            echo.
+
+            python -m nuitka ^
+                --standalone ^
+                --onefile ^
+                --output-filename="%NAME%.exe" ^
+                --include-data-file=agent_profile.json=agent_profile.json ^
+                --include-data-file=.env.example=.env.example ^
+                --include-package=chromadb ^
+                --include-package=openai ^
+                --include-package=anthropic ^
+                --include-package=yaml ^
+                --include-package=dotenv ^
+                --remove-output ^
+                --assume-yes-for-downloads ^
+                run_agent.py
+
+            if %errorlevel%==0 (
+                echo.
+                echo  ✓ Nuitka build successful!
+                echo  Output:  %NAME%.exe
+                echo.
+                echo  Nuitka note: your Python logic is compiled to native C code.
+                echo  Decompiling requires reverse-engineering compiled binaries,
+                echo  not just .pyc files.
+            ) else (
+                echo.
+                echo  ✗ Nuitka build failed.
+                echo  Ensure a C compiler is installed:
+                echo    MinGW: https://www.mingw-w64.org/
+                echo    MSVC:  https://visualstudio.microsoft.com/visual-cpp-build-tools/
+            )
+
+            :: ── Code-signing guidance ────────────────────────────────────
+            :signing_info
+            echo.
+            echo  -----------------------------------------------------------
+            echo  OPTIONAL CODE SIGNING  (removes Defender / SmartScreen alerts)
+            echo  -----------------------------------------------------------
+            echo  1. Get a code-signing certificate:
+            echo       Cheap (~$70/yr):  Sectigo, DigiCert, Comodo
+            echo       Free (EV needed for instant trust, expensive)
+            echo.
+            echo  2. Sign the binary with signtool.exe (ships with Windows SDK):
+            echo       signtool sign /fd sha256 /f MyCert.pfx /p YourPassword
+            echo                     /t http://timestamp.digicert.com
+            echo                     dist\\%NAME%.exe
+            echo.
+            echo  3. Verify the signature:
+            echo       signtool verify /pa dist\\%NAME%.exe
+            echo  -----------------------------------------------------------
+            echo.
             pause
             """),
             encoding="utf-8",
         )
         files_written.append("build_exe.bat")
 
-        # build_exe.sh — same for Linux/macOS
+        # ── build_exe.sh — macOS / Linux build script (Method 2) ─────────
+        hidden_imports_sh = " \\\n                --hidden-import ".join([
+            "chromadb", "chromadb.api", "chromadb.db",
+            "openai", "anthropic", "yaml", "dotenv",
+            "tiktoken", "tiktoken_ext", "tiktoken_ext.openai_public",
+        ])
         build_sh = export_dir / "build_exe.sh"
         build_sh.write_text(
             textwrap.dedent(f"""\
             #!/usr/bin/env bash
-            # Build a standalone binary for agent: {name}
-            # Requires: pip install pyinstaller
+            # =================================================================
+            # Build standalone binary  —  Agent: {name}
+            # Targets: macOS (.app / binary) and Linux (ELF binary)
+            # =================================================================
+            # Choose compiler:
+            #   1 = PyInstaller  (fast, basic obfuscation)
+            #   2 = Nuitka       (C-compiled, harder to decompile)
+            #
+            # macOS note: code-signing with Apple Developer ID removes
+            # Gatekeeper warnings.  See SIGNING section at bottom of script.
+            # =================================================================
             set -e
             cd "$(dirname "$0")"
+            NAME="{safe_name}"
+            OS="$(uname -s)"
 
-            echo "Building standalone binary for {name}..."
-            pip install pyinstaller --quiet
+            echo ""
+            echo "============================================================"
+            echo "  Build: $NAME  |  Platform: $OS"
+            echo "============================================================"
+            echo ""
+            echo "Choose compiler:"
+            echo "  [1]  PyInstaller  (recommended for quick distribution)"
+            echo "  [2]  Nuitka       (C-compiled, significantly harder to"
+            echo "                     reverse-engineer; requires gcc/clang)"
+            echo ""
+            read -rp "  Enter 1 or 2 [default: 1]: " CHOICE
+            CHOICE="${{CHOICE:-1}}"
 
-            pyinstaller \\
-                --onefile \\
-                --name "{name}" \\
-                --add-data "agent_profile.json:." \\
-                --add-data ".env:." \\
-                --hidden-import chromadb \\
-                --hidden-import openai \\
-                --hidden-import anthropic \\
-                --hidden-import yaml \\
-                run_agent.py
+            if [ "$CHOICE" = "2" ]; then
+                # ── Nuitka ────────────────────────────────────────────────
+                echo ""
+                echo "  Installing Nuitka..."
+                pip install nuitka ordered-set --quiet
 
-            echo "✓ Build successful! Binary: dist/{name}"
+                echo "  Building with Nuitka (5-15 minutes on first run)..."
+                python -m nuitka \\
+                    --standalone \\
+                    --onefile \\
+                    --output-filename="$NAME" \\
+                    --include-data-file=agent_profile.json=agent_profile.json \\
+                    --include-data-file=.env.example=.env.example \\
+                    --include-package=chromadb \\
+                    --include-package=openai \\
+                    --include-package=anthropic \\
+                    --include-package=yaml \\
+                    --include-package=dotenv \\
+                    --remove-output \\
+                    --assume-yes-for-downloads \\
+                    run_agent.py
+
+                echo ""
+                echo "  ✓ Nuitka build successful! Binary: ./$NAME"
+                echo "  Your logic is compiled to native C — not Python bytecode."
+            else
+                # ── PyInstaller ───────────────────────────────────────────
+                echo ""
+                echo "  Installing PyInstaller..."
+                pip install pyinstaller --quiet
+
+                echo "  Building (1-3 minutes)..."
+                pyinstaller \\
+                    --onefile \\
+                    --name "$NAME" \\
+                    --add-data "agent_profile.json:." \\
+                    --add-data ".env.example:." \\
+                    --hidden-import {hidden_imports_sh} \\
+                    --collect-submodules chromadb \\
+                    --collect-submodules tiktoken_ext \\
+                    --strip \\
+                    run_agent.py
+
+                echo ""
+                echo "  ✓ PyInstaller build successful! Binary: dist/$NAME"
+            fi
+
+            # ── macOS code-signing guidance ───────────────────────────────
+            if [ "$OS" = "Darwin" ]; then
+                echo ""
+                echo "  -----------------------------------------------------------"
+                echo "  macOS CODE SIGNING  (removes Gatekeeper 'cannot be opened')"
+                echo "  -----------------------------------------------------------"
+                echo "  1. Enrol in Apple Developer Program (\$99/yr)"
+                echo "     https://developer.apple.com/programs/"
+                echo ""
+                echo "  2. Sign the binary:"
+                echo "     codesign --deep --force --verify --verbose"
+                echo "              --sign 'Developer ID Application: Your Name (TEAMID)'"
+                echo "              dist/$NAME"
+                echo ""
+                echo "  3. Notarize (required for macOS 10.15+):"
+                echo "     xcrun notarytool submit dist/$NAME"
+                echo "          --apple-id you@example.com --team-id TEAMID"
+                echo "          --password APP_SPECIFIC_PASSWORD --wait"
+                echo ""
+                echo "  4. Staple the notarization ticket:"
+                echo "     xcrun stapler staple dist/$NAME"
+                echo "  -----------------------------------------------------------"
+            fi
+
+            # ── Linux AppImage (optional convenience wrapper) ─────────────
+            if [ "$OS" = "Linux" ]; then
+                echo ""
+                echo "  TIP: Wrap the binary in an AppImage for universal Linux distro support:"
+                echo "    https://appimage.org/"
+            fi
+
+            echo ""
             """),
             encoding="utf-8",
         )
@@ -1436,7 +1637,7 @@ class AetherKernel:
             \"\"\"
             {system_name} — Aether AI System
             Agents: {', '.join(agent_names)}
-            Created by Aether OS
+            Created by AetherAi-A Master AI
             \"\"\"
             from __future__ import annotations
             import os, sys, argparse

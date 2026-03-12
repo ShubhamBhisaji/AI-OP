@@ -1,8 +1,8 @@
-# Aether AI Operating System — Copilot Workspace Instructions
+# AetherAi-A Master AI — Copilot Workspace Instructions
 
 ## Project Overview
 
-This is **Aether OS** — a modular AI Operating System written in Python 3.10+.
+This is **AetherAi-A Master AI** — a modular AI Operating System written in Python 3.10+.
 It manages AI agents like processes in an operating system.
 
 ## Architecture

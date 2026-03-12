@@ -262,7 +262,7 @@ def _brightness(img, src: Path, opts: dict, ImageEnhance) -> str:
 
 
 def _watermark(img, src: Path, opts: dict, ImageDraw, ImageFont) -> str:
-    text = opts.get("text", "Aether OS") or "Aether OS"
+    text = opts.get("text", "AetherAi-A Master AI") or "AetherAi-A Master AI"
     draw = ImageDraw.Draw(img.copy())
     w, h = img.size
     # Place text at bottom-right, 10px from edge

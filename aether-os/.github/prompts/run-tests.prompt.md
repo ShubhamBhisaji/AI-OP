@@ -1,8 +1,8 @@
 ---
-description: "Run and fix Aether OS tests. Use when: run tests, fix tests, test failing, debug test, something broken"
+description: "Run and fix AetherAi-A Master AI tests. Use when: run tests, fix tests, test failing, debug test, something broken"
 ---
 
-Run the Aether OS full integration test suite and fix any failures.
+Run the AetherAi-A Master AI full integration test suite and fix any failures.
 
 ## Steps
 

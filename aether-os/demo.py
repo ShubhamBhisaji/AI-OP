@@ -26,7 +26,7 @@ upgrade = se.upgrade("research_agent")
 se.upgrade("coding_agent")
 
 print("=" * 50)
-print("  Aether AI Operating System  v1.0.0")
+print("  AetherAi-A Master AI  v1.0.0")
 print("  All systems OPERATIONAL")
 print("=" * 50)
 print()

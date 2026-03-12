@@ -1,8 +1,8 @@
 ---
-description: "Create a new Aether OS agent type. Use when: new agent, create agent, add agent preset, build agent"
+description: "Create a new AetherAi-A Master AI agent type. Use when: new agent, create agent, add agent preset, build agent"
 ---
 
-Create a new Aether OS agent preset called `${agentName}`.
+Create a new AetherAi-A Master AI agent preset called `${agentName}`.
 
 ## Requirements
 

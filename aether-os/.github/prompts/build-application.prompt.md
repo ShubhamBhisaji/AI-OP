@@ -2,11 +2,11 @@
 description: "Build a complete application using Aether agents. Use when: build app, generate application, create project, scaffold application"
 ---
 
-Build a complete `${appType}` application using the Aether OS agent team.
+Build a complete `${appType}` application using the AetherAi-A Master AI agent team.
 
 ## Plan
 
-Use the following Aether agents in a pipeline to produce a full working application:
+Use the following AetherAi-A Master AI agents in a pipeline to produce a full working application:
 
 1. **research_agent** — Research best practices, libraries, and architecture for a `${appType}`
 2. **coding_agent** — Scaffold all source files, modules, and boilerplate

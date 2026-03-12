@@ -221,7 +221,7 @@ def _banner(agent_name: str, role: str, provider: str, model: str, skills: list)
     skill_str = ", ".join(skills) if skills else "none"
     return f"""
 {sep}
-  AETHER AGENT — {agent_name.upper()}
+  AetherAi-A MASTER AI — {agent_name.upper()}
   Role     : {role}
   AI       : {provider} / {model}
   Skills   : {skill_str}
@@ -235,7 +235,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
     # Set the CMD window title
     try:
         import ctypes
-        ctypes.windll.kernel32.SetConsoleTitleW(f"Aether Agent — {agent_name}")
+        ctypes.windll.kernel32.SetConsoleTitleW(f"AetherAi-A Master AI — {agent_name}")
     except Exception:
         pass
 
@@ -1332,7 +1332,7 @@ def main():
     except Exception as exc:
         import traceback
         print("\n" + "=" * 60)
-        print("  AETHER AGENT — ERROR")
+        print("  AetherAi-A MASTER AI — ERROR")
         print("=" * 60)
         print(f"\n  Agent  : {args.agent_name}")
         print(f"  Error  : {exc}\n")

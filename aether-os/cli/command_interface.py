@@ -1,5 +1,5 @@
 """
-CommandInterface — CLI for the Aether AI Operating System.
+CommandInterface — CLI for AetherAi-A Master AI.
 Provides an interactive REPL and supports all core Aether commands.
 """
 
@@ -67,7 +67,7 @@ BANNER = r"""
 | | | |  __/ |_| | | |  __/ |
 \_| |_/\___|\__|_| |_|\___|_|
 
-  AI Operating System  v1.0.0
+  AetherAi-A Master AI  v1.0.0
   Type 'help' for commands.
 """
 
@@ -140,7 +140,7 @@ Commands:
   ────────────────────────────────────────────────────────────────────
 
   help                             Show this help message
-  exit / quit                      Exit Aether OS
+  exit / quit                      Exit AetherAi-A Master AI
 """
 
 
@@ -166,7 +166,7 @@ class CommandInterface:
             try:
                 raw = input("aether> ").strip()
             except (EOFError, KeyboardInterrupt):
-                print("\nExiting Aether OS. Goodbye.")
+                print("\nExiting AetherAi-A Master AI. Goodbye.")
                 break
             if not raw:
                 continue
@@ -916,7 +916,7 @@ class CommandInterface:
         print("Memory cleared.")
 
     def _cmd_exit(self, _args: list[str]) -> None:
-        print("Shutting down Aether OS. Goodbye.")
+        print("Shutting down AetherAi-A Master AI. Goodbye.")
         self._running = False
         sys.exit(0)
 
@@ -1196,7 +1196,7 @@ class CommandInterface:
 
         W = 56
         print(f"\n  {'═'*W}")
-        print(f"  {'AETHER OS  —  SYSTEM STATUS':^{W}}")
+        print(f"  {'AetherAi-A Master AI  —  SYSTEM STATUS':^{W}}")
         print(f"  {'═'*W}")
 
         # AI

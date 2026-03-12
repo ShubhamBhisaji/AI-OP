@@ -1,5 +1,5 @@
 """
-MemoryManager — Persistent and session memory for the Aether OS.
+MemoryManager — Persistent and session memory for AetherAi-A Master AI.
 Supports key-value storage, list appending, JSON file persistence,
 and optional semantic (vector) search via ChromaDB.
 

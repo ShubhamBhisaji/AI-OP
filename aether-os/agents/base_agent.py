@@ -1,5 +1,5 @@
 """
-BaseAgent — The foundation class for all Aether agents.
+BaseAgent — The foundation class for all AetherAi-A Master AI agents.
 Every agent created by AgentFactory inherits from this class.
 
 Fix 6 — RBAC:
@@ -30,7 +30,7 @@ PERMISSION_LABELS: dict[int, str] = {
 
 class BaseAgent:
     """
-    A general-purpose AI agent within the Aether OS.
+    A general-purpose AI agent within AetherAi-A Master AI.
 
     Attributes:
         name             : Unique identifier name for this agent.

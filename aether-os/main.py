@@ -1,5 +1,5 @@
 """
-main.py — Entry point for the Aether AI Operating System.
+main.py — Entry point for AetherAi-A Master AI.
 
 Usage:
     python main.py                        # Interactive CLI mode
@@ -73,7 +73,7 @@ def check_credentials(provider: str) -> None:
 
     print()
     print("=" * 60)
-    print("  AETHER OS — First-Run Setup")
+    print("  AetherAi-A Master AI — First-Run Setup")
     print("=" * 60)
     print()
     print(f"  Provider   : {provider}")
@@ -137,7 +137,7 @@ def pick_provider() -> str:
     """Display an interactive AI-provider selection menu and return the chosen provider id."""
     print()
     print("=" * 66)
-    print("  AETHER OS — Select an AI Provider")
+    print("  AetherAi-A Master AI — Select an AI Provider")
     print("=" * 66)
     print()
     print(f"  {'#':<3} {'Provider':<16} {'Default Model':<38} {'Key Status'}")
@@ -183,7 +183,7 @@ def pick_provider() -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="aether",
-        description="Aether AI Operating System",
+        description="AetherAi-A Master AI",
     )
     parser.add_argument(
         "--provider",
