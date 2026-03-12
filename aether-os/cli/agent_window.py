@@ -1,4 +1,4 @@
-"""
+﻿"""
 agent_window.py — Dedicated single-agent REPL window.
 
 Launched automatically by `open_agent <name>` from the main Aether CLI.
@@ -233,7 +233,7 @@ def _banner(agent_name: str, role: str, provider: str, model: str, skills: list)
     skill_str = ", ".join(skills) if skills else "none"
     return f"""
 {sep}
-  AetherAi-A MASTER AI -- {agent_name.upper()}
+  AetheerAI — An AI Master!! -- {agent_name.upper()}
   Role     : {role}
   AI       : {provider} / {model}
   Skills   : {skill_str}
@@ -247,7 +247,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
     # Set the CMD window title
     try:
         import ctypes
-        ctypes.windll.kernel32.SetConsoleTitleW(f"AetherAi-A Master AI — {agent_name}")
+        ctypes.windll.kernel32.SetConsoleTitleW(f"AetheerAI — An AI Master!! — {agent_name}")
     except Exception:
         pass
 
@@ -1350,7 +1350,7 @@ def main():
     except Exception as exc:
         import traceback
         print("\n" + "=" * 60)
-        print("  AetherAi-A MASTER AI -- ERROR")
+        print("  AetheerAI — An AI Master!! -- ERROR")
         print("=" * 60)
         print(f"\n  Agent  : {args.agent_name}")
         print(f"  Error  : {exc}\n")

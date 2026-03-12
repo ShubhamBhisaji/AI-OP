@@ -1,8 +1,8 @@
----
+﻿---
 applyTo: "tools/*.py"
 ---
 
-## Rules for AetherAi-A Master AI tool files
+## Rules for AetheerAI — An AI Master!! tool files
 
 - The file must export exactly **one public function** named after the file (e.g. `tools/web_search.py` exports `web_search`)
 - Signature: `def tool_name(input: str, ...) -> str`

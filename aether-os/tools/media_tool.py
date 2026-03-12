@@ -1,4 +1,4 @@
-"""media_tool — Image inspection, transformation, and basic video info.
+﻿"""media_tool — Image inspection, transformation, and basic video info.
 
 Requires: Pillow (pip install Pillow) for image operations.
           moviepy or opencv-python for video operations (optional, gracefully skipped).
@@ -262,7 +262,7 @@ def _brightness(img, src: Path, opts: dict, ImageEnhance) -> str:
 
 
 def _watermark(img, src: Path, opts: dict, ImageDraw, ImageFont) -> str:
-    text = opts.get("text", "AetherAi-A Master AI") or "AetherAi-A Master AI"
+    text = opts.get("text", "AetheerAI — An AI Master!!") or "AetheerAI — An AI Master!!"
     draw = ImageDraw.Draw(img.copy())
     w, h = img.size
     # Place text at bottom-right, 10px from edge

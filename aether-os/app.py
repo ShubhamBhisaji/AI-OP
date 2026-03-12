@@ -1,8 +1,8 @@
-"""
-app.py — AetherAi Master Dashboard (Streamlit GUI)
+﻿"""
+app.py — AetheerAI — An AI Master!! Dashboard (Streamlit GUI)
 
 Run with:  python -m streamlit run app.py
-Or use:    Start_AetherAi.bat
+Or use:    Start_AetheerAI.bat
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from core.workflow_engine import WorkflowFeedback, HITLAction
 
 # ── Page config — must be first Streamlit call ───────────────────────────
 st.set_page_config(
-    page_title="AetherAi Master",
+    page_title="AetheerAI — An AI Master!!",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -214,7 +214,7 @@ hr { border-color: #1a2d47 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── AetherAi SVG icon ─ unique gradient IDs per placement ────────────────
+# ── AetheerAI SVG icon ─ unique gradient IDs per placement ────────────────
 _NAV_SVG = ('<svg width="30" height="30" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"'
             ' style="flex-shrink:0;border-radius:8px">'
             '<defs>'
@@ -264,15 +264,16 @@ if os.path.exists(_icon_path):
 st.markdown(f"""
 <div class="top-navbar">
     {_NAV_SVG}
-    <span class="top-navbar-title">AetherAi Master</span>
+    <span class="top-navbar-title">AetheerAI — An AI Master!!</span>
     <span class="top-navbar-sub">Advanced AI Operating System</span>
     <span class="top-navbar-badge">● ONLINE</span>
+    <span style="font-size:10px;color:#1e3a5f;font-weight:500;margin-left:8px;letter-spacing:0.3px;">Created&nbsp;by&nbsp;<span style="color:#3b82f6;font-weight:700;">Tecbunny</span></span>
 </div>
 """, unsafe_allow_html=True)
 
 
 # ── Boot the OS kernel (cached — runs only once per session) ─────────────
-@st.cache_resource(show_spinner="Booting AetherAi-A Master AI kernel...")
+@st.cache_resource(show_spinner="Booting AetheerAI — An AI Master!! kernel...")
 def boot_os() -> AetherKernel:
     load_env()
     # Read provider / model from env, fall back to github / gpt-4.1
@@ -302,8 +303,8 @@ with st.sidebar:
         <div style="display:flex;align-items:center;gap:10px;">
             {_SB_SVG}
             <div>
-                <div class="sidebar-brand-title">AetherAi Master</div>
-                <div class="sidebar-brand-sub">Advanced AI Operating System</div>
+                <div class="sidebar-brand-title">AetheerAI — An AI Master!!</div>
+                <div class="sidebar-brand-sub">by Tecbunny</div>
             </div>
         </div>
     </div>
@@ -339,11 +340,21 @@ with st.sidebar:
     )
 
     # ── Stop button ───────────────────────────────────────────────────
-    if st.button("⏹ Stop AetherAi", use_container_width=True, type="secondary"):
-        st.warning("Shutting down AetherAi... You can close this tab.")
-        st.toast("AetherAi stopped.", icon="⏹")
+    if st.button("⏹ Stop AetheerAI", use_container_width=True, type="secondary"):
+        st.warning("Shutting down AetheerAI... You can close this tab.")
+        st.toast("AetheerAI stopped.", icon="⏹")
         import time as _t; _t.sleep(1)
         import os as _os; _os._exit(0)
+
+    # ── Bottom credit ─────────────────────────────────────────────────
+    st.markdown("""
+    <div style="text-align:center;padding:14px 0 6px;font-size:10px;
+                color:#1a2d47;font-weight:500;letter-spacing:0.4px;">
+        <span style="color:#3b82f6;font-weight:700;">AetheerAI</span>
+        &nbsp;—&nbsp;Created&nbsp;by&nbsp;
+        <span style="color:#a78bfa;font-weight:700;">Tecbunny</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -379,7 +390,7 @@ if page == "💬 Task Executor":
             with st.spinner(f"⚡ {selected_agent} is working..."):
                 try:
                     agent_obj = kernel.registry.get(selected_agent)
-                    result = kernel.workflow_engine.execute(agent_obj, prompt)
+                    result = _run_agent_sync(agent_obj, prompt)
                     result_str = str(result)
                 except Exception as exc:
                     result_str = f"**Error:** {exc}"
@@ -400,7 +411,7 @@ elif page == "🏭 Agent Factory":
     st.header("🏭 Agent Factory")
     st.markdown(
         "Describe the role of the agent you want. "
-        "AetherAi will automatically research, provision, and register it."
+        "AetheerAI will automatically research, provision, and register it."
     )
 
     col1, col2 = st.columns([1, 2])
@@ -458,7 +469,7 @@ elif page == "👥 System Orchestrator":
     st.header("👥 System Orchestrator")
     st.markdown(
         "Build an entire multi-agent team from a single description. "
-        "AetherAi designs the agent roster, writes each system prompt, and registers them all."
+        "AetheerAI designs the agent roster, writes each system prompt, and registers them all."
     )
 
     sys_col1, sys_col2 = st.columns([1, 2])
@@ -498,15 +509,15 @@ elif page == "👥 System Orchestrator":
 elif page == "🎓 Train AI":
     st.header("🎓 Train AI")
     st.markdown(
-        "Shape how AetherAi and individual agents think, respond, and behave. "
+        "Shape how AetheerAI and individual agents think, respond, and behave. "
         "Instructions you write here are injected directly into every AI prompt."
     )
 
-    tab_global, tab_agent = st.tabs(["🌐 AetherAi System Instructions", "🤖 Agent Instructions"])
+    tab_global, tab_agent = st.tabs(["🌐 AetheerAI System Instructions", "🤖 Agent Instructions"])
 
     # ── Tab 1: Global / System-level instructions ─────────────────────
     with tab_global:
-        st.subheader("🌐 AetherAi System Instructions")
+        st.subheader("🌐 AetheerAI System Instructions")
         st.markdown(
             "These instructions are prepended to **every agent's prompt** across the entire system. "
             "Use them to set the overall personality, language style, output format rules, "
@@ -528,7 +539,7 @@ elif page == "🎓 Train AI":
             "System-wide instructions",
             value=_cur_sys,
             height=280,
-            placeholder="Enter instructions that apply to ALL agents in AetherAi...",
+            placeholder="Enter instructions that apply to ALL agents in AetheerAI...",
             key="train_sys_instr",
         )
 
@@ -691,6 +702,20 @@ elif page == "⚙️ Settings & Export":
         "gemini":      "https://generativelanguage.googleapis.com",
     }
 
+    def _is_vertex_ai(ep: str) -> bool:
+        return "aiplatform.googleapis.com" in ep
+
+    def _extract_model_from_vertex_url(url: str) -> str:
+        import re as _re
+        m = _re.search(r"/models/([^/:?]+)", url)
+        return m.group(1) if m else ""
+
+    _VERTEX_MODELS = [
+        "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro",
+        "gemini-2.0-flash", "gemini-2.0-flash-lite",
+        "gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro",
+    ]
+
     def _fetch_models_for(provider: str, api_key: str, endpoint: str = "") -> list[str]:
         """Try to fetch live model list from provider; fall back to static list on any error."""
         try:
@@ -708,6 +733,14 @@ elif page == "⚙️ Settings & Export":
                 return ids or _STATIC_MODELS["openai"]
 
             elif provider == "gemini":
+                # Vertex AI endpoint — can't list without OAuth; return known Vertex models
+                if _is_vertex_ai(endpoint):
+                    # Extract model if embedded in custom endpoint URL
+                    _from_url = _extract_model_from_vertex_url(endpoint)
+                    if _from_url and _from_url not in _VERTEX_MODELS:
+                        return [_from_url] + _VERTEX_MODELS
+                    return _VERTEX_MODELS
+                # AI Studio — fetch live list with API key
                 url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
                 with _urllib_req.urlopen(url, timeout=8) as r:
                     data = _json.loads(r.read())
@@ -758,6 +791,48 @@ elif page == "⚙️ Settings & Export":
                 return True, f"✅ Connected — model replied: *{reply[:80]}*"
 
             elif provider == "gemini":
+                # ── Vertex AI endpoint (aiplatform.googleapis.com) ─────
+                if _is_vertex_ai(endpoint):
+                    # Build clean generateContent URL from the custom endpoint
+                    # Strip any existing method suffix (:streamGenerateContent etc)
+                    import re as _re
+                    _base_ep = _re.sub(r':(streamGenerateContent|generateContent|streamRawPredict|rawPredict).*', '', endpoint).rstrip('/')
+                    # If model is embedded in the URL, reuse it; otherwise append
+                    if "/models/" in _base_ep:
+                        _vertex_url = f"{_base_ep}:generateContent?key={api_key}"
+                    else:
+                        _vertex_url = f"{_base_ep}/models/{model}:generateContent?key={api_key}"
+                    payload = _json.dumps({
+                        "contents": [{"role": "user", "parts": [{"text": _msg[0]["content"]}]}]
+                    }).encode()
+                    req = _urllib_req.Request(_vertex_url, data=payload,
+                                              headers={"Content-Type": "application/json"}, method="POST")
+                    try:
+                        with _urllib_req.urlopen(req, timeout=25) as r:
+                            data = _json.loads(r.read())
+                        reply = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        return True, f"✅ Vertex AI connected — model replied: *{reply[:80]}*"
+                    except _urllib_err.HTTPError as _vexc:
+                        _vcode = _vexc.code
+                        try:
+                            _vdet = _json.loads(_vexc.read().decode())
+                            _verr = _vdet.get("error", {}).get("message", str(_vexc))
+                        except Exception:
+                            _verr = str(_vexc)
+                        if _vcode == 401:
+                            return False, (
+                                f"❌ Vertex AI ({_vcode}): {_verr}\n\n"
+                                "**Vertex AI requires OAuth2 — API keys won't work here.**\n\n"
+                                "**Options:**\n"
+                                "• Use the standard Gemini AI Studio endpoint instead: `https://generativelanguage.googleapis.com` "
+                                "with an AI Studio key from https://aistudio.google.com/apikey\n"
+                                "• Or use a Google Cloud service account and pass an OAuth2 access token\n"
+                                "• Tip: Paste your curl command in **Auto-Configure via Ollama** above — "
+                                "it will detect Vertex AI and explain what you need."
+                            )
+                        return False, f"❌ Vertex AI error ({_vcode}): {_verr}"
+
+                # ── Standard AI Studio endpoint ────────────────────────
                 _ep = (
                     f"https://generativelanguage.googleapis.com/v1beta/models/"
                     f"{model}:generateContent?key={api_key}"
@@ -813,6 +888,141 @@ elif page == "⚙️ Settings & Export":
             return False, f"❌ API error ({exc.code}): {err}"
         except Exception as exc:
             return False, f"❌ {exc}"
+
+    # ── Auto-Configure via Ollama ─────────────────────────────────────
+    import shutil as _shutil, subprocess as _subp
+
+    _ollama_running = False
+    _ollama_local_models: list[str] = []
+    try:
+        _tags_raw = _subp.check_output(["ollama", "list"], text=True, stderr=_subp.STDOUT, timeout=5)
+        _ollama_running = True
+        _ollama_local_models = [
+            l.split()[0] for l in _tags_raw.strip().splitlines()[1:] if l.strip()
+        ]
+    except Exception:
+        pass
+
+    with st.expander("🤖 Auto-Configure from API Docs / curl command", expanded=False):
+        st.markdown(
+            "Paste a **curl command**, **API documentation snippet**, or **JSON config** — "
+            "Ollama will analyze it and auto-fill provider, endpoint, and model settings for you."
+        )
+
+        if not _shutil.which("ollama"):
+            st.warning("⚠️ **Ollama is not installed.** This feature requires a local Ollama model to analyze your docs.")
+            st.markdown("""
+**Setup steps:**
+1. [Download Ollama for Windows](https://ollama.com/download/windows) and install it
+2. Open a terminal and run: `ollama pull llama3.2`
+3. Restart this dashboard — auto-configure will be available
+            """)
+            st.link_button("⬇️ Install Ollama", "https://ollama.com/download/windows",
+                           type="primary", use_container_width=False)
+
+        elif not _ollama_running:
+            st.warning("⚠️ **Ollama is installed but not running.** Start it from your taskbar or run `ollama serve` in a terminal.")
+
+        elif not _ollama_local_models:
+            st.info("📦 Ollama is running but no models are installed.\n\nRun: `ollama pull llama3.2` — then come back here.")
+
+        else:
+            st.success(f"✅ Ollama ready — {len(_ollama_local_models)} local model(s) available")
+
+            _ac_model_sel = st.selectbox(
+                "Analysis model", _ollama_local_models,
+                help="Smaller models like llama3.2 or phi4 work fine for this.",
+                key="ac_ollama_model",
+            )
+            _ac_docs = st.text_area(
+                "Paste curl command / API docs / JSON config",
+                height=170,
+                placeholder=(
+                    'curl "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent?key=${API_KEY}" \\\n'
+                    '  -X POST -H "Content-Type: application/json" \\\n'
+                    '  -d \'{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}\'\n\n'
+                    '— or paste any API reference JSON, OpenAPI spec, or endpoint description'
+                ),
+                key="ac_docs_input",
+            )
+
+            if st.button("🔍 Analyze & Auto-Fill Settings", type="primary",
+                         disabled=not (_ac_docs or "").strip(), key="ac_analyze"):
+                with st.spinner(f"Ollama ({_ac_model_sel}) is reading your API docs..."):
+                    _ac_prompt = (
+                        "You are an API configuration expert. Analyze the following API documentation, "
+                        "curl command, or config snippet and extract all relevant settings.\n\n"
+                        "Return ONLY a raw JSON object — no markdown fences, no explanation, just JSON:\n"
+                        "{\n"
+                        '  "provider": "one of: github, openai, claude, gemini, ollama, huggingface, or custom",\n'
+                        '  "endpoint": "base API URL, strip model name and method suffix (e.g. https://aiplatform.googleapis.com for Vertex, https://generativelanguage.googleapis.com for AI Studio)",\n'
+                        '  "model": "model ID extracted from URL or docs",\n'
+                        '  "auth_type": "one of: api_key_param (?key=), bearer (Authorization: Bearer), x-api-key, none",\n'
+                        '  "env_var": "recommended env var name e.g. GEMINI_API_KEY",\n'
+                        '  "requires_oauth": true or false,\n'
+                        '  "notes": "1-2 sentence explanation — flag if OAuth2/service account is needed instead of a simple API key, and what the user should do"\n'
+                        "}\n\nAPI DOCS:\n" + _ac_docs.strip()
+                    )
+                    try:
+                        import urllib.request as _ur2, json as _uj2
+                        _pl = _uj2.dumps({"model": _ac_model_sel,
+                                          "messages": [{"role": "user", "content": _ac_prompt}],
+                                          "stream": False}).encode()
+                        _rq = _ur2.Request("http://localhost:11434/api/chat", data=_pl,
+                                           headers={"Content-Type": "application/json"}, method="POST")
+                        with _ur2.urlopen(_rq, timeout=90) as _rr:
+                            _raw_resp = _uj2.loads(_rr.read())
+                        _raw_txt = _raw_resp.get("message", {}).get("content", "").strip()
+                        # Strip markdown code fences if model wrapped output
+                        if "```" in _raw_txt:
+                            _raw_txt = "\n".join(
+                                ln for ln in _raw_txt.splitlines()
+                                if not ln.strip().startswith("```")
+                            )
+                        _ac_cfg = _uj2.loads(_raw_txt)
+                        st.session_state["ac_result"] = _ac_cfg
+                    except Exception as _ae:
+                        st.error(f"Analysis failed: {_ae}")
+                        st.session_state.pop("ac_result", None)
+
+            _ac_res = st.session_state.get("ac_result")
+            if _ac_res:
+                if _ac_res.get("requires_oauth"):
+                    st.warning(
+                        f"⚠️ **OAuth2 / Service Account Required**\n\n{_ac_res.get('notes', '')}\n\n"
+                        "This endpoint does **not** accept simple API keys.\n\n"
+                        "**Your options:**\n"
+                        "• Switch to the standard AI Studio endpoint `https://generativelanguage.googleapis.com` "
+                        "and get a free key at https://aistudio.google.com/apikey\n"
+                        "• Or authenticate via `gcloud auth application-default login` and pass an OAuth2 access token"
+                    )
+                else:
+                    st.info(f"💡 {_ac_res.get('notes', '')}")
+
+                with st.expander("Extracted configuration", expanded=True):
+                    st.json(_ac_res)
+
+                if not _ac_res.get("requires_oauth"):
+                    if st.button("✅ Apply This Config", type="primary", key="ac_apply"):
+                        _ap = _ac_res.get("provider", "")
+                        _aep = _ac_res.get("endpoint", "")
+                        _amd = _ac_res.get("model", "")
+                        # Store endpoint so it auto-fills the Advanced field
+                        if _aep:
+                            st.session_state[f"cfg_endpoint_{_ap}"] = _aep
+                        # Inject model into the fetched list so it shows in dropdown
+                        if _amd:
+                            _amk = f"fetched_models_{_ap}"
+                            _aex = st.session_state.get(_amk, _STATIC_MODELS.get(_ap, []))
+                            if _amd not in _aex:
+                                st.session_state[_amk] = [_amd] + _aex
+                        st.success(
+                            f"✅ Config applied — provider: **{_ap}** | model: **{_amd}**\n\n"
+                            f"The fields below have been pre-filled. Enter your API key and run **Test Connection**."
+                        )
+                        st.rerun()
+
+    st.divider()
 
     # ── AI Provider Configuration UI ──────────────────────────────────
     st.subheader("🔌 AI Provider Configuration")
@@ -917,7 +1127,7 @@ elif page == "⚙️ Settings & Export":
         st.caption("💡 Run **Test Connection** first — settings apply only after a successful test.")
 
     if st.button(
-        "✅ Apply & Notify AetherAi",
+        "✅ Apply & Notify AetheerAI",
         type="primary",
         disabled=not _test_passed,
         key="cfg_apply",
@@ -959,7 +1169,7 @@ elif page == "⚙️ Settings & Export":
         kernel.memory.save("last_provider_change", _notif, namespace="global")
 
         st.success(
-            f"✅ AetherAi is now using **{new_provider}** / **{kernel.ai_adapter.model}**  \n"
+            f"✅ AetheerAI is now using **{new_provider}** / **{kernel.ai_adapter.model}**  \n"
             f"API key saved · All agents notified."
         )
         st.session_state[_test_passed_key] = False
@@ -968,7 +1178,7 @@ elif page == "⚙️ Settings & Export":
 
     # ── Broadcast setting change to all AI systems ────────────────────
     st.divider()
-    with st.expander("📡 Notify AetherAi / AI Systems — Broadcast a Setting Change", expanded=False):
+    with st.expander("📡 Notify AetheerAI / AI Systems — Broadcast a Setting Change", expanded=False):
         st.markdown(
             "Send a **system-wide notice** to all agents. "
             "Your message is injected into every agent's prompt so they are aware of the change."
@@ -1114,11 +1324,11 @@ elif page == "⚙️ Settings & Export":
                     })
                 st.dataframe(_rows, use_container_width=True, hide_index=True)
 
-                # Use with AetherAi
-                st.markdown("**Use a local model with AetherAi** — pick one below then click Switch.")
+                # Use with AetheerAI
+                st.markdown("**Use a local model with AetheerAI** — pick one below then click Switch.")
                 _local_models = [r["Model"] for r in _rows]
                 _chosen = st.selectbox("Local model", _local_models, key="ollama_use_sel")
-                if st.button("🔁 Switch AetherAi to this model"):
+                if st.button("🔁 Switch AetheerAI to this model"):
                     try:
                         kernel.ai_adapter.switch("ollama", _chosen)
                         kernel.workflow_engine.ai_adapter = kernel.ai_adapter

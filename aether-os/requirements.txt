@@ -23,3 +23,4 @@ pyyaml>=6.0.1                  # Parse YAML agent configs
 # ── Fix 4: Advanced Memory — vector database for semantic RAG search ──
 # Optional but recommended — the system works without it (graceful fallback).
 chromadb>=0.5.0                # Local vector store for semantic memory (RAG)
+pysqlite3-binary>=0.5.0        # Fix 5: Override outdated sqlite3 on Windows for ChromaDB

@@ -1,5 +1,5 @@
-"""
-CommandInterface — CLI for AetherAi-A Master AI.
+﻿"""
+CommandInterface — CLI for AetheerAI — An AI Master!!.
 Provides an interactive REPL and supports all core Aether commands.
 """
 
@@ -66,7 +66,7 @@ BANNER = r"""
  / ___ \  __/ |_| | | |  __/ |     / ___ \ | | 
 /_/   \_\___|\__|_| |_|\___|_|    /_/   \_\___|
 
-  AetherAi-A Master AI  v1.0.0
+  AetheerAI — An AI Master!!  v1.0.0
   Type 'help' for commands.
 """
 
@@ -139,7 +139,7 @@ Commands:
   ────────────────────────────────────────────────────────────────────
 
   help                             Show this help message
-  exit / quit                      Exit AetherAi-A Master AI
+  exit / quit                      Exit AetheerAI — An AI Master!!
 """
 
 
@@ -165,7 +165,7 @@ class CommandInterface:
             try:
                 raw = input("aether> ").strip()
             except (EOFError, KeyboardInterrupt):
-                print("\nExiting AetherAi-A Master AI. Goodbye.")
+                print("\nExiting AetheerAI — An AI Master!!. Goodbye.")
                 break
             if not raw:
                 continue
@@ -919,7 +919,7 @@ class CommandInterface:
         print("Memory cleared.")
 
     def _cmd_exit(self, _args: list[str]) -> None:
-        print("Shutting down AetherAi-A Master AI. Goodbye.")
+        print("Shutting down AetheerAI — An AI Master!!. Goodbye.")
         self._running = False
         sys.exit(0)
 
@@ -1199,7 +1199,7 @@ class CommandInterface:
 
         W = 56
         print(f"\n  {'═'*W}")
-        print(f"  {'AetherAi-A Master AI  —  SYSTEM STATUS':^{W}}")
+        print(f"  {'AetheerAI — An AI Master!!  —  SYSTEM STATUS':^{W}}")
         print(f"  {'═'*W}")
 
         # AI

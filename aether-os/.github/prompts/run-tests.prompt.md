@@ -1,8 +1,8 @@
----
-description: "Run and fix AetherAi-A Master AI tests. Use when: run tests, fix tests, test failing, debug test, something broken"
+﻿---
+description: "Run and fix AetheerAI — An AI Master!! tests. Use when: run tests, fix tests, test failing, debug test, something broken"
 ---
 
-Run the AetherAi-A Master AI full integration test suite and fix any failures.
+Run the AetheerAI — An AI Master!! full integration test suite and fix any failures.
 
 ## Steps
 

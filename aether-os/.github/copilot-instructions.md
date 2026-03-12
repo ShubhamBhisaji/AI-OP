@@ -1,8 +1,8 @@
-# AetherAi-A Master AI — Copilot Workspace Instructions
+﻿# AetheerAI — An AI Master!! — Copilot Workspace Instructions
 
 ## Project Overview
 
-This is **AetherAi-A Master AI** — a modular AI Operating System written in Python 3.10+.
+This is **AetheerAI — An AI Master!!** — a modular AI Operating System written in Python 3.10+.
 It manages AI agents like processes in an operating system.
 
 ## Architecture

@@ -1,8 +1,8 @@
-# AetherAi-A Master AI
+# AetheerAI — An AI Master!!
 
 ## Objective
 
-Build an AI Operating System named **AetherAi-A Master AI** that acts as a central AI controller capable of creating, managing, improving, and running multiple AI agents.
+Build an AI Operating System named **AetheerAI — An AI Master!!** that acts as a central AI controller capable of creating, managing, improving, and running multiple AI agents.
 
 The system should be modular, extensible, and compatible with VS Code development workflows.
 

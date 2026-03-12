@@ -1,5 +1,5 @@
-"""
-Orchestrator — Multi-agent coordination strategies for AetherAi-A Master AI.
+﻿"""
+Orchestrator — Multi-agent coordination strategies for AetheerAI — An AI Master!!.
 
 Modes
 -----

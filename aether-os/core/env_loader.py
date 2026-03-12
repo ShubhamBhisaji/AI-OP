@@ -7,6 +7,7 @@ Does NOT override variables already set in the environment.
 from __future__ import annotations
 import os
 import re
+import sys
 
 
 def load_env(env_path: str | None = None) -> None:
@@ -15,9 +16,13 @@ def load_env(env_path: str | None = None) -> None:
     If env_path is None, looks for .env next to this file's project root.
     """
     if env_path is None:
-        # Walk up from this file to the project root (.env lives there)
-        here = os.path.dirname(os.path.abspath(__file__))
-        env_path = os.path.join(os.path.dirname(here), ".env")
+        if getattr(sys, "frozen", False):
+            # PyInstaller .exe — .env lives next to the executable, not in the bundle
+            env_path = os.path.join(os.path.dirname(sys.executable), ".env")
+        else:
+            # Normal execution — .env lives at the project root
+            here = os.path.dirname(os.path.abspath(__file__))
+            env_path = os.path.join(os.path.dirname(here), ".env")
 
     if not os.path.isfile(env_path):
         return

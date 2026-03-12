@@ -1,8 +1,8 @@
----
+﻿---
 applyTo: "**/*.py"
 ---
 
-## Python coding rules for AetherAi-A Master AI
+## Python coding rules for AetheerAI — An AI Master!!
 
 - Always include `from __future__ import annotations` as the first import
 - Use `logging.getLogger(__name__)` — never `print()` in library files
@@ -17,7 +17,7 @@ applyTo: "**/*.py"
 - Always use Python 3.10+ syntax
 - Prefer `from __future__ import annotations` as the first import
 - Use `logging` not `print()` in library code
-- Follow the AetherAi-A Master AI module conventions defined in `.github/copilot-instructions.md`
+- Follow the AetheerAI — An AI Master!! module conventions defined in `.github/copilot-instructions.md`
 
 ## Test generation
 

@@ -1,5 +1,5 @@
-"""
-MemoryManager — Persistent and session memory for AetherAi-A Master AI.
+﻿"""
+MemoryManager — Persistent and session memory for AetheerAI — An AI Master!!.
 Supports key-value storage, list appending, JSON file persistence,
 and optional semantic (vector) search via ChromaDB.
 
@@ -28,13 +28,34 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_MEMORY_FILE = Path(__file__).parent / "memory_store.json"
+# ── PyInstaller-aware path resolution (🔴 Fix 4) ──────────────────────────────
+# When frozen as a .exe, __file__ points into sys._MEIPASS (temp dir).
+# Mutable data files (the store, chroma db) must live next to the .exe instead.
+def _data_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        # Running as PyInstaller .exe — put data next to the executable
+        return Path(sys.executable).parent / "aether_data"
+    # Normal execution — data lives alongside this source file
+    return Path(__file__).parent
+
+_MEMORY_FILE = _data_dir() / "memory_store.json"
+
+# ── ChromaDB SQLite3 compatibility fix (🔴 Fix 5) ─────────────────────────────
+# ChromaDB requires sqlite3 >= 3.35.0. Many Windows Python installs ship with
+# an older version. Override it with pysqlite3-binary before chromadb loads.
+try:
+    __import__("pysqlite3")
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except ImportError:
+    pass  # pysqlite3-binary not installed; chromadb will use the system sqlite3
 
 # ── Optional ChromaDB vector store ────────────────────────────────────────────
 try:

@@ -1,5 +1,5 @@
-"""
-main.py — Entry point for AetherAi-A Master AI.
+﻿"""
+main.py — Entry point for AetheerAI — An AI Master!!.
 
 Usage:
     python main.py                        # Interactive CLI mode
@@ -85,7 +85,7 @@ def check_credentials(provider: str) -> None:
 
     print()
     print("=" * 60)
-    print("  AetherAi-A Master AI — First-Run Setup")
+    print("  AetheerAI — An AI Master!! — First-Run Setup")
     print("=" * 60)
     print()
     print(f"  Provider   : {provider}")
@@ -149,7 +149,7 @@ def pick_provider() -> str:
     """Display an interactive AI-provider selection menu and return the chosen provider id."""
     print()
     print("=" * 66)
-    print("  AetherAi-A Master AI — Select an AI Provider")
+    print("  AetheerAI — An AI Master!! — Select an AI Provider")
     print("=" * 66)
     print()
     print(f"  {'#':<3} {'Provider':<16} {'Default Model':<38} {'Key Status'}")
@@ -195,7 +195,7 @@ def pick_provider() -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="aether",
-        description="AetherAi-A Master AI",
+        description="AetheerAI — An AI Master!!",
     )
     parser.add_argument(
         "--provider",

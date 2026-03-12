@@ -1,8 +1,8 @@
----
-description: "Add a new AI provider to AetherAi-A Master AI AIAdapter. Use when: new AI provider, add model, integrate LLM, add provider"
+﻿---
+description: "Add a new AI provider to AetheerAI — An AI Master!! AIAdapter. Use when: new AI provider, add model, integrate LLM, add provider"
 ---
 
-Add a new AI provider called `${providerName}` to the AetherAi-A Master AI `AIAdapter`.
+Add a new AI provider called `${providerName}` to the AetheerAI — An AI Master!! `AIAdapter`.
 
 ## Requirements
 

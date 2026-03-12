@@ -1,5 +1,5 @@
-@echo off
-title AetherAi Master OS
+﻿@echo off
+title AetheerAI — An AI Master!! OS
 cd /d "%~dp0"
 
 :: Check Python

@@ -1,8 +1,8 @@
----
-description: "Create a new AetherAi-A Master AI tool. Use when: adding a tool, new tool, create tool, build tool for agent"
+﻿---
+description: "Create a new AetheerAI — An AI Master!! tool. Use when: adding a tool, new tool, create tool, build tool for agent"
 ---
 
-Create a new AetherAi-A Master AI tool called `${toolName}`.
+Create a new AetheerAI — An AI Master!! tool called `${toolName}`.
 
 ## Requirements
 

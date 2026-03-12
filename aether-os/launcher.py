@@ -1,5 +1,5 @@
-"""
-launcher.py -- AetherAi-A Master AI  |  Silent GUI Launcher
+﻿"""
+launcher.py -- AetheerAI — An AI Master!!  |  Silent GUI Launcher
 
 Double-click this (or its compiled .exe) to:
   1. Show a welcome splash window
@@ -83,7 +83,7 @@ class SplashWindow:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.title("AetherAi-A Master AI")
+        root.title("AetheerAI — An AI Master!!")
         root.resizable(False, False)
         root.configure(bg="#0e1117")
 
@@ -108,7 +108,7 @@ class SplashWindow:
 
         tk.Label(
             frame,
-            text="Welcome to AetherAi",
+            text="Welcome to AetheerAI",
             font=("Segoe UI", 22, "bold"),
             bg="#0e1117", fg="#ffffff",
         ).pack(pady=(4, 0))
@@ -180,7 +180,7 @@ class SplashWindow:
 
 def _wait_and_open(splash: SplashWindow, proc: subprocess.Popen, root: tk.Tk):
     """Background thread: wait for Streamlit to be ready, then open browser."""
-    splash.set_status("Booting AetherAi kernel...")
+    splash.set_status("Booting AetheerAI kernel...")
     time.sleep(1)
 
     # Poll until Streamlit is listening (max 60 s)
@@ -226,7 +226,7 @@ def main():
     try:
         tray = tk.Tk()
         tray.withdraw()  # invisible — just keeps the process alive
-        tray.title("AetherAi running")
+        tray.title("AetheerAI running")
 
         def _quit():
             proc.terminate()
@@ -250,11 +250,11 @@ def main():
 
         tf = tk.Frame(tray, bg="#0e1117", padx=16, pady=14)
         tf.pack(fill="both", expand=True)
-        tk.Label(tf, text="⚡ AetherAi is running",
+        tk.Label(tf, text="⚡ AetheerAI is running",
                  font=("Segoe UI", 11, "bold"), bg="#0e1117", fg="#60a5fa").pack()
         tk.Label(tf, text=f"Dashboard → {_URL}",
                  font=("Segoe UI", 9), bg="#0e1117", fg="#94a3b8").pack(pady=(4, 10))
-        tk.Button(tf, text="Stop AetherAi", command=_quit,
+        tk.Button(tf, text="Stop AetheerAI", command=_quit,
                   bg="#ef4444", fg="white", relief="flat",
                   font=("Segoe UI", 9), padx=12, pady=4,
                   cursor="hand2").pack()

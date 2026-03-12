@@ -1,5 +1,5 @@
-@echo off
-title AetherAi-A Master AI
+﻿@echo off
+title AetheerAI — An AI Master!!
 color 0A
 cd /d "%~dp0"
 

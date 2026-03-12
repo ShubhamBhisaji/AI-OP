@@ -1,37 +1,45 @@
-@echo off
+﻿@echo off
 :: ================================================================
-:: Build  AetherAi-A Master AI  --  Standalone Windows .exe
+:: Build  AetheerAI — An AI Master!!  --  Standalone Windows .exe
 :: ================================================================
-:: Output:  dist\AetherAi_MasterAI.exe
+:: Output:  dist\AetheerAI_Master.exe
 ::
 :: Double-clicking the .exe:
 ::   - Shows a welcome splash window
 ::   - Starts the Streamlit dashboard silently (no terminal)
 ::   - Opens the browser automatically
-::   - Shows a small "AetherAi is running" window when ready
+::   - Shows a small "AetheerAI is running" window when ready
 ::
 :: Requirements: Python 3.10+ on PATH
 :: First run takes 2-5 minutes (PyInstaller compiles everything)
 :: ================================================================
-title Build  AetherAi-A Master AI
+title Build  AetheerAI — An AI Master!!
 color 0B
 cd /d "%~dp0"
 
 echo.
 echo  ============================================================
-echo    AetherAi-A Master AI  --  Build Launcher
+echo    AetheerAI — An AI Master!!  --  Build Launcher
 echo  ============================================================
 echo.
 echo  Installing / updating PyInstaller and Streamlit...
 pip install pyinstaller streamlit --quiet
 echo.
-echo  Building AetherAi_MasterAI.exe  (please wait)...
+echo  Building AetheerAI_Master.exe  (please wait)...
+echo.
+
+:: Auto-detect Streamlit package location (works with venv and global installs)
+for /f "delims=" %%i in ('python -c "import streamlit, os; print(os.path.dirname(streamlit.__file__))"') do set STREAMLIT_DIR=%%i
+echo  Streamlit found at: %STREAMLIT_DIR%
 echo.
 
 pyinstaller ^
     --onefile ^
     --windowed ^
-    --name "AetherAi_MasterAI" ^
+    --name "AetheerAI_Master" ^
+    --add-data "%STREAMLIT_DIR%\static;streamlit\static" ^
+    --add-data "%STREAMLIT_DIR%\runtime;streamlit\runtime" ^
+    --add-data "%STREAMLIT_DIR%\components;streamlit\components" ^
     --add-data "app.py;." ^
     --add-data "agents;agents" ^
     --add-data "ai;ai" ^
@@ -69,7 +77,7 @@ if %errorlevel%==0 (
     echo   [OK]  Build complete!
     echo.
     echo   Your executable is at:
-    echo     dist\AetherAi_MasterAI.exe
+    echo     dist\AetheerAI_Master.exe
     echo.
     echo   IMPORTANT — before running the .exe:
     echo     Copy your .env file into the same folder as the .exe
@@ -77,7 +85,7 @@ if %errorlevel%==0 (
     echo       GITHUB_TOKEN=ghp_your_token_here
     echo.
     echo   To run:
-    echo     Double-click  dist\AetherAi_MasterAI.exe
+    echo     Double-click  dist\AetheerAI_Master.exe
     echo     OR drag it anywhere and run it from there.
     echo.
     echo   TIP: If Windows Defender shows a SmartScreen warning,

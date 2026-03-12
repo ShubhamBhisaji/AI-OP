@@ -1,5 +1,5 @@
-"""
-AetherKernel — Central controller and orchestrator of AetherAi-A Master AI.
+﻿"""
+AetherKernel — Central controller and orchestrator of AetheerAI — An AI Master!!.
 Manages all subsystems: agents, workflows, tools, memory, and AI adapters.
 """
 
@@ -26,18 +26,18 @@ from ai.ai_adapter import AIAdapter
 from memory.memory_manager import MemoryManager
 from utils.json_parser import extract_json, ParseError
 
-logging.basicConfig(level=logging.INFO, format="[AetherAi] %(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="[AetheerAI] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
 class AetherKernel:
     """
-    The central kernel of AetherAi-A Master AI.
+    The central kernel of AetheerAI — An AI Master!!.
     All subsystems are initialized and coordinated here.
     """
 
     def __init__(self, ai_provider: str = "openai", model: str = "gpt-4o"):
-        logger.info("Booting AetherAi-A Master AI kernel...")
+        logger.info("Booting AetheerAI — An AI Master!! kernel...")
         self.ai_adapter = AIAdapter(provider=ai_provider, model=model)
         self.memory = MemoryManager()
         self.registry = AgentRegistry()
@@ -62,7 +62,7 @@ class AetherKernel:
         )
         # Wire AI adapter into skill engine after creation
         self.skill_engine.ai_adapter = self.ai_adapter
-        logger.info("AetherAi-A Master AI kernel ready.")
+        logger.info("AetheerAI — An AI Master!! kernel ready.")
 
     # ------------------------------------------------------------------
     # HITL control (Fix 8)
@@ -873,7 +873,7 @@ class AetherKernel:
         env_example = export_dir / ".env.example"
         # Write a clean .env with empty values
         blank_env = (
-            "# AetherAi-A Master AI Agent — AI Configuration\n"
+            "# AetheerAI — An AI Master!! Agent — AI Configuration\n"
             "# Run python run_agent.py to configure interactively (first launch)\n\n"
             "AETHER_DEFAULT_PROVIDER=\n"
             "AETHER_DEFAULT_MODEL=\n\n"
@@ -920,7 +920,7 @@ class AetherKernel:
                 \"\"\"Interactive wizard to configure AI provider on first launch.\"\"\"
                 _env_path = os.path.join(_ROOT, ".env")
                 print("\\n" + "="*60)
-                print("  {name} — AetherAi-A Master AI Agent  |  First-time Setup")
+                print("  {name} — AetheerAI — An AI Master!! Agent  |  First-time Setup")
                 print("="*60)
                 print("  Choose your AI provider:\\n")
                 _providers = [
@@ -991,7 +991,7 @@ class AetherKernel:
 
                 # Write to .env
                 _lines = [
-                    "# AetherAi-A Master AI Agent — AI Configuration\\n",
+                    "# AetheerAI — An AI Master!! Agent — AI Configuration\\n",
                     f"AETHER_DEFAULT_PROVIDER={{_provider}}\\n",
                     f"AETHER_DEFAULT_MODEL={{_model}}\\n",
                 ]
@@ -1007,7 +1007,7 @@ class AetherKernel:
 
             def main():
                 parser = argparse.ArgumentParser(
-                    description="AetherAi-A Master AI Agent: {name} ({agent.role})"
+                    description="AetheerAI — An AI Master!! Agent: {name} ({agent.role})"
                 )
                 parser.add_argument("--task",     default=None)
                 parser.add_argument("--provider", default=None)
@@ -1036,7 +1036,7 @@ class AetherKernel:
         bat.write_text(
             textwrap.dedent(f"""\
             @echo off
-            title {name} — AetherAi-A Master AI Agent
+            title {name} — AetheerAI — An AI Master!! Agent
             color 0B
             cd /d "%~dp0"
 
@@ -1084,7 +1084,7 @@ class AetherKernel:
         readme = export_dir / "README.md"
         readme.write_text(
             textwrap.dedent(f"""\
-            # AetherAi-A Master AI Agent: {name}
+            # AetheerAI — An AI Master!! Agent: {name}
 
             **Role:** {agent.role}
             **Skills:** {', '.join(agent.profile.get('skills', []))}
@@ -1116,6 +1116,9 @@ class AetherKernel:
             ## Reconfigure from scratch
 
             Delete `.env` and re-run — the setup wizard will appear again.
+
+            ---
+            *Created by AetheerAI — An AI Master!!*
             """),
             encoding="utf-8",
         )
@@ -1129,7 +1132,7 @@ class AetherKernel:
             "<head>\n"
             "  <meta charset=\"UTF-8\" />\n"
             "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n"
-            "  <title>__AGENT_NAME__ \u2014 AetherAi-A Master AI</title>\n"
+            "  <title>__AGENT_NAME__ \u2014 AetheerAI — An AI Master!!</title>\n"
             "  <script src=\"https://cdn.tailwindcss.com\"></script>\n"
             "  <style>\n"
             "    body { font-family: system-ui, sans-serif; }\n"
@@ -1147,7 +1150,7 @@ class AetherKernel:
             "    <div class=\"w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center font-bold text-white text-sm\">AI</div>\n"
             "    <div>\n"
             "      <h1 class=\"font-semibold text-white text-base\">__AGENT_NAME__</h1>\n"
-            "      <p class=\"text-xs text-gray-400\">__AGENT_ROLE__ &mdash; AetherAi-A Master AI</p>\n"
+            "      <p class=\"text-xs text-gray-400\">__AGENT_ROLE__ &mdash; AetheerAI — An AI Master!!</p>\n"
             "    </div>\n"
             "    <span id=\"status-dot\" class=\"ml-auto w-2.5 h-2.5 rounded-full bg-green-400\" title=\"Online\"></span>\n"
             "  </header>\n"
@@ -1172,7 +1175,7 @@ class AetherKernel:
             "              class=\"bg-blue-600 hover:bg-blue-700 active:scale-95 transition text-white font-semibold px-5 py-3 rounded-xl text-sm shadow\"\n"
             "      >Send</button>\n"
             "    </form>\n"
-            "    <p class=\"text-center text-xs text-gray-600 mt-2\">Powered by AetherAi-A Master AI &bull; Running locally</p>\n"
+            "    <p class=\"text-center text-xs text-gray-600 mt-2\">Powered by AetheerAI — An AI Master!! &bull; Created by AetheerAI &bull; Running locally</p>\n"
             "  </footer>\n"
             "\n"
             "<script>\n"
@@ -1241,6 +1244,7 @@ class AetherKernel:
             \"\"\"
             FastAPI server wrapper for agent: {name}
             Exposes the agent as a REST API so callers never see source code.
+            Created by AetheerAI — An AI Master!!
 
             Start:
                 pip install fastapi \"uvicorn[standard]\"
@@ -1674,7 +1678,7 @@ class AetherKernel:
 
 
             if __name__ == "__main__":
-                print("\u26a1 Starting AetherAi-A Master AI Agent Environment...")
+                print("\u26a1 Starting AetheerAI — An AI Master!! Agent Environment...")
                 print("Please wait while the AI loads into memory...")
 
                 # 1. Start the API server in a daemon thread
@@ -1695,7 +1699,7 @@ class AetherKernel:
                     while True:
                         time.sleep(1)
                 except KeyboardInterrupt:
-                    print("\nShutting down AetherAi-A Master AI Agent...")
+                    print("\nShutting down AetheerAI — An AI Master!! Agent...")
                     sys.exit(0)
             """),
             encoding="utf-8",
@@ -1777,14 +1781,14 @@ class AetherKernel:
         files_written.append("build_ui_exe.bat")
 
         # ── 12. agent_app.py — Streamlit single-agent dashboard ─────────
-        #    Mirrors the main AetherAi Master Dashboard but scoped to ONE agent.
+        #    Mirrors the main AetheerAI — An AI Master!! Dashboard but scoped to ONE agent.
         #    Launch with: python -m streamlit run agent_app.py
         #    Or double-click:  Start_Agent.bat
         agent_app_py = export_dir / "agent_app.py"
         agent_app_py.write_text(
             textwrap.dedent(f"""\
             \"\"\"
-            agent_app.py -- AetherAi-A Master AI  |  Agent: {name}
+            agent_app.py -- AetheerAI — An AI Master!!  |  Agent: {name}
             Streamlit single-agent dashboard.
 
             Run:  python -m streamlit run agent_app.py
@@ -1802,7 +1806,7 @@ class AetherKernel:
             from core.workflow_engine import WorkflowFeedback, HITLAction
 
             st.set_page_config(
-                page_title="{name} -- AetherAi",
+                page_title="{name} -- AetheerAI",
                 page_icon="\\u26a1",
                 layout="wide",
             )
@@ -1843,9 +1847,10 @@ class AetherKernel:
 
             # Sidebar
             with st.sidebar:
-                st.title("\\u26a1 AetherAi Agent")
+                st.title("\\u26a1 AetheerAI Agent")
                 st.subheader("{name}")
                 st.caption(f"Role: {{agent.role}}")
+                st.caption("Created by AetheerAI — An AI Master!!")
                 st.divider()
                 skills = agent.profile.get("skills", [])
                 if skills:
@@ -1892,10 +1897,10 @@ class AetherKernel:
         start_bat.write_text(
             textwrap.dedent(f"""\
             @echo off
-            title {name} -- AetherAi Agent
+            title {name} -- AetheerAI Agent
             echo.
             echo  ====================================================
-            echo   AetherAi-A Master AI  --  {name}
+            echo   AetheerAI — An AI Master!!  --  {name}
             echo  ====================================================
             echo.
             cd /d "%~dp0"
@@ -2044,7 +2049,7 @@ class AetherKernel:
             \"\"\"
             {system_name} — Aether AI System
             Agents: {', '.join(agent_names)}
-            Created by AetherAi-A Master AI
+            Created by AetheerAI — An AI Master!!
             \"\"\"
             from __future__ import annotations
             import os, sys, argparse

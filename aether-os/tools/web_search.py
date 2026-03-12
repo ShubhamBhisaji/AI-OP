@@ -1,4 +1,4 @@
-"""
+﻿"""
 web_search — Tool that performs a web search and returns summarized results.
 Uses the DuckDuckGo Instant Answer API (no API key required).
 Falls back to a mock response when the network is unavailable.
@@ -34,7 +34,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     url = _DDG_URL.format(query=encoded)
 
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "AetherAi/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "AetheerAI/1.0"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
