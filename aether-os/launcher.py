@@ -52,35 +52,73 @@ def _port_open(host: str, port: int) -> bool:
         return False
 
 
-def _find_python() -> str:
+class _StreamlitHandle:
     """
-    Return the correct Python interpreter path.
-
-    Bug 4 fix: when frozen, sys.executable is the .exe itself — passing it to
-    subprocess would re-launch AetheerAI instead of running Python.  Look for
-    a real python.exe on PATH instead.
+    Duck-typed Popen wrapper around a stcli daemon thread.
+    Implements the .poll() / .terminate() / .wait() API that the splash
+    window and tray use, so the rest of main() can stay unchanged.
     """
-    if not getattr(sys, "frozen", False):
-        return sys.executable  # plain py script: sys.executable IS python
-    # Frozen .exe: find the real Python on PATH
-    for candidate in ("python", "python3"):
-        found = shutil.which(candidate)
-        if found:
-            return found
-    # Absolute last resort — will fail with a clear error message at runtime
-    return "python"
+    def __init__(self, t: threading.Thread) -> None:
+        self._t = t
+
+    def poll(self):
+        """Return None when running, 0 when the thread has exited."""
+        return None if self._t.is_alive() else 0
+
+    def terminate(self) -> None:
+        """No-op: daemon thread exits automatically when the main process ends."""
+
+    def wait(self) -> None:
+        """Block until the Streamlit thread finishes."""
+        self._t.join()
 
 
-def _start_streamlit() -> subprocess.Popen:
-    """Launch streamlit run app.py as a hidden background process."""
-    python = _find_python()
+def _stcli_thread() -> None:
+    """Thread target: invoke Streamlit via its bundled CLI entry point."""
+    try:
+        try:
+            from streamlit.web import cli as stcli   # Streamlit >= 1.12
+        except ImportError:
+            from streamlit import cli as stcli        # older layout
+        stcli.main()
+    except SystemExit:
+        pass  # stcli always calls sys.exit() on shutdown — harmless in a thread
+
+
+def _start_streamlit():
+    """
+    Start Streamlit and return a handle with a Popen-compatible API.
+
+    Bug 1 fix — “File Not Found” crash in frozen .exe:
+      PyInstaller extracts the app into sys._MEIPASS (a hidden temp folder).
+      If we spawn a subprocess with the *system* Python it cannot find
+      aether_kernel, streamlit, or any other bundled package — instant crash.
+      The fix: when frozen, call stcli.main() inside the SAME process in a
+      daemon thread.  That thread inherits the full bundled sys.path and
+      sees every package that was compiled into the .exe.
+
+      Dev mode (not frozen) is unchanged: subprocess.Popen with sys.executable.
+    """
     app_path = os.path.join(_ROOT, "app.py")
 
+    if getattr(sys, "frozen", False):
+        # ── Frozen .exe: use bundled Streamlit directly (no subprocess) ────────
+        sys.argv = [
+            "streamlit", "run", app_path,
+            f"--server.port={_PORT}",
+            "--server.headless=true",
+            "--browser.gatherUsageStats=false",
+            f"--server.address={_HOST}",
+        ]
+        t = threading.Thread(target=_stcli_thread, daemon=True)
+        t.start()
+        return _StreamlitHandle(t)
+
+    # ── Dev / plain-Python: original subprocess approach ──────────────────
     kwargs: dict = dict(
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    # On Windows hide the console window entirely
     if sys.platform == "win32":
         si = subprocess.STARTUPINFO()
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -93,7 +131,7 @@ def _start_streamlit() -> subprocess.Popen:
 
     return subprocess.Popen(
         [
-            python, "-m", "streamlit", "run", app_path,
+            sys.executable, "-m", "streamlit", "run", app_path,
             "--server.port", str(_PORT),
             "--server.headless", "true",
             "--browser.gatherUsageStats", "false",

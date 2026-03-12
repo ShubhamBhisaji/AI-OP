@@ -7,6 +7,7 @@ Or use:    Start_AetheerAI.bat
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 
@@ -272,27 +273,49 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-# ── Boot the OS kernel (cached — runs only once per session) ─────────────
-@st.cache_resource(show_spinner="Booting AetheerAI — An AI Master!! kernel...")
-def boot_os() -> AetherKernel:
+# ── Boot OS kernel — one isolated instance per browser session ───────────
+# Bug 4 fix: @st.cache_resource is a GLOBAL shared cache (all browser tabs
+# and users see the same kernel instance, leaking agents/memory between
+# sessions).  st.session_state is scoped to a single browser tab so every
+# session gets its own independent AetherKernel.
+if "kernel" not in st.session_state:
     load_env()
-    # Read provider / model from env, fall back to github / gpt-4.1
-    provider = os.environ.get("AI_PROVIDER", "github")
-    model = os.environ.get("AI_MODEL", "gpt-4.1")
-    kernel = AetherKernel(ai_provider=provider, model=model)
-    # Auto-approve HITL in GUI mode so execute() never blocks on console input
-    kernel.set_hitl(
+    _provider = os.environ.get("AI_PROVIDER", "github")
+    _model    = os.environ.get("AI_MODEL", "gpt-4.1")
+    _k = AetherKernel(ai_provider=_provider, model=_model)
+    # Auto-approve HITL — never block on terminal input() in web UI
+    _k.set_hitl(
         enabled=True,
         callback=lambda cp: WorkflowFeedback(action=HITLAction.APPROVE),
     )
-    return kernel
+    st.session_state.kernel = _k
 
-
-kernel = boot_os()
+kernel = st.session_state.kernel
 
 
 def _agent_names() -> list[str]:
     return kernel.list_agents()
+
+
+def _run_agent_sync(agent_obj, task: str) -> str:
+    """
+    Execute an agent task synchronously from Streamlit's thread.
+
+    Bug 4 fix — Async event loop:
+      Streamlit reruns the entire script on every user interaction. It may
+      have its own event loop already set on this thread, which would cause
+      asyncio.run() or get_event_loop().run_until_complete() to raise
+      "This event loop is already running".
+      The safe pattern: always create a *fresh* event loop, use it, then
+      close it. This is isolated per-call and never conflicts.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        return str(loop.run_until_complete(
+            kernel.workflow_engine.execute_async(agent_obj, task)
+        ))
+    finally:
+        loop.close()
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────
