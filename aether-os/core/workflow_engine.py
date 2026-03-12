@@ -10,13 +10,22 @@ Fix 5 — Self-correction loop:
     If an agent's result looks like an error/exception traceback, the engine
     feeds the error back to the agent and asks it to self-correct.  This
     retries up to MAX_SELF_CORRECT_RETRIES times before giving up.
+
+Fix 8 — Human-in-the-Loop (HITL) checkpoints:
+    When hitl_mode=True the engine pauses after every completed agent step
+    and presents the result to the operator for approval, revision, or
+    cancellation before continuing.  A feedback_callback receives a
+    WorkflowCheckpoint and must return a WorkflowFeedback object.  If no
+    callback is provided a default interactive console prompt is used.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -47,17 +56,202 @@ def _looks_like_error(text: str) -> bool:
     return any(lower.startswith(prefix) or f"\n{prefix}" in lower for prefix in _ERROR_PREFIXES)
 
 
+# ---------------------------------------------------------------------------
+# HITL types (Fix 8)
+# ---------------------------------------------------------------------------
+
+class HITLAction(str, Enum):
+    """Human decision returned from a HITL checkpoint."""
+    APPROVE  = "approve"   # accept the result and continue
+    REVISE   = "revise"    # provide new instructions; agent will re-run
+    CANCEL   = "cancel"    # abort the entire workflow
+
+
+@dataclass
+class WorkflowCheckpoint:
+    """
+    Snapshot presented to the human at a HITL gate.
+
+    Attributes
+    ----------
+    agent_name  : Name of the agent that just finished.
+    task        : The task that was given to the agent.
+    result      : The agent's output.
+    step        : 1-based pipeline step index (1 for single-agent flows).
+    total_steps : Total number of steps in the workflow (None if unknown).
+    """
+    agent_name:  str
+    task:        str
+    result:      str
+    step:        int = 1
+    total_steps: Optional[int] = None
+
+
+@dataclass
+class WorkflowFeedback:
+    """
+    Human response returned from a HITL callback.
+
+    Attributes
+    ----------
+    action       : One of HITLAction.APPROVE / REVISE / CANCEL.
+    revised_task : Replacement task string when action == REVISE.
+                   Ignored for other actions.
+    """
+    action:       HITLAction = HITLAction.APPROVE
+    revised_task: str        = ""
+
+
+class WorkflowCancelled(RuntimeError):
+    """Raised when a human cancels the workflow at a HITL gate."""
+
+
+def _default_hitl_callback(checkpoint: WorkflowCheckpoint) -> WorkflowFeedback:
+    """
+    Interactive console HITL gate used when no callback is registered.
+    Prints the agent result and prompts the operator for a decision.
+    """
+    step_label = (
+        f"Step {checkpoint.step}/{checkpoint.total_steps}"
+        if checkpoint.total_steps
+        else f"Step {checkpoint.step}"
+    )
+    print("\n" + "=" * 70)
+    print(f"  ⏸  HITL Checkpoint — {step_label} | Agent: {checkpoint.agent_name}")
+    print("=" * 70)
+    print(f"\nTask:\n{checkpoint.task}\n")
+    print(f"Agent output:\n{checkpoint.result}\n")
+    print("-" * 70)
+    print("  [A] Approve and continue")
+    print("  [R] Revise — enter new instructions")
+    print("  [C] Cancel workflow")
+    print("-" * 70)
+    while True:
+        choice = input("  Your choice (A/R/C): ").strip().upper()
+        if choice == "A":
+            return WorkflowFeedback(action=HITLAction.APPROVE)
+        if choice == "C":
+            return WorkflowFeedback(action=HITLAction.CANCEL)
+        if choice == "R":
+            revised = input("  Enter revised instructions: ").strip()
+            if revised:
+                return WorkflowFeedback(action=HITLAction.REVISE, revised_task=revised)
+            print("  Revised instructions cannot be empty.")
+
+
 class WorkflowEngine:
     """
     Orchestrates multi-step, multi-agent workflows.
     Supports single-agent execution (sync + async) and sequential pipelines.
     """
 
-    def __init__(self, registry, ai_adapter, memory, tool_manager=None):
+    def __init__(
+        self,
+        registry,
+        ai_adapter,
+        memory,
+        tool_manager=None,
+        hitl_mode: bool = False,
+        feedback_callback: Optional[Callable[[WorkflowCheckpoint], WorkflowFeedback]] = None,
+    ):
         self.registry = registry
         self.ai_adapter = ai_adapter
         self.memory = memory
         self.tool_manager = tool_manager
+        # HITL (Fix 8)
+        self.hitl_mode = hitl_mode
+        self.feedback_callback: Callable[[WorkflowCheckpoint], WorkflowFeedback] = (
+            feedback_callback or _default_hitl_callback
+        )
+
+    # ------------------------------------------------------------------
+    # HITL gate helper (Fix 8)
+    # ------------------------------------------------------------------
+
+    def _hitl_gate(
+        self,
+        agent,
+        task: str,
+        result: str,
+        step: int = 1,
+        total_steps: Optional[int] = None,
+    ) -> str:
+        """
+        Present a WorkflowCheckpoint to the operator and act on the response.
+
+        Returns the (possibly revised) task that should be re-run if the
+        operator chose REVISE, or the original result if APPROVE.
+        Raises WorkflowCancelled if the operator chose CANCEL.
+
+        The calling execute/pipeline method must re-run the agent when this
+        method returns a string that differs from *result*.
+        """
+        if not self.hitl_mode:
+            return result  # fast-path: HITL disabled
+
+        checkpoint = WorkflowCheckpoint(
+            agent_name=agent.name,
+            task=task,
+            result=result,
+            step=step,
+            total_steps=total_steps,
+        )
+
+        MAX_REVISE_CYCLES = 3
+        for _ in range(MAX_REVISE_CYCLES):
+            feedback = self.feedback_callback(checkpoint)
+
+            if feedback.action == HITLAction.APPROVE:
+                logger.info("HITL: operator approved output of agent '%s'.", agent.name)
+                return result
+
+            if feedback.action == HITLAction.CANCEL:
+                logger.warning("HITL: operator cancelled workflow at agent '%s'.", agent.name)
+                raise WorkflowCancelled(
+                    f"Workflow cancelled by operator at agent '{agent.name}'."
+                )
+
+            if feedback.action == HITLAction.REVISE:
+                revised_task = feedback.revised_task.strip()
+                logger.info(
+                    "HITL: operator requested revision for agent '%s' — re-running.",
+                    agent.name,
+                )
+                # Re-run the agent with the revised task
+                prompt = self._build_prompt(agent=agent, task=revised_task)
+                messages = [{"role": "user", "content": prompt}]
+                result = self.ai_adapter.chat(messages=messages)
+                checkpoint = WorkflowCheckpoint(
+                    agent_name=agent.name,
+                    task=revised_task,
+                    result=result,
+                    step=step,
+                    total_steps=total_steps,
+                )
+
+        logger.warning(
+            "HITL: max revision cycles (%d) reached for agent '%s'; accepting last result.",
+            MAX_REVISE_CYCLES, agent.name,
+        )
+        return result
+
+    async def _hitl_gate_async(
+        self,
+        agent,
+        task: str,
+        result: str,
+        step: int = 1,
+        total_steps: Optional[int] = None,
+    ) -> str:
+        """Async version of _hitl_gate — runs the blocking callback in a thread."""
+        if not self.hitl_mode:
+            return result
+        loop = asyncio.get_event_loop()
+        # The callback may block (console input) — run it off the event loop
+        return await loop.run_in_executor(
+            None,
+            lambda: self._hitl_gate(agent, task, result, step, total_steps),
+        )
 
     # ------------------------------------------------------------------
     # RBAC-enforced tool call (Fix 3 — RBAC wiring)
@@ -132,6 +326,9 @@ class WorkflowEngine:
 
         agent.record_result(success=True)
         self.memory.save(key=f"workflow:{agent.name}:last", value=result)
+
+        # ── HITL checkpoint (Fix 8) ─────────────────────────────────────────
+        result = self._hitl_gate(agent=agent, task=task, result=result)
         return result
 
     # ------------------------------------------------------------------
@@ -182,6 +379,9 @@ class WorkflowEngine:
         agent.record_result(success=success)
         key = f"workflow:{agent.name}:last" if success else f"workflow:{agent.name}:last_error"
         self.memory.save(key=key, value=result)
+
+        # ── HITL checkpoint (Fix 8) ─────────────────────────────────────────
+        result = await self._hitl_gate_async(agent=agent, task=task, result=result)
         return result
 
     # ------------------------------------------------------------------
@@ -192,11 +392,14 @@ class WorkflowEngine:
         """
         Run a sequential pipeline where each agent's output feeds the next.
         Returns the final agent's output as the pipeline result.
+        Pauses at each step for human review when hitl_mode=True (Fix 8).
         """
         context = task
-        for agent in agents:
-            logger.info("Pipeline step: agent '%s'", agent.name)
+        total = len(agents)
+        for step, agent in enumerate(agents, start=1):
+            logger.info("Pipeline step %d/%d: agent '%s'", step, total, agent.name)
             context = self.execute(agent=agent, task=context)
+            # execute() already called _hitl_gate internally; no double-gate here
         return context
 
     # ------------------------------------------------------------------
@@ -204,11 +407,13 @@ class WorkflowEngine:
     # ------------------------------------------------------------------
 
     async def run_pipeline_async(self, agents: list, task: str) -> str:
-        """Async sequential pipeline — awaits each step before passing output forward."""
+        """Async sequential pipeline — awaits each step; HITL gate between steps (Fix 8)."""
         context = task
-        for agent in agents:
-            logger.info("Pipeline[async] step: agent '%s'", agent.name)
+        total = len(agents)
+        for step, agent in enumerate(agents, start=1):
+            logger.info("Pipeline[async] step %d/%d: agent '%s'", step, total, agent.name)
             context = await self.execute_async(agent=agent, task=context)
+            # execute_async() already called _hitl_gate_async internally
         return context
 
     async def run_broadcast_async(self, agents: list, task: str) -> list[Any]:

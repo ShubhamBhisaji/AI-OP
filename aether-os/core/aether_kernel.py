@@ -12,7 +12,13 @@ from agents.base_agent import BaseAgent
 from factory.agent_factory import AgentFactory
 from registry.agent_registry import AgentRegistry
 from skills.skill_engine import SkillEngine
-from core.workflow_engine import WorkflowEngine
+from core.workflow_engine import (
+    WorkflowEngine,
+    WorkflowCancelled,
+    WorkflowCheckpoint,
+    WorkflowFeedback,
+    HITLAction,
+)
 from core.team_manager import TeamManager
 from core.orchestrator import Orchestrator
 from tools.tool_manager import ToolManager
@@ -57,6 +63,38 @@ class AetherKernel:
         # Wire AI adapter into skill engine after creation
         self.skill_engine.ai_adapter = self.ai_adapter
         logger.info("Aether OS kernel ready.")
+
+    # ------------------------------------------------------------------
+    # HITL control (Fix 8)
+    # ------------------------------------------------------------------
+
+    def set_hitl(
+        self,
+        enabled: bool = True,
+        callback=None,
+    ) -> None:
+        """
+        Enable or disable the Human-in-the-Loop checkpoint gate.
+
+        Parameters
+        ----------
+        enabled  : True to activate HITL; False to disable (default auto-mode).
+        callback : Optional callable ``(WorkflowCheckpoint) -> WorkflowFeedback``.
+                   When None the default interactive console prompt is used.
+                   Pass a custom function to integrate with a GUI / REST API.
+
+        Example — silent auto-approve (for unit tests)::
+
+            kernel.set_hitl(
+                enabled=True,
+                callback=lambda cp: WorkflowFeedback(action=HITLAction.APPROVE),
+            )
+        """
+        from core.workflow_engine import _default_hitl_callback
+        self.workflow_engine.hitl_mode = enabled
+        self.workflow_engine.feedback_callback = callback or _default_hitl_callback
+        state = "ENABLED" if enabled else "DISABLED"
+        logger.info("HITL mode %s (callback=%s).", state, callback.__name__ if callback else "console")
 
     # ------------------------------------------------------------------
     # Agent management
