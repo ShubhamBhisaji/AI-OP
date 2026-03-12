@@ -91,7 +91,7 @@ class AetherKernel:
                 progress(step, total, msg)
 
         # ── Step 1: Research core function ───────────────────────────
-        _prog(1, 3, f"Researching core function for '{name}'...")
+        _prog(1, 4, f"Researching core function for '{name}'...")
         research_prompt = (
             f"You are an expert AI system designer.\n"
             f"Research the core function and responsibilities of the following AI agent:\n\n"
@@ -109,7 +109,7 @@ class AetherKernel:
         research = self.ai_adapter.chat([{"role": "user", "content": research_prompt}])
 
         # ── Step 2: Gather skill & tool requirements ──────────────────
-        _prog(2, 3, f"Gathering skill requirements for '{name}'...")
+        _prog(2, 4, f"Gathering skill requirements for '{name}'...")
         skills_prompt = (
             f"Based on this role analysis, determine the exact skills and tools needed.\n\n"
             f"Agent : {name} ({role})\n"
@@ -140,7 +140,7 @@ class AetherKernel:
             tools  = list(AGENT_PRESETS.get(preset_key, {}).get("tools",  []))
 
         # ── Step 3: Write instructions (system prompt) ───────────────
-        _prog(3, 3, f"Writing instructions for '{name}'...")
+        _prog(3, 4, f"Writing instructions for '{name}'...")
         instr_prompt = (
             f"Write a detailed system prompt for this AI agent.\n\n"
             f"Agent : {name}\n"
@@ -158,15 +158,77 @@ class AetherKernel:
         )
         instructions = self.ai_adapter.chat([{"role": "user", "content": instr_prompt}])
 
+        # ── Step 4: Evaluation — test-driven agent validation (Fix 5) ─
+        _prog(3, 4, f"Evaluating '{name}' with a mock task...")
+        MAX_EVAL_RETRIES = 2
+        for eval_attempt in range(MAX_EVAL_RETRIES + 1):
+            # 4a. Build a temporary agent (not yet persisted)
+            _tmp_agent = self.factory.create(
+                name=name, role=role, tools=tools, skills=skills,
+                permission_level=permission_level,
+            )
+            _tmp_agent.profile["instructions"] = instructions
+
+            # 4b. Generate a representative mock task for this role
+            mock_task_prompt = (
+                f"Generate a single, realistic test task for the following AI agent.\n\n"
+                f"Agent: {name}\nRole: {role}\n"
+                f"Skills: {', '.join(skills[:8])}\n\n"
+                f"The task should be self-contained, achievable without external tools, "
+                f"and representative of the agent's day-to-day work.\n"
+                f"Output ONLY the task text — no intro, no explanation."
+            )
+            mock_task = self.ai_adapter.chat([{"role": "user", "content": mock_task_prompt}])
+
+            # 4c. Run the agent on the mock task (no side-effects — sandbox result)
+            trial_result = self.workflow_engine.execute(agent=_tmp_agent, task=mock_task)
+
+            # 4d. Ask an Evaluator AI to score and optionally rewrite the instructions
+            eval_prompt = (
+                f"You are an expert AI system evaluator.\n\n"
+                f"AGENT: {name} ({role})\n"
+                f"SYSTEM PROMPT:\n{instructions}\n\n"
+                f"MOCK TASK:\n{mock_task}\n\n"
+                f"AGENT RESPONSE:\n{trial_result}\n\n"
+                f"Evaluate this response strictly. Output ONLY valid JSON:\n"
+                f'{{"passed": true/false, "score": 0-10, "issues": ["..."], '
+                f'"improved_instructions": "rewritten prompt or empty string if passed"}}\n\n'
+                f"passed=true if score >= 7 AND the response is relevant, coherent, and "
+                f"addresses the task without hallucination or generic filler.\n"
+                f"If passed=false, write a complete improved_instructions string."
+            )
+            eval_raw = self.ai_adapter.chat([{"role": "user", "content": eval_prompt}])
+            eval_data: dict = extract_json(eval_raw, safe=True, default={"passed": True})
+
+            passed = bool(eval_data.get("passed", True))
+            score  = eval_data.get("score", 7)
+            issues = eval_data.get("issues", [])
+            improved = (eval_data.get("improved_instructions") or "").strip()
+
+            logger.info(
+                "build_agent eval [attempt %d/%d]: agent='%s' score=%s passed=%s issues=%s",
+                eval_attempt + 1, MAX_EVAL_RETRIES + 1, name, score, passed, issues,
+            )
+
+            if passed or not improved:
+                break  # Accept the current instructions
+
+            # Rewrite and retry
+            logger.info("build_agent: eval failed — rewriting instructions and retrying.")
+            instructions = improved
+
+        _prog(4, 4, f"Agent '{name}' validated (score={score}).")
+
         # ── Build and register the agent ─────────────────────────────
         agent = self.factory.create(name=name, role=role, tools=tools, skills=skills, permission_level=permission_level)
         agent.profile["instructions"]     = instructions
         agent.profile["research_summary"] = research[:600]
+        agent.profile["eval_score"]       = score
         self.registry.register(agent)   # persist updated profile
 
         logger.info(
-            "build_agent: '%s' — %d skills, %d tools, instructions written.",
-            name, len(skills), len(tools),
+            "build_agent: '%s' — %d skills, %d tools, eval_score=%s.",
+            name, len(skills), len(tools), score,
         )
         return agent
 
@@ -684,6 +746,41 @@ class AetherKernel:
             return {"error": f"AI System '{system_name}' not found."}
         return json.loads(p.read_text(encoding="utf-8"))
 
+    # ------------------------------------------------------------------
+    # Dynamic export requirements (Fix 4)
+    # ------------------------------------------------------------------
+
+    # Map from tool name → pip packages required at runtime.
+    _TOOL_DEPENDENCIES: dict[str, list[str]] = {
+        "web_search":      ["requests", "beautifulsoup4"],
+        "http_client":     ["requests"],
+        "browser_tool":    ["playwright"],
+        "pdf_tool":        ["pypdf2"],
+        "csv_tool":        ["pandas"],
+        "analytics_tool":  ["pandas", "numpy"],
+        "media_tool":      ["pillow"],
+        "code_runner":     ["docker"],
+        "url_tool":        ["requests"],
+        "security_tool":   ["cryptography"],
+        "linter_tool":     ["pylint"],
+        "code_formatter":  ["black"],
+    }
+
+    # Base packages always needed for any exported agent
+    _BASE_REQUIREMENTS: list[str] = [
+        "openai", "anthropic", "ollama", "python-dotenv", "pyyaml", "chromadb",
+    ]
+
+    def _build_requirements(self, tool_names: list[str]) -> str:
+        """
+        Build a requirements.txt string for the given tool set.
+        Merges base packages with per-tool deps (Fix 4).
+        """
+        pkgs: set[str] = set(self._BASE_REQUIREMENTS)
+        for tool in tool_names:
+            pkgs.update(self._TOOL_DEPENDENCIES.get(tool, []))
+        return "\n".join(sorted(pkgs)) + "\n"
+
     def export_agent(self, name: str) -> dict:
         """
         Export a self-contained runnable folder for the named agent under
@@ -754,12 +851,10 @@ class AetherKernel:
         env_example.write_text(blank_env, encoding="utf-8")
         files_written.append(".env.example")
 
-        # ── 4. requirements.txt ──────────────────────────────────────────
+        # ── 4. requirements.txt (dynamic — Fix 4) ────────────────────────
         req = export_dir / "requirements.txt"
-        req.write_text(
-            "openai\nanthropic\nollama\npython-dotenv\npyyaml\n",
-            encoding="utf-8",
-        )
+        agent_tools = agent.profile.get("tools", [])
+        req.write_text(self._build_requirements(agent_tools), encoding="utf-8")
         files_written.append("requirements.txt")
 
         # ── 5. run_agent.py — standalone entry point ─────────────────────
@@ -1279,10 +1374,12 @@ class AetherKernel:
                 encoding="utf-8",
             )
 
-        # ── 7. requirements.txt ──────────────────────────────────────────
+        # ── 7. requirements.txt (dynamic — Fix 4) ────────────────────────
+        all_tools: list[str] = []
+        for a in agents:
+            all_tools.extend(a.profile.get("tools", []))
         (sys_dir / "requirements.txt").write_text(
-            "openai\nanthropic\nollama\npython-dotenv\npyyaml\n",
-            encoding="utf-8",
+            self._build_requirements(all_tools), encoding="utf-8"
         )
 
         # ── 8. README.md ─────────────────────────────────────────────────

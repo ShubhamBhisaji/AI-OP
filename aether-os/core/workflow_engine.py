@@ -220,7 +220,7 @@ class WorkflowEngine:
         return await asyncio.gather(*coros, return_exceptions=True)
 
     # ------------------------------------------------------------------
-    # Autonomous task decomposition
+    # Autonomous task decomposition (synchronous — legacy)
     # ------------------------------------------------------------------
 
     def decompose_and_run(self, task: str) -> dict[str, Any]:
@@ -243,6 +243,108 @@ class WorkflowEngine:
             agent = self.registry.get(agent_name)
             results[subtask] = self.execute(agent=agent, task=subtask)
         return results
+
+    # ------------------------------------------------------------------
+    # Autonomous task decomposition (async + parallel — Fix 3)
+    # ------------------------------------------------------------------
+
+    async def decompose_and_run_async(self, task: str) -> dict[str, Any]:
+        """
+        Async parallel task decomposition (Fix 3).
+
+        Steps:
+          1. Ask the AI to decompose *task* into subtasks WITH a dependency
+             graph (JSON).  Subtasks whose ``depends_on`` list is empty can
+             run concurrently; others wait for their dependencies to finish.
+          2. Execute dependency-free subtasks in parallel via asyncio.gather().
+          3. Pass the accumulated results back to the AI to resolve any
+             remaining dependent subtasks, repeating until all are done.
+
+        Returns a dict mapping subtask descriptions to their results.
+        """
+        agents = self.registry.list_names()
+        if not agents:
+            return {"error": "No agents registered."}
+
+        # ── Step 1: Ask AI for a dependency graph ─────────────────────
+        decompose_prompt = (
+            f"Break the following task into subtasks and produce a dependency graph.\n\n"
+            f"Task: {task}\n\n"
+            f"Output ONLY valid JSON — no markdown, no extra text.\n"
+            f"Format:\n"
+            f'{{"subtasks": [{{"id": "1", "description": "...", "depends_on": []}}, '
+            f'{{"id": "2", "description": "...", "depends_on": ["1"]}}]}}\n\n'
+            f"Rules:\n"
+            f"- Use short numeric string IDs\n"
+            f"- depends_on lists IDs of subtasks that MUST complete first\n"
+            f"- Independent subtasks should have depends_on: []\n"
+            f"- Aim for 3-8 subtasks total"
+        )
+        raw = self.ai_adapter.chat(messages=[{"role": "user", "content": decompose_prompt}])
+
+        # Parse the dependency graph (robust fallback to flat list)
+        try:
+            from utils.json_parser import extract_json
+            graph_data = extract_json(raw, safe=True, default={})
+            subtask_list: list[dict] = graph_data.get("subtasks", [])
+            if not subtask_list:
+                raise ValueError("empty graph")
+        except Exception:
+            # Fallback: treat each non-empty line as an independent subtask
+            logger.warning("decompose_and_run_async: AI did not return a valid dependency graph; falling back to flat list.")
+            subtask_list = [
+                {"id": str(i + 1), "description": line.strip(), "depends_on": []}
+                for i, line in enumerate(raw.splitlines())
+                if line.strip()
+            ][:8]
+
+        # ── Step 2: Topological execution with parallel batches ────────
+        completed: dict[str, Any] = {}   # id → result
+        remaining = {s["id"]: s for s in subtask_list}
+
+        while remaining:
+            # Find all tasks whose dependencies are already satisfied
+            ready = [
+                s for s in remaining.values()
+                if all(dep in completed for dep in s.get("depends_on", []))
+            ]
+            if not ready:
+                # Circular dependency or unresolvable graph — run what's left sequentially
+                logger.warning(
+                    "decompose_and_run_async: circular or unresolvable dependency detected; "
+                    "running remaining subtasks sequentially."
+                )
+                for s in remaining.values():
+                    agent_name = agents[0]
+                    agent = self.registry.get(agent_name)
+                    completed[s["id"]] = await self.execute_async(agent=agent, task=s["description"])
+                break
+
+            # Assign each ready subtask to an agent (round-robin)
+            async def _run_subtask(subtask: dict, idx: int) -> tuple[str, Any]:
+                agent_name = agents[idx % len(agents)]
+                agent = self.registry.get(agent_name)
+                result = await self.execute_async(agent=agent, task=subtask["description"])
+                return subtask["id"], result
+
+            coros = [_run_subtask(s, i) for i, s in enumerate(ready)]
+            logger.info(
+                "decompose_and_run_async: running %d subtask(s) in parallel: %s",
+                len(coros), [s["description"][:60] for s in ready],
+            )
+            batch_results = await asyncio.gather(*coros, return_exceptions=True)
+
+            for item in batch_results:
+                if isinstance(item, BaseException):
+                    logger.error("decompose_and_run_async: subtask raised: %s", item)
+                    continue
+                sid, sresult = item
+                completed[sid] = sresult
+                remaining.pop(sid, None)
+
+        # Return results keyed by description for readability
+        id_to_desc = {s["id"]: s["description"] for s in subtask_list}
+        return {id_to_desc.get(sid, sid): result for sid, result in completed.items()}
 
     # ------------------------------------------------------------------
     # Helpers

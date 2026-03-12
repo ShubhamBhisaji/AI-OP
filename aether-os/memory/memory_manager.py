@@ -11,12 +11,24 @@ Fix 4 — Advanced Memory Management:
 
     If chromadb is not installed the manager degrades gracefully to the
     original flat key-value store with no loss of existing functionality.
+
+Fix 6 — Memory Isolation (Namespacing):
+    All operations accept an optional `namespace` parameter (default
+    "global").  Keys are stored as "<namespace>:<key>" so agents operating
+    under their own namespace cannot accidentally read or search another
+    agent's memories.  Call `memory.scoped(agent_name)` to obtain a
+    ScopedMemory helper that automatically injects the namespace — the rest
+    of the codebase never has to think about it.
+
+    The "global" namespace is explicitly shared; use it for team-level or
+    system-wide state.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -77,32 +89,58 @@ class MemoryManager:
             )
 
     # ------------------------------------------------------------------
+    # Namespace helpers (Fix 6)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _ns_key(key: str, namespace: str) -> str:
+        """Build a namespaced storage key: '<namespace>:<key>'."""
+        if namespace == "global" or not namespace:
+            return key
+        return f"{namespace}:{key}"
+
+    def scoped(self, namespace: str) -> "ScopedMemory":
+        """
+        Return a ScopedMemory proxy that automatically injects *namespace*
+        into every operation.  Use this within agent contexts so agents can
+        never accidentally read each other's private memories::
+
+            mem = memory_manager.scoped(agent.name)
+            mem.save("last_result", value)          # stored as "AgentName:last_result"
+            mem.semantic_search("python error")     # only searches AgentName docs
+        """
+        return ScopedMemory(manager=self, namespace=namespace)
+
+    # ------------------------------------------------------------------
     # Core operations
     # ------------------------------------------------------------------
 
-    def save(self, key: str, value: Any) -> None:
-        """Store or overwrite a value by key. Indexes in vector store if text."""
-        self._store[key] = value
+    def save(self, key: str, value: Any, namespace: str = "global") -> None:
+        """Store or overwrite a value by key inside *namespace*."""
+        ns_key = self._ns_key(key, namespace)
+        self._store[ns_key] = value
         self._flush()
-        self._vector_index(key, value)
+        self._vector_index(ns_key, value, namespace=namespace)
 
-    def load(self, key: str, default: Any = None) -> Any:
-        """Retrieve a value by key, returning `default` if absent."""
-        return self._store.get(key, default)
+    def load(self, key: str, default: Any = None, namespace: str = "global") -> Any:
+        """Retrieve a value by key from *namespace*, returning *default* if absent."""
+        return self._store.get(self._ns_key(key, namespace), default)
 
-    def append(self, key: str, value: Any) -> None:
-        """Append a value to a list stored at `key`."""
-        existing = self._store.get(key, [])
+    def append(self, key: str, value: Any, namespace: str = "global") -> None:
+        """Append a value to a list stored at *key* in *namespace*."""
+        ns_key = self._ns_key(key, namespace)
+        existing = self._store.get(ns_key, [])
         if not isinstance(existing, list):
             existing = [existing]
         existing.append(value)
-        self._store[key] = existing
+        self._store[ns_key] = existing
         self._flush()
 
-    def delete(self, key: str) -> bool:
-        """Remove a key. Returns True if it existed."""
-        if key in self._store:
-            del self._store[key]
+    def delete(self, key: str, namespace: str = "global") -> bool:
+        """Remove a key from *namespace*. Returns True if it existed."""
+        ns_key = self._ns_key(key, namespace)
+        if ns_key in self._store:
+            del self._store[ns_key]
             self._flush()
             return True
         return False
@@ -139,6 +177,7 @@ class MemoryManager:
         self,
         query: str,
         n_results: int = 5,
+        namespace: str = "global",
         where: dict | None = None,
     ) -> list[dict[str, Any]]:
         """
@@ -151,12 +190,25 @@ class MemoryManager:
         ----------
         query     : Natural-language query string.
         n_results : Maximum number of results to return.
-        where     : Optional ChromaDB metadata filter dict.
+        namespace : Restrict results to this namespace (Fix 6).
+                    Pass "global" or leave as default to search all namespaces.
+        where     : Additional ChromaDB metadata filter dict (merged with
+                    the namespace filter automatically).
 
         Returns
         -------
         List of dicts: [{"key": ..., "value": ..., "distance": ...}, ...]
         """
+        # ── Build the effective metadata filter (Fix 6) ───────────────
+        effective_where: dict | None = None
+        if namespace and namespace != "global":
+            effective_where = {"namespace": {"$eq": namespace}}
+            if where:
+                # Merge caller's filter with the namespace restriction
+                effective_where = {"$and": [effective_where, where]}
+        elif where:
+            effective_where = where
+
         # ── Vector path ───────────────────────────────────────────────
         if self._vector_collection is not None:
             try:
@@ -169,8 +221,8 @@ class MemoryManager:
                     "n_results": k,
                     "include": ["documents", "metadatas", "distances"],
                 }
-                if where:
-                    query_kwargs["where"] = where
+                if effective_where:
+                    query_kwargs["where"] = effective_where
                 results = self._vector_collection.query(**query_kwargs)
                 hits = []
                 for doc, meta, dist in zip(
@@ -187,13 +239,15 @@ class MemoryManager:
             except Exception as exc:
                 logger.warning("MemoryManager: vector search failed — %s", exc)
 
-        # ── Fallback: substring keyword search ────────────────────────
+        # ── Fallback: substring keyword search (namespace-aware) ──────
         logger.debug("MemoryManager: falling back to keyword search.")
         lower_q = query.lower()
+        prefix = f"{namespace}:" if namespace and namespace != "global" else None
         matches = [
             {"key": k, "value": str(v), "distance": None}
             for k, v in self._store.items()
-            if lower_q in k.lower() or lower_q in str(v).lower()
+            if (prefix is None or k.startswith(prefix))
+            and (lower_q in k.lower() or lower_q in str(v).lower())
         ]
         return matches[:n_results]
 
@@ -216,8 +270,8 @@ class MemoryManager:
         except (OSError, json.JSONDecodeError) as exc:
             logger.error("MemoryManager: failed to load memory: %s", exc)
 
-    def _vector_index(self, key: str, value: Any) -> None:
-        """Index a key-value pair in the vector store (when available)."""
+    def _vector_index(self, key: str, value: Any, namespace: str = "global") -> None:
+        """Index a key-value pair in the vector store with namespace metadata (Fix 6)."""
         if self._vector_collection is None:
             return
         text = value if isinstance(value, str) else json.dumps(value, default=str)
@@ -228,8 +282,74 @@ class MemoryManager:
             self._vector_collection.upsert(
                 ids=[key],
                 documents=[text[:2000]],  # cap document size to 2 000 chars
-                metadatas=[{"key": key}],
+                metadatas=[{"key": key, "namespace": namespace}],
             )
         except Exception as exc:
             logger.debug("MemoryManager: vector index failed for key '%s': %s", key, exc)
+
+
+# ---------------------------------------------------------------------------
+# ScopedMemory — namespace-bound proxy  (Fix 6)
+# ---------------------------------------------------------------------------
+
+class ScopedMemory:
+    """
+    A thin proxy around MemoryManager that automatically injects a fixed
+    namespace into every operation.
+
+    Agents should use this rather than calling the global manager directly::
+
+        mem = kernel.memory.scoped(agent.name)
+        mem.save("result", "done")           # stored as "AgentName:result"
+        mem.semantic_search("python error")  # only sees AgentName documents
+
+    The "global" namespace is the shared team/system space — accessible via
+    ``kernel.memory.scoped("global")`` or directly through ``kernel.memory``.
+    """
+
+    def __init__(self, manager: MemoryManager, namespace: str) -> None:
+        self._m = manager
+        self._ns = namespace
+
+    @property
+    def namespace(self) -> str:
+        return self._ns
+
+    def save(self, key: str, value: Any) -> None:
+        self._m.save(key, value, namespace=self._ns)
+
+    def load(self, key: str, default: Any = None) -> Any:
+        return self._m.load(key, default, namespace=self._ns)
+
+    def append(self, key: str, value: Any) -> None:
+        self._m.append(key, value, namespace=self._ns)
+
+    def delete(self, key: str) -> bool:
+        return self._m.delete(key, namespace=self._ns)
+
+    def semantic_search(
+        self,
+        query: str,
+        n_results: int = 5,
+        extra_filter: dict | None = None,
+    ) -> list[dict[str, Any]]:
+        """Search only within this agent's own memory namespace."""
+        return self._m.semantic_search(
+            query,
+            n_results=n_results,
+            namespace=self._ns,
+            where=extra_filter,
+        )
+
+    def keys(self) -> list[str]:
+        """Return bare keys (without namespace prefix) stored in this scope."""
+        prefix = f"{self._ns}:" if self._ns != "global" else ""
+        return [
+            k[len(prefix):] if prefix and k.startswith(prefix) else k
+            for k in self._m.keys()
+            if not prefix or k.startswith(prefix)
+        ]
+
+    def __contains__(self, key: str) -> bool:
+        return self._m._ns_key(key, self._ns) in self._m
 
