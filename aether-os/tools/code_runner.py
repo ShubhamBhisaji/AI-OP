@@ -211,7 +211,7 @@ def code_runner(code: str, language: str = "python", extra_deps: list[str] | Non
             try:
                 subprocess.run(
                     [_python_cmd, "-m", "pip", "install", "--quiet"] + all_deps,
-                    capture_output=True, timeout=60,
+                    capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
                 )
             except FileNotFoundError:
                 logger.warning("code_runner: 'python' not found on PATH; skipping dep install.")
@@ -220,6 +220,7 @@ def code_runner(code: str, language: str = "python", extra_deps: list[str] | Non
             result = subprocess.run(
                 [_python_cmd, tmp_path],
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 timeout=_TIMEOUT_SECONDS,
             )

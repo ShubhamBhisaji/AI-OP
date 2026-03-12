@@ -150,6 +150,7 @@ def _run(command: str, cwd: str) -> str:
         result = subprocess.run(
             argv,
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             timeout=_TIMEOUT,
             cwd=run_cwd,

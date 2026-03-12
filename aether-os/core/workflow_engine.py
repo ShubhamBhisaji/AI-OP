@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 # Maximum self-correction attempts before returning the last error result
 MAX_SELF_CORRECT_RETRIES: int = 3
 
+# Sliding-window limit: max messages kept in history per AI turn (context-window guard)
+_MAX_HISTORY_MESSAGES: int = 20
+
 # Heuristics used to detect an error result from an agent
 _ERROR_PREFIXES: tuple[str, ...] = (
     "error:",
@@ -365,6 +368,10 @@ class WorkflowEngine:
         prompt = self._build_prompt(agent=agent, task=task)
         messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
 
+        # Prune message history to stay within context window (Bug 1)
+        if len(messages) > _MAX_HISTORY_MESSAGES:
+            messages = messages[:1] + messages[-(_MAX_HISTORY_MESSAGES - 1):]
+
         # Run the blocking chat call off the main thread
         result = await loop.run_in_executor(
             None, lambda: self.ai_adapter.chat(messages=messages)
@@ -390,6 +397,9 @@ class WorkflowEngine:
                     f"Please identify the root cause and provide a corrected response."
                 ),
             })
+            # Prune before retry to prevent context-window blowout (Bug 1)
+            if len(messages) > _MAX_HISTORY_MESSAGES:
+                messages = messages[:1] + messages[-(_MAX_HISTORY_MESSAGES - 1):]
             result = await loop.run_in_executor(
                 None, lambda: self.ai_adapter.chat(messages=messages)
             )
@@ -523,6 +533,17 @@ class WorkflowEngine:
             ][:8]
 
         # ── Step 2: Topological execution with parallel batches ────────
+        # Validate dependency IDs — strip hallucinated refs that would cause deadlock (Bug 2)
+        _task_ids = {s["id"] for s in subtask_list}
+        for _s in subtask_list:
+            _valid = [d for d in _s.get("depends_on", []) if d in _task_ids]
+            if len(_valid) != len(_s.get("depends_on", [])):
+                logger.warning(
+                    "decompose_and_run_async: removed hallucinated dep(s) from task '%s'",
+                    _s["id"],
+                )
+            _s["depends_on"] = _valid
+
         completed: dict[str, Any] = {}   # id → result
         remaining = {s["id"]: s for s in subtask_list}
 

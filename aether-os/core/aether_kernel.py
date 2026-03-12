@@ -802,11 +802,13 @@ class AetherKernel:
         "security_tool":   ["cryptography"],
         "linter_tool":     ["pylint"],
         "code_formatter":  ["black"],
+        "memory_manager":  ["chromadb", "pysqlite3-binary"],
     }
 
     # Base packages always needed for any exported agent
     _BASE_REQUIREMENTS: list[str] = [
         "openai", "anthropic", "ollama", "python-dotenv", "pyyaml", "chromadb",
+        "pydantic", "pysqlite3-binary",
     ]
 
     def _build_requirements(self, tool_names: list[str]) -> str:
