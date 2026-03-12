@@ -1,8 +1,14 @@
 @echo off
 :: ================================================================
-:: Build  AetherAi-A Master AI  —  Standalone Windows .exe
+:: Build  AetherAi-A Master AI  --  Standalone Windows .exe
 :: ================================================================
 :: Output:  dist\AetherAi_MasterAI.exe
+::
+:: Double-clicking the .exe:
+::   - Shows a welcome splash window
+::   - Starts the Streamlit dashboard silently (no terminal)
+::   - Opens the browser automatically
+::   - Shows a small "AetherAi is running" window when ready
 ::
 :: Requirements: Python 3.10+ on PATH
 :: First run takes 2-5 minutes (PyInstaller compiles everything)
@@ -13,18 +19,20 @@ cd /d "%~dp0"
 
 echo.
 echo  ============================================================
-echo    AetherAi-A Master AI  —  Build Launcher
+echo    AetherAi-A Master AI  --  Build Launcher
 echo  ============================================================
 echo.
-echo  Installing / updating PyInstaller...
-pip install pyinstaller --quiet
+echo  Installing / updating PyInstaller and Streamlit...
+pip install pyinstaller streamlit --quiet
 echo.
 echo  Building AetherAi_MasterAI.exe  (please wait)...
 echo.
 
 pyinstaller ^
     --onefile ^
+    --windowed ^
     --name "AetherAi_MasterAI" ^
+    --add-data "app.py;." ^
     --add-data "agents;agents" ^
     --add-data "ai;ai" ^
     --add-data "cli;cli" ^
@@ -38,6 +46,7 @@ pyinstaller ^
     --add-data "utils;utils" ^
     --add-data "memory\memory_store.json;memory" ^
     --add-data "registry\registry_store.json;registry" ^
+    --hidden-import streamlit ^
     --hidden-import chromadb ^
     --hidden-import chromadb.api ^
     --hidden-import openai ^
@@ -51,8 +60,8 @@ pyinstaller ^
     --hidden-import uvicorn ^
     --collect-submodules chromadb ^
     --collect-submodules tiktoken_ext ^
-    --console ^
-    main.py
+    --collect-submodules streamlit ^
+    launcher.py
 
 if %errorlevel%==0 (
     echo.

@@ -89,6 +89,14 @@ with st.sidebar:
     st.divider()
     st.caption(f"**AI:** `{kernel.ai_adapter.provider}` / `{kernel.ai_adapter.model}`")
 
+    # ── Shutdown button ───────────────────────────────────────────────
+    st.divider()
+    if st.button("⏹ Stop AetherAi", use_container_width=True, type="secondary"):
+        st.warning("Shutting down AetherAi... You can close this tab.")
+        st.toast("AetherAi stopped.", icon="⏹")
+        import time as _t; _t.sleep(1)
+        import os as _os; _os._exit(0)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. TASK EXECUTOR
