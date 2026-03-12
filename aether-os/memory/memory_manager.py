@@ -87,7 +87,9 @@ class MemoryManager:
         # ── Initialise ChromaDB vector store (Fix 4) ─────────────────
         if enable_vector and _CHROMA_AVAILABLE:
             try:
-                chroma_dir = str(Path(__file__).parent / "chroma_store")
+                # Bug 2 fix: use _data_dir() so chroma persists next to the .exe,
+                # never inside _MEIPASS (which PyInstaller deletes on shutdown).
+                chroma_dir = str(_data_dir() / "chroma_store")
                 client = chromadb.PersistentClient(
                     path=chroma_dir,
                     settings=_CSettings(anonymized_telemetry=False),

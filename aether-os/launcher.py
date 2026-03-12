@@ -11,7 +11,9 @@ Compile to a no-console .exe with:  build_main_exe.bat
 """
 from __future__ import annotations
 
+import multiprocessing
 import os
+import shutil
 import sys
 import subprocess
 import threading
@@ -20,6 +22,12 @@ import webbrowser
 import socket
 import tkinter as tk
 from tkinter import ttk
+
+# Bug 4 fix — Multiprocessing / PyInstaller infinite-window crash:
+# freeze_support() MUST be called before any other code runs when the module
+# is re-imported by a child process spawned by multiprocessing on Windows.
+# Place it here (module level) so it fires even before __name__ == '__main__'.
+multiprocessing.freeze_support()
 
 _PORT = 8501
 _HOST = "127.0.0.1"
@@ -44,9 +52,28 @@ def _port_open(host: str, port: int) -> bool:
         return False
 
 
+def _find_python() -> str:
+    """
+    Return the correct Python interpreter path.
+
+    Bug 4 fix: when frozen, sys.executable is the .exe itself — passing it to
+    subprocess would re-launch AetheerAI instead of running Python.  Look for
+    a real python.exe on PATH instead.
+    """
+    if not getattr(sys, "frozen", False):
+        return sys.executable  # plain py script: sys.executable IS python
+    # Frozen .exe: find the real Python on PATH
+    for candidate in ("python", "python3"):
+        found = shutil.which(candidate)
+        if found:
+            return found
+    # Absolute last resort — will fail with a clear error message at runtime
+    return "python"
+
+
 def _start_streamlit() -> subprocess.Popen:
     """Launch streamlit run app.py as a hidden background process."""
-    python = sys.executable
+    python = _find_python()
     app_path = os.path.join(_ROOT, "app.py")
 
     kwargs: dict = dict(

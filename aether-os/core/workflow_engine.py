@@ -106,11 +106,30 @@ class WorkflowCancelled(RuntimeError):
     """Raised when a human cancels the workflow at a HITL gate."""
 
 
+def _is_streamlit_context() -> bool:
+    """Return True when code is executing inside a running Streamlit process."""
+    import sys
+    return "streamlit" in sys.modules and "streamlit.runtime.scriptrunner" in sys.modules
+
+
 def _default_hitl_callback(checkpoint: WorkflowCheckpoint) -> WorkflowFeedback:
     """
     Interactive console HITL gate used when no callback is registered.
     Prints the agent result and prompts the operator for a decision.
+
+    Bug Fix: When running inside Streamlit the terminal's input() is never
+    visible to the user and will hang the UI forever.  Auto-approve in that
+    case so the Streamlit spinner resolves normally.
     """
+    # Bug 1 fix — Streamlit HITL deadlock guard
+    if _is_streamlit_context():
+        logger.info(
+            "HITL: Streamlit context detected — auto-approving checkpoint "
+            "for agent '%s' (terminal input unavailable in web UI).",
+            checkpoint.agent_name,
+        )
+        return WorkflowFeedback(action=HITLAction.APPROVE)
+
     step_label = (
         f"Step {checkpoint.step}/{checkpoint.total_steps}"
         if checkpoint.total_steps

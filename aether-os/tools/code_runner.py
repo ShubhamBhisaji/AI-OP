@@ -198,20 +198,37 @@ def code_runner(code: str, language: str = "python", extra_deps: list[str] | Non
             "Install Docker for full sandboxing."
         )
 
+        # Bug 3 fix — frozen .exe fork bomb guard:
+        # When compiled with PyInstaller sys.executable is the .exe itself, NOT
+        # python.exe.  Running [sys.executable, script.py] would re-launch the
+        # entire AetheerAI application instead of executing the Python script.
+        # Use the bare "python" command so the OS finds the real interpreter.
+        _python_cmd = "python" if getattr(sys, "frozen", False) else sys.executable
+
         # Auto-install missing deps on the host as well (Fix 7 fallback)
         if all_deps:
             logger.info("code_runner: installing deps on host: %s", all_deps)
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--quiet"] + all_deps,
-                capture_output=True, timeout=60,
-            )
+            try:
+                subprocess.run(
+                    [_python_cmd, "-m", "pip", "install", "--quiet"] + all_deps,
+                    capture_output=True, timeout=60,
+                )
+            except FileNotFoundError:
+                logger.warning("code_runner: 'python' not found on PATH; skipping dep install.")
 
-        result = subprocess.run(
-            [sys.executable, tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=_TIMEOUT_SECONDS,
-        )
+        try:
+            result = subprocess.run(
+                [_python_cmd, tmp_path],
+                capture_output=True,
+                text=True,
+                timeout=_TIMEOUT_SECONDS,
+            )
+        except FileNotFoundError:
+            return (
+                "Error: Python is not installed or not on PATH on this system.\n"
+                "Install Python 3.10+ from https://www.python.org/downloads/ and "
+                "ensure it is added to your PATH."
+            )
         output = result.stdout
         if result.stderr:
             output += "\n[stderr]\n" + result.stderr
