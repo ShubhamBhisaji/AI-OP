@@ -27,15 +27,247 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS — dark, polished feel ─────────────────────────────────────
+# ── Custom CSS — website-style design ────────────────────────────────────
 st.markdown("""
 <style>
-    [data-testid="stSidebar"] { background: #0e1117; }
-    .stChatMessage { border-radius: 12px; }
-    .stTextInput > div > div > input { border-radius: 8px; }
-    .stTextArea > div > div > textarea { border-radius: 8px; }
-    div[data-testid="stStatusWidget"] { display: none; }
+/* ── Hide Streamlit chrome ─────────────────────────────────────────── */
+#MainMenu, footer { visibility: hidden; }
+[data-testid="stHeader"], [data-testid="stToolbar"] { display: none !important; }
+div[data-testid="stStatusWidget"] { display: none; }
+
+/* ── Fixed top navigation bar ─────────────────────────────────────── */
+.top-navbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 54px;
+    z-index: 9999;
+    background: #060d19;
+    border-bottom: 1px solid #1a2d47;
+    display: flex;
+    align-items: center;
+    padding: 0 28px;
+    gap: 14px;
+}
+.top-navbar-logo { font-size: 22px; line-height: 1; }
+.top-navbar-title {
+    font-size: 16px; font-weight: 700;
+    color: #eef2ff; letter-spacing: -0.3px;
+}
+.top-navbar-sub {
+    font-size: 11px; color: #2d4a6a; font-weight: 500;
+    border-left: 1px solid #1a2d47; padding-left: 14px; margin-left: 4px;
+}
+.top-navbar-badge {
+    margin-left: auto;
+    font-size: 11px; color: #22d3ee;
+    background: rgba(6,182,212,0.1);
+    border: 1px solid rgba(6,182,212,0.25);
+    padding: 3px 12px; border-radius: 20px; font-weight: 600;
+}
+
+/* ── Push content below fixed header ─────────────────────────────── */
+[data-testid="stAppViewContainer"] { padding-top: 54px !important; background: #0c1525; }
+[data-testid="stMain"] { background: #0c1525; }
+[data-testid="stSidebar"] {
+    top: 54px !important;
+    height: calc(100vh - 54px) !important;
+    background: #07111e !important;
+    border-right: 1px solid #1a2d47 !important;
+}
+[data-testid="stSidebarContent"] { padding: 0 !important; }
+
+/* ── Sidebar brand block ──────────────────────────────────────────── */
+.sidebar-brand {
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid #1a2d47;
+    margin-bottom: 4px;
+}
+.sidebar-brand-title {
+    font-size: 17px; font-weight: 700;
+    color: #eef2ff; line-height: 1.2; letter-spacing: -0.3px;
+}
+.sidebar-brand-sub { font-size: 11px; color: #2d4a6a; font-weight: 500; margin-top: 2px; }
+
+/* ── Sidebar section labels ───────────────────────────────────────── */
+.nav-section-label {
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 1.2px; color: #2d4a6a;
+    padding: 12px 18px 3px; text-transform: uppercase;
+}
+
+/* ── Nav radio — styled as nav links ──────────────────────────────── */
+[data-testid="stSidebar"] input[type="radio"] { display: none !important; }
+[data-testid="stSidebar"] .stRadio > label { display: none !important; }
+[data-testid="stSidebar"] .stRadio > div {
+    display: flex; flex-direction: column;
+    gap: 1px; padding: 2px 10px;
+}
+[data-testid="stSidebar"] .stRadio label {
+    display: flex !important; align-items: center;
+    padding: 9px 14px !important;
+    border-radius: 7px !important;
+    color: #6b88a3 !important;
+    font-size: 13.5px !important; font-weight: 500 !important;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    border-left: 3px solid transparent !important;
+    margin: 1px 0;
+}
+[data-testid="stSidebar"] .stRadio label:hover {
+    background: rgba(59,130,246,0.08) !important;
+    color: #93c5fd !important;
+}
+[data-testid="stSidebar"] .stRadio label[data-selected="true"],
+[data-testid="stSidebar"] .stRadio label[aria-checked="true"] {
+    background: rgba(59,130,246,0.13) !important;
+    color: #60a5fa !important;
+    border-left-color: #3b82f6 !important;
+}
+
+/* ── Agent chip ───────────────────────────────────────────────────── */
+.agent-chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 14px; border-radius: 6px;
+    background: #0a1828; border: 1px solid #1a2d47;
+    margin: 2px 0; font-size: 12px; color: #6b88a3;
+}
+
+/* ── Content area ─────────────────────────────────────────────────── */
+.block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 3rem !important;
+    max-width: 1100px;
+}
+
+/* ── Typography ───────────────────────────────────────────────────── */
+h1 { font-size: 26px !important; font-weight: 700 !important; color: #eef2ff !important; margin-bottom: 4px !important; }
+h2 { color: #c7d8f0 !important; font-weight: 600 !important; }
+h3 { color: #8fa7c0 !important; }
+p, li { color: #7a95b0; }
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+.stButton > button {
+    border-radius: 7px !important; font-weight: 600 !important;
+    font-size: 13px !important; transition: all 0.18s !important;
+}
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #1d4ed8 0%, #4338ca 100%) !important;
+    border: none !important; color: #fff !important;
+    box-shadow: 0 2px 10px rgba(59,130,246,0.2) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%) !important;
+    box-shadow: 0 4px 20px rgba(59,130,246,0.35) !important;
+    transform: translateY(-1px);
+}
+.stButton > button[kind="secondary"] {
+    background: #0d1b2e !important; border: 1px solid #1e3452 !important; color: #6b88a3 !important;
+}
+.stButton > button[kind="secondary"]:hover {
+    border-color: #3b82f6 !important; color: #93c5fd !important; background: #0a1626 !important;
+}
+
+/* ── Inputs ───────────────────────────────────────────────────────── */
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea {
+    border-radius: 7px !important; background: #0a1626 !important;
+    border: 1px solid #1e3452 !important; color: #e2e8f0 !important; font-size: 14px !important;
+}
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: #3b82f6 !important; box-shadow: 0 0 0 2px rgba(59,130,246,0.15) !important;
+}
+[data-testid="stSelectbox"] > div > div {
+    background: #0a1626 !important; border: 1px solid #1e3452 !important;
+    border-radius: 7px !important; color: #e2e8f0 !important;
+}
+
+/* ── Expanders ────────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    background: #09131f !important; border: 1px solid #1a2d47 !important; border-radius: 10px !important;
+}
+
+/* ── Chat ─────────────────────────────────────────────────────────── */
+.stChatMessage {
+    background: #09131f !important; border: 1px solid #1a2d47 !important; border-radius: 12px !important;
+}
+
+/* ── Progress ─────────────────────────────────────────────────────── */
+.stProgress > div > div > div > div {
+    background: linear-gradient(90deg, #2563eb, #7c3aed) !important; border-radius: 4px !important;
+}
+
+/* ── Dividers ─────────────────────────────────────────────────────── */
+hr { border-color: #1a2d47 !important; }
+
+/* ── Alert boxes ──────────────────────────────────────────────────── */
+[data-testid="stInfo"]    { background: rgba(59,130,246,0.07) !important; border: 1px solid rgba(59,130,246,0.18) !important; border-radius: 8px !important; }
+[data-testid="stSuccess"] { background: rgba(16,185,129,0.07) !important; border: 1px solid rgba(16,185,129,0.18) !important; border-radius: 8px !important; }
+[data-testid="stWarning"] { background: rgba(245,158,11,0.07)  !important; border: 1px solid rgba(245,158,11,0.18)  !important; border-radius: 8px !important; }
+[data-testid="stError"]   { background: rgba(239,68,68,0.07)   !important; border: 1px solid rgba(239,68,68,0.18)   !important; border-radius: 8px !important; }
+
+/* ── Dataframe ────────────────────────────────────────────────────── */
+[data-testid="stDataFrame"] { border-radius: 10px !important; overflow: hidden; }
+
+/* ── Code blocks ──────────────────────────────────────────────────── */
+.stCode, pre { background: #060e1b !important; border: 1px solid #1a2d47 !important; border-radius: 7px !important; }
 </style>
+""", unsafe_allow_html=True)
+
+# ── AetherAi SVG icon ─ unique gradient IDs per placement ────────────────
+_NAV_SVG = ('<svg width="30" height="30" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"'
+            ' style="flex-shrink:0;border-radius:8px">'
+            '<defs>'
+            '<linearGradient id="nb-bg" x1="0%" y1="0%" x2="100%" y2="100%">'
+            '<stop offset="0%" stop-color="#18181B"/><stop offset="100%" stop-color="#27272A"/>'
+            '</linearGradient>'
+            '<linearGradient id="nb-inf" x1="0%" y1="0%" x2="100%" y2="100%">'
+            '<stop offset="0%" stop-color="#F43F5E"/><stop offset="100%" stop-color="#8B5CF6"/>'
+            '</linearGradient>'
+            '</defs>'
+            '<rect width="256" height="256" rx="64" fill="url(#nb-bg)"/>'
+            '<path d="M 64 128 C 30 128 30 180 64 180 C 100 180 156 76 192 76 C 226 76 226 128 192 128'
+            ' C 156 128 100 232 64 232 C 30 232 30 180 64 180"'
+            ' fill="none" stroke="url(#nb-inf)" stroke-width="16" stroke-linecap="round"/>'
+            '<path d="M 128 40 L 70 170 M 128 40 L 186 170 M 90 130 L 166 130"'
+            ' fill="none" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>'
+            '</svg>')
+_SB_SVG  = ('<svg width="36" height="36" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"'
+            ' style="flex-shrink:0;border-radius:9px">'
+            '<defs>'
+            '<linearGradient id="sb-bg" x1="0%" y1="0%" x2="100%" y2="100%">'
+            '<stop offset="0%" stop-color="#18181B"/><stop offset="100%" stop-color="#27272A"/>'
+            '</linearGradient>'
+            '<linearGradient id="sb-inf" x1="0%" y1="0%" x2="100%" y2="100%">'
+            '<stop offset="0%" stop-color="#F43F5E"/><stop offset="100%" stop-color="#8B5CF6"/>'
+            '</linearGradient>'
+            '</defs>'
+            '<rect width="256" height="256" rx="64" fill="url(#sb-bg)"/>'
+            '<path d="M 64 128 C 30 128 30 180 64 180 C 100 180 156 76 192 76 C 226 76 226 128 192 128'
+            ' C 156 128 100 232 64 232 C 30 232 30 180 64 180"'
+            ' fill="none" stroke="url(#sb-inf)" stroke-width="16" stroke-linecap="round"/>'
+            '<path d="M 128 40 L 70 170 M 128 40 L 186 170 M 90 130 L 166 130"'
+            ' fill="none" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>'
+            '</svg>')
+
+# ── Favicon ───────────────────────────────────────────────────────────────
+import base64 as _b64
+_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aether_icon.svg")
+if os.path.exists(_icon_path):
+    with open(_icon_path, "rb") as _if:
+        st.markdown(
+            f'<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,{_b64.b64encode(_if.read()).decode()}">',
+            unsafe_allow_html=True,
+        )
+
+# ── Fixed top navbar HTML ─────────────────────────────────────────────────
+st.markdown(f"""
+<div class="top-navbar">
+    {_NAV_SVG}
+    <span class="top-navbar-title">AetherAi Master</span>
+    <span class="top-navbar-sub">Advanced AI Operating System</span>
+    <span class="top-navbar-badge">● ONLINE</span>
+</div>
 """, unsafe_allow_html=True)
 
 
@@ -64,33 +296,49 @@ def _agent_names() -> list[str]:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("⚡ AetherAi Master")
-    st.caption("Advanced AI Operating System")
-    st.divider()
+    # ── Brand / Logo block ────────────────────────────────────────────
+    st.markdown(f"""
+    <div class="sidebar-brand">
+        <div style="display:flex;align-items:center;gap:10px;">
+            {_SB_SVG}
+            <div>
+                <div class="sidebar-brand-title">AetherAi Master</div>
+                <div class="sidebar-brand-sub">Advanced AI Operating System</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    page = st.radio("Navigation", [
+    # ── Navigation ────────────────────────────────────────────────────
+    st.markdown('<div class="nav-section-label">Navigation</div>', unsafe_allow_html=True)
+
+    page = st.radio("nav", [
         "💬 Task Executor",
         "🏭 Agent Factory",
         "👥 System Orchestrator",
         "🎓 Train AI",
         "⚙️ Settings & Export",
-    ])
+    ], label_visibility="collapsed")
 
-    st.divider()
-    st.subheader("Registered Agents")
+    # ── Registered Agents ─────────────────────────────────────────────
+    st.markdown('<div class="nav-section-label" style="margin-top:10px;">Agents</div>', unsafe_allow_html=True)
     names = _agent_names()
     if names:
         for n in names:
-            st.text(f"🤖 {n}")
+            st.markdown(f'<div class="agent-chip">🤖 <span>{n}</span></div>', unsafe_allow_html=True)
     else:
-        st.caption("No agents yet — use Agent Factory.")
+        st.markdown('<div style="font-size:11.5px;color:#2d4a6a;padding:4px 18px 6px;">No agents — use Agent Factory</div>', unsafe_allow_html=True)
 
-    # Live provider chip
+    # ── Provider info ─────────────────────────────────────────────────
     st.divider()
-    st.caption(f"**AI:** `{kernel.ai_adapter.provider}` / `{kernel.ai_adapter.model}`")
+    st.markdown(
+        f'<div style="font-size:11px;color:#2d4a6a;padding:2px 4px 6px;">'
+        f'AI &nbsp;<span style="color:#60a5fa;font-weight:600;">{kernel.ai_adapter.provider}</span>'
+        f' &nbsp;/&nbsp; <span style="color:#a78bfa;font-weight:600;">{kernel.ai_adapter.model}</span></div>',
+        unsafe_allow_html=True,
+    )
 
-    # ── Shutdown button ───────────────────────────────────────────────
-    st.divider()
+    # ── Stop button ───────────────────────────────────────────────────
     if st.button("⏹ Stop AetherAi", use_container_width=True, type="secondary"):
         st.warning("Shutting down AetherAi... You can close this tab.")
         st.toast("AetherAi stopped.", icon="⏹")
@@ -394,19 +642,363 @@ elif page == "🎓 Train AI":
 elif page == "⚙️ Settings & Export":
     st.header("⚙️ Settings & Export")
 
-    # ── Live AI switch ────────────────────────────────────────────────
-    st.subheader("Switch AI Provider")
-    providers = ["github", "openai", "claude", "gemini", "ollama", "huggingface"]
-    new_provider = st.selectbox("Provider", providers, index=providers.index(kernel.ai_adapter.provider) if kernel.ai_adapter.provider in providers else 0)
-    new_model = st.text_input("Model", value=kernel.ai_adapter.model)
-    if st.button("Apply AI Change"):
+    import json as _json
+    import urllib.request as _urllib_req
+    import urllib.error as _urllib_err
+
+    # ── Provider metadata ─────────────────────────────────────────────
+    _KEY_MAP = {
+        "github":       "GITHUB_TOKEN",
+        "openai":       "OPENAI_API_KEY",
+        "claude":       "ANTHROPIC_API_KEY",
+        "gemini":       "GEMINI_API_KEY",
+        "ollama":       None,
+        "huggingface":  "HF_API_KEY",
+    }
+    _KEY_LABEL = {
+        "github":      "GitHub Personal Access Token",
+        "openai":      "OpenAI API Key",
+        "claude":      "Anthropic API Key",
+        "gemini":      "Google Gemini API Key",
+        "ollama":      None,
+        "huggingface": "HuggingFace API Token (optional)",
+    }
+    _KEY_HELP = {
+        "github":      "Get a free token at https://github.com/settings/tokens — no special scopes needed.",
+        "openai":      "Get your key at https://platform.openai.com/api-keys",
+        "claude":      "Get your key at https://console.anthropic.com/",
+        "gemini":      "Get a free key at https://aistudio.google.com/apikey",
+        "ollama":      "",
+        "huggingface": "Get your token at https://huggingface.co/settings/tokens",
+    }
+    _STATIC_MODELS = {
+        "github":      ["gpt-4.1", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-mini"],
+        "openai":      ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo", "o1", "o1-mini"],
+        "claude":      ["claude-opus-4-5", "claude-sonnet-4-5", "claude-3-5-sonnet-20241022",
+                        "claude-3-opus-20240229", "claude-3-haiku-20240307"],
+        "gemini":      ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"],
+        "ollama":      ["llama3.2", "llama3.1", "mistral", "gemma3", "phi4",
+                        "deepseek-r1", "codellama", "qwen2.5"],
+        "huggingface": ["mistralai/Mistral-7B-Instruct-v0.3",
+                        "meta-llama/Meta-Llama-3-8B-Instruct", "HuggingFaceH4/zephyr-7b-beta"],
+    }
+    _DEFAULT_ENDPOINTS = {
+        "github":      "https://models.inference.ai.azure.com",
+        "openai":      "https://api.openai.com/v1",
+        "ollama":      "http://localhost:11434",
+        "huggingface": "https://api-inference.huggingface.co",
+        "claude":      "https://api.anthropic.com",
+        "gemini":      "https://generativelanguage.googleapis.com",
+    }
+
+    def _fetch_models_for(provider: str, api_key: str, endpoint: str = "") -> list[str]:
+        """Try to fetch live model list from provider; fall back to static list on any error."""
         try:
-            kernel.ai_adapter.switch(new_provider, new_model or None)
-            kernel.workflow_engine.ai_adapter = kernel.ai_adapter
-            st.success(f"Switched to **{new_provider}** / **{kernel.ai_adapter.model}**")
-            st.rerun()
+            if provider == "openai":
+                req = _urllib_req.Request(
+                    "https://api.openai.com/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                with _urllib_req.urlopen(req, timeout=8) as r:
+                    data = _json.loads(r.read())
+                ids = sorted(
+                    [m["id"] for m in data["data"] if "gpt" in m["id"] or m["id"].startswith("o")],
+                    reverse=True,
+                )
+                return ids or _STATIC_MODELS["openai"]
+
+            elif provider == "gemini":
+                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+                with _urllib_req.urlopen(url, timeout=8) as r:
+                    data = _json.loads(r.read())
+                ids = [
+                    m["name"].split("/")[-1]
+                    for m in data.get("models", [])
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                ]
+                return ids or _STATIC_MODELS["gemini"]
+
+            elif provider == "ollama":
+                _base = (endpoint or "http://localhost:11434").rstrip("/")
+                with _urllib_req.urlopen(f"{_base}/api/tags", timeout=5) as r:
+                    data = _json.loads(r.read())
+                return [m["name"] for m in data.get("models", [])] or _STATIC_MODELS["ollama"]
+
+            elif provider == "github":
+                _ep = (endpoint or "https://models.inference.ai.azure.com").rstrip("/")
+                req = _urllib_req.Request(
+                    f"{_ep}/models",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                )
+                with _urllib_req.urlopen(req, timeout=8) as r:
+                    data = _json.loads(r.read())
+                if isinstance(data, list):
+                    ids = [m.get("id") or m.get("name", "") for m in data]
+                else:
+                    ids = [m.get("id", "") for m in data.get("data", [])]
+                return [i for i in ids if i] or _STATIC_MODELS["github"]
+        except Exception:
+            pass
+        return _STATIC_MODELS.get(provider, [])
+
+    def _test_connection(provider: str, api_key: str, model: str, endpoint: str = "") -> tuple[bool, str]:
+        """Send a tiny test message; return (success, human-readable result)."""
+        _msg = [{"role": "user", "content": "Reply with exactly one word: OK"}]
+        try:
+            if provider == "ollama":
+                _base = (endpoint or "http://localhost:11434").rstrip("/")
+                payload = _json.dumps({"model": model, "messages": _msg, "stream": False}).encode()
+                req = _urllib_req.Request(
+                    f"{_base}/api/chat", data=payload,
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+                with _urllib_req.urlopen(req, timeout=20) as r:
+                    data = _json.loads(r.read())
+                reply = data.get("message", {}).get("content", "").strip()
+                return True, f"✅ Connected — model replied: *{reply[:80]}*"
+
+            elif provider == "gemini":
+                _ep = (
+                    f"https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"{model}:generateContent?key={api_key}"
+                )
+                payload = _json.dumps({
+                    "contents": [{"role": "user", "parts": [{"text": _msg[0]["content"]}]}]
+                }).encode()
+                req = _urllib_req.Request(_ep, data=payload,
+                                          headers={"Content-Type": "application/json"}, method="POST")
+                with _urllib_req.urlopen(req, timeout=25) as r:
+                    data = _json.loads(r.read())
+                reply = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                return True, f"✅ Connected — model replied: *{reply[:80]}*"
+
+            elif provider == "claude":
+                try:
+                    import anthropic as _ant  # type: ignore
+                except ImportError:
+                    return False, "anthropic SDK not installed — run: `pip install anthropic`"
+                client = _ant.Anthropic(api_key=api_key)
+                resp = client.messages.create(
+                    model=model, max_tokens=10,
+                    messages=[{"role": "user", "content": _msg[0]["content"]}],
+                )
+                reply = resp.content[0].text.strip()
+                return True, f"✅ Connected — model replied: *{reply[:80]}*"
+
+            else:
+                # GitHub / OpenAI / HuggingFace — OpenAI-compatible REST
+                _ep_map = {
+                    "github":      (endpoint or "https://models.inference.ai.azure.com").rstrip("/") + "/chat/completions",
+                    "openai":      "https://api.openai.com/v1/chat/completions",
+                    "huggingface": f"https://api-inference.huggingface.co/models/{model}/v1/chat/completions",
+                }
+                _ep = _ep_map.get(provider, endpoint.rstrip("/") + "/chat/completions")
+                payload = _json.dumps({"model": model, "messages": _msg, "max_tokens": 10}).encode()
+                req = _urllib_req.Request(
+                    _ep, data=payload,
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    method="POST",
+                )
+                with _urllib_req.urlopen(req, timeout=25) as r:
+                    data = _json.loads(r.read())
+                reply = (data["choices"][0]["message"]["content"] or "").strip()
+                return True, f"✅ Connected — model replied: *{reply[:80]}*"
+
+        except _urllib_err.HTTPError as exc:
+            try:
+                detail = _json.loads(exc.read().decode())
+                err = detail.get("error", {}).get("message", str(exc))
+            except Exception:
+                err = str(exc)
+            return False, f"❌ API error ({exc.code}): {err}"
         except Exception as exc:
-            st.error(f"Switch failed: {exc}")
+            return False, f"❌ {exc}"
+
+    # ── AI Provider Configuration UI ──────────────────────────────────
+    st.subheader("🔌 AI Provider Configuration")
+
+    providers = ["github", "openai", "claude", "gemini", "ollama", "huggingface"]
+    _cur_idx = providers.index(kernel.ai_adapter.provider) if kernel.ai_adapter.provider in providers else 0
+    new_provider = st.selectbox("Provider", providers, index=_cur_idx, key="cfg_provider")
+
+    # API key input
+    _env_var   = _KEY_MAP[new_provider]
+    _env_label = _KEY_LABEL[new_provider]
+    _env_help  = _KEY_HELP[new_provider]
+    _cur_key   = os.environ.get(_env_var, "") if _env_var else ""
+
+    if _env_var:
+        _new_key = st.text_input(
+            _env_label,
+            value=_cur_key,
+            type="password",
+            help=_env_help,
+            key=f"cfg_key_{new_provider}",
+            placeholder=f"Paste your {_env_label}...",
+        )
+    else:
+        _new_key = ""
+        st.info("🟢 Ollama requires no API key. Make sure the Ollama daemon is running (`ollama serve`).")
+
+    # Custom endpoint (advanced)
+    with st.expander("⚙️ Advanced — Custom Endpoint", expanded=False):
+        _cfg_ep_key = f"cfg_endpoint_{new_provider}"
+        _saved_ep = st.session_state.get(_cfg_ep_key, _DEFAULT_ENDPOINTS.get(new_provider, ""))
+        custom_endpoint = st.text_input(
+            "API Endpoint URL",
+            value=_saved_ep,
+            key=_cfg_ep_key,
+            placeholder=_DEFAULT_ENDPOINTS.get(new_provider, "https://..."),
+        )
+        st.caption(
+            "Change only if using a proxy, self-hosted model, or OpenAI-compatible server "
+            "(LM Studio, vLLM, etc.)."
+        )
+
+    # ── Fetch Models + Test row ───────────────────────────────────────
+    _models_key      = f"fetched_models_{new_provider}"
+    _test_passed_key = f"test_passed_{new_provider}"
+    _test_msg_key    = f"test_msg_{new_provider}"
+
+    _fetch_col, _test_col = st.columns(2)
+    with _fetch_col:
+        if st.button("🔍 Fetch Available Models", use_container_width=True, key="cfg_fetch"):
+            with st.spinner("Fetching models from provider..."):
+                _fetched = _fetch_models_for(new_provider, _new_key or _cur_key, custom_endpoint)
+            st.session_state[_models_key] = _fetched
+            if _fetched != _STATIC_MODELS.get(new_provider, []):
+                st.success(f"Fetched {len(_fetched)} live model(s) from {new_provider}")
+            else:
+                st.info(f"Using default model list — {len(_fetched)} model(s)")
+
+    # Model selector
+    _available_models = st.session_state.get(_models_key, _STATIC_MODELS.get(new_provider, []))
+    _cur_model_val = (
+        kernel.ai_adapter.model
+        if kernel.ai_adapter.provider == new_provider
+        else (_available_models[0] if _available_models else "")
+    )
+    _cur_model_idx = (
+        _available_models.index(_cur_model_val)
+        if _cur_model_val in _available_models else 0
+    )
+
+    if _available_models:
+        new_model = st.selectbox(
+            "Model", _available_models, index=_cur_model_idx, key="cfg_model"
+        )
+    else:
+        new_model = st.text_input("Model", value=_cur_model_val, key="cfg_model_text")
+
+    # Test connection
+    with _test_col:
+        if st.button("🧪 Test Connection", use_container_width=True, type="primary", key="cfg_test"):
+            _key_to_use = _new_key or _cur_key
+            if not _key_to_use and new_provider != "ollama":
+                st.error(f"Enter your {_env_label} first.")
+                st.session_state[_test_passed_key] = False
+            else:
+                with st.spinner(f"Testing {new_provider} / {new_model}..."):
+                    _ok, _tmsg = _test_connection(new_provider, _key_to_use, new_model, custom_endpoint)
+                st.session_state[_test_passed_key] = _ok
+                st.session_state[_test_msg_key] = _tmsg
+
+    # Show last test result inline
+    _last_msg = st.session_state.get(_test_msg_key, "")
+    if _last_msg:
+        if st.session_state.get(_test_passed_key):
+            st.success(_last_msg)
+        else:
+            st.error(_last_msg)
+
+    # ── Apply ─────────────────────────────────────────────────────────
+    _test_passed = st.session_state.get(_test_passed_key, False)
+    if not _test_passed:
+        st.caption("💡 Run **Test Connection** first — settings apply only after a successful test.")
+
+    if st.button(
+        "✅ Apply & Notify AetherAi",
+        type="primary",
+        disabled=not _test_passed,
+        key="cfg_apply",
+    ):
+        # 1. Persist API key to .env and current process env
+        if _env_var and _new_key:
+            os.environ[_env_var] = _new_key
+            _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+            _env_lines: list[str] = []
+            if os.path.exists(_env_path):
+                with open(_env_path, "r", encoding="utf-8") as _ef:
+                    _env_lines = _ef.readlines()
+            _found_key = False
+            for _i, _ln in enumerate(_env_lines):
+                if _ln.strip().startswith(f"{_env_var}=") or _ln.strip().startswith(f"{_env_var} ="):
+                    _env_lines[_i] = f"{_env_var}={_new_key}\n"
+                    _found_key = True
+                    break
+            if not _found_key:
+                _env_lines.append(f"{_env_var}={_new_key}\n")
+            with open(_env_path, "w", encoding="utf-8") as _ef:
+                _ef.writelines(_env_lines)
+
+        # 2. Switch kernel adapter
+        kernel.ai_adapter.switch(new_provider, new_model or None)
+        kernel.workflow_engine.ai_adapter = kernel.ai_adapter
+
+        # 3. Propagate to any agent objects that carry their own adapter reference
+        for _aname in _agent_names():
+            _aobj = kernel.registry.get(_aname)
+            if _aobj and hasattr(_aobj, "ai_adapter"):
+                _aobj.ai_adapter = kernel.ai_adapter
+
+        # 4. Record the change in system memory (agents see this context)
+        _notif = (
+            f"AI provider changed to {new_provider} / {kernel.ai_adapter.model}. "
+            f"All future tasks will use this model."
+        )
+        kernel.memory.save("last_provider_change", _notif, namespace="global")
+
+        st.success(
+            f"✅ AetherAi is now using **{new_provider}** / **{kernel.ai_adapter.model}**  \n"
+            f"API key saved · All agents notified."
+        )
+        st.session_state[_test_passed_key] = False
+        st.session_state[_test_msg_key] = ""
+        st.rerun()
+
+    # ── Broadcast setting change to all AI systems ────────────────────
+    st.divider()
+    with st.expander("📡 Notify AetherAi / AI Systems — Broadcast a Setting Change", expanded=False):
+        st.markdown(
+            "Send a **system-wide notice** to all agents. "
+            "Your message is injected into every agent's prompt so they are aware of the change."
+        )
+        st.caption(
+            "**Examples:** *The internal API is now at `https://api.v2/`* · "
+            "*Use PostgreSQL instead of SQLite* · *The production domain changed to `app.newdomain.com`*"
+        )
+        _broadcast_msg = st.text_area(
+            "Announcement",
+            height=90,
+            placeholder="e.g. The internal API endpoint has moved to https://api.internal/v2. All agents must use this address.",
+            key="cfg_broadcast_msg",
+        )
+        if st.button(
+            "📢 Broadcast to All Agents",
+            disabled=not (_broadcast_msg or "").strip(),
+            key="cfg_broadcast",
+        ):
+            _bcast = _broadcast_msg.strip()
+            kernel.memory.save("system_broadcast", _bcast, namespace="global")
+            _existing_instr = kernel.memory.load("system_instructions", default="", namespace="global")
+            _sep = "\n\n" if _existing_instr else ""
+            kernel.memory.save(
+                "system_instructions",
+                f"{_existing_instr}{_sep}[SYSTEM NOTICE] {_bcast}",
+                namespace="global",
+            )
+            _n = len(_agent_names())
+            st.success(f"✅ Notice broadcast to {_n} agent(s). They will see it from the next task.")
 
     st.divider()
 
