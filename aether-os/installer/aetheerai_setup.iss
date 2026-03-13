@@ -82,18 +82,25 @@ Source: "..\*.svg";      DestDir: "{app}"; Flags: ignoreversion
 Source: "..\*.example";  DestDir: "{app}"; Flags: ignoreversion
 
 ; Source packages (excluding caches and runtime data)
-Source: "..\agents\*";   DestDir: "{app}\agents";   Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
-Source: "..\ai\*";       DestDir: "{app}\ai";       Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
-Source: "..\cli\*";      DestDir: "{app}\cli";      Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
-Source: "..\core\*";     DestDir: "{app}\core";     Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
-Source: "..\factory\*";  DestDir: "{app}\factory";  Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
-Source: "..\skills\*";   DestDir: "{app}\skills";   Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
-Source: "..\tools\*";    DestDir: "{app}\tools";    Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
-Source: "..\utils\*";    DestDir: "{app}\utils";    Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+Source: ".\..\agents\*";   DestDir: "{app}\agents";   Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+Source: ".\..\ai\*";       DestDir: "{app}\ai";       Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+Source: ".\..\cli\*";      DestDir: "{app}\cli";      Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+Source: ".\..\core\*";     DestDir: "{app}\core";     Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+Source: ".\..\factory\*";  DestDir: "{app}\factory";  Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+Source: ".\..\security\*"; DestDir: "{app}\security"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+Source: ".\..\skills\*";   DestDir: "{app}\skills";   Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+Source: ".\..\tools\*";    DestDir: "{app}\tools";    Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+Source: ".\..\utils\*";    DestDir: "{app}\utils";    Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pyc,__pycache__"
+
+; Shared agent workspace (created at runtime if missing — bundle placeholder)
+Source: ".\..\workspace\*";      DestDir: "{app}\workspace";      Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist; Excludes: "*.pyc,__pycache__"
+
+; Agent output directories (created at runtime — bundle as empty placeholders)
+Source: ".\..\agent_output\*";   DestDir: "{app}\agent_output";   Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist; Excludes: "*.pyc,__pycache__"
 
 ; Memory & registry — exclude runtime data files (they are created on first run)
-Source: "..\memory\*.py";        DestDir: "{app}\memory";   Flags: ignoreversion
-Source: "..\registry\*.py";      DestDir: "{app}\registry"; Flags: ignoreversion
+Source: ".\..\memory\*.py";        DestDir: "{app}\memory";   Flags: ignoreversion
+Source: ".\..\registry\*.py";      DestDir: "{app}\registry"; Flags: ignoreversion
 
 ; ---------------------------------------------------------------------------
 [Icons]

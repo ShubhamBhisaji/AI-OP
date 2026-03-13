@@ -48,10 +48,12 @@ pyinstaller ^
     --add-data "factory;factory" ^
     --add-data "memory;memory" ^
     --add-data "registry;registry" ^
+    --add-data "security;security" ^
     --add-data "skills;skills" ^
     --add-data "tools;tools" ^
-    --add-data "security;security" ^
     --add-data "utils;utils" ^
+    --add-data "workspace;workspace" ^
+    --add-data "agent_output;agent_output" ^
     --add-data "memory\memory_store.json;memory" ^
     --add-data "registry\registry_store.json;registry" ^
     --hidden-import streamlit ^
@@ -66,10 +68,27 @@ pyinstaller ^
     --hidden-import tiktoken_ext.openai_public ^
     --hidden-import pydantic ^
     --hidden-import uvicorn ^
+    --hidden-import requests ^
+    --hidden-import bs4 ^
+    --hidden-import pandas ^
+    --hidden-import PIL ^
+    --hidden-import cryptography ^
+    --hidden-import threading ^
+    --hidden-import concurrent.futures ^
     --collect-submodules chromadb ^
     --collect-submodules tiktoken_ext ^
     --collect-submodules streamlit ^
     launcher.py
+
+:: NOTE: Enterprise tools require optional packages installed in the build
+:: environment BEFORE running this script.  Install whichever you need:
+::
+::   pip install PyGithub sqlalchemy playwright beautifulsoup4 markdownify
+::   pip install boto3 google-cloud-storage kubernetes
+::   pip install pylint black pypdf2 pillow
+::
+:: If a package is not installed, the tool that needs it will show an
+:: "install required" message at runtime rather than crashing the exe.
 
 if %errorlevel%==0 (
     echo.
