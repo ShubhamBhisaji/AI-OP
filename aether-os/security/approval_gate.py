@@ -28,16 +28,23 @@ logger = logging.getLogger(__name__)
 # Tier 1 — DESTRUCTIVE: irreversible host-system mutations
 DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
     {
-        "file_writer",       # writes / overwrites files on disk
-        "local_file_tool",   # generic local file operations
+        "file_writer",        # writes / overwrites files on disk
+        "local_file_tool",    # generic local file operations
+        "email_tool",         # sends emails — external irreversible action
+        "slack_discord_tool", # posts to team channels — external irreversible action
     }
 )
 
 # Tier 2 — HIGH_RISK: run arbitrary code / system commands on the host
+# or perform destructive mutations of cloud / external infrastructure
 HIGH_RISK_TOOLS: frozenset[str] = frozenset(
     {
-        "code_runner",       # executes Python code in a subprocess
-        "terminal_tool",     # runs shell/PowerShell commands
+        "code_runner",      # executes Python code in a subprocess
+        "terminal_tool",    # runs shell/PowerShell commands
+        "github_tool",      # commits and PRs on real repos
+        "aws_gcp_tool",     # cloud storage delete / EC2 stop-reboot
+        "kubernetes_tool",  # pod deletion / deployment restart / scaling
+        "sql_db_tool",      # DML mutations on live databases
     }
 )
 

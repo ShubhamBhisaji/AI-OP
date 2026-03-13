@@ -66,6 +66,21 @@ TOOL_PERMISSIONS: dict[str, int] = {
     "code_runner":      3,
     "terminal_tool":    3,
     "security_tool":    3,
+    # ── Enterprise expansion tools ──────────────────────────────────
+    # Level 1 — standard (read-only / notify outbound)
+    "web_scraper_pro":  1,
+    "vision_tool":      1,
+    "speech_tool":      1,
+    "slack_discord_tool": 1,
+    # Level 2 — elevated (authenticated external services / read-write)
+    "github_tool":      2,
+    "sql_db_tool":      2,
+    "playwright_tool":  2,
+    "image_gen_tool":   2,
+    "email_tool":       2,
+    # Level 3 — admin (cloud infrastructure and commit/deploy)
+    "aws_gcp_tool":     3,
+    "kubernetes_tool":  3,
 }
 
 # Default level for any tool not listed above
@@ -233,5 +248,40 @@ class ToolManager:
         from tools.local_file_tool import local_file_tool
 
         self.register("local_file_tool", local_file_tool)
+        # ── Enterprise expansion: Software Engineering ────────────────────
+        from tools.github_tool   import github_tool
+        from tools.sql_db_tool   import sql_db_tool
 
+        self.register("github_tool",    github_tool)
+        self.register("sql_db_tool",    sql_db_tool)
+
+        # ── Enterprise expansion: Deep Web & Browser Automation ──────────
+        from tools.playwright_tool  import playwright_tool
+        from tools.web_scraper_pro  import web_scraper_pro
+
+        self.register("playwright_tool", playwright_tool)
+        self.register("web_scraper_pro", web_scraper_pro)
+
+        # ── Enterprise expansion: Multimodal & Generative ───────────────
+        from tools.vision_tool    import vision_tool
+        from tools.image_gen_tool import image_gen_tool
+        from tools.speech_tool    import speech_tool
+
+        self.register("vision_tool",    vision_tool)
+        self.register("image_gen_tool", image_gen_tool)
+        self.register("speech_tool",    speech_tool)
+
+        # ── Enterprise expansion: Communications ───────────────────────
+        from tools.email_tool          import email_tool
+        from tools.slack_discord_tool  import slack_discord_tool
+
+        self.register("email_tool",          email_tool)
+        self.register("slack_discord_tool",  slack_discord_tool)
+
+        # ── Enterprise expansion: Cloud Infrastructure ──────────────────
+        from tools.aws_gcp_tool    import aws_gcp_tool
+        from tools.kubernetes_tool import kubernetes_tool
+
+        self.register("aws_gcp_tool",    aws_gcp_tool)
+        self.register("kubernetes_tool", kubernetes_tool)
         logger.info("ToolManager: %d tools registered: %s", len(self._tools), self.list_tools())
