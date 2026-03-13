@@ -447,6 +447,42 @@ elif page == "🏭 Agent Factory":
             height=120,
         )
 
+    # ── Advanced: manual tool override ──────────────────────────────
+    _ALL_TOOLS = [
+        # Utilities
+        "calculator", "datetime_tool", "hash_tool", "base64_tool", "regex_tool",
+        "text_analyzer", "json_tool", "markdown_tool", "url_tool", "template_tool", "diff_tool",
+        # Research & web
+        "web_search", "http_client", "browser_tool", "web_scraper_pro",
+        # Files & data
+        "file_reader", "file_writer", "directory_scanner", "csv_tool", "pdf_tool",
+        "note_taker", "analytics_tool", "local_file_tool",
+        # Code & dev
+        "code_runner", "terminal_tool", "code_analyzer", "code_search", "linter_tool",
+        "code_formatter", "github_tool", "sql_db_tool", "playwright_tool",
+        # AI & media
+        "vision_tool", "image_gen_tool", "speech_tool",
+        # Communication
+        "email_tool", "slack_discord_tool",
+        # Cloud & infra
+        "aws_gcp_tool", "kubernetes_tool",
+        # Security
+        "security_tool", "system_info",
+        # Multi-agent
+        "ping_agent",
+    ]
+    with st.expander("⚙️ Advanced — Override Tool Selection", expanded=False):
+        st.caption(
+            "By default AetheerAI auto-selects tools based on the role. "
+            "Add tools here to **guarantee** they are always included."
+        )
+        _extra_tools = st.multiselect(
+            "Always include these tools",
+            options=_ALL_TOOLS,
+            default=[],
+            key="factory_extra_tools",
+        )
+
     if st.button("🔨 Build Agent", type="primary", disabled=not (agent_name and agent_role)):
         existing = _agent_names()
         if agent_name in existing:
@@ -459,7 +495,10 @@ elif page == "🏭 Agent Factory":
 
             try:
                 with st.spinner(f"Building **{agent_name}**..."):
-                    kernel.build_agent(agent_name, agent_role, progress=_prog)
+                    kernel.build_agent(
+                        agent_name, agent_role, progress=_prog,
+                        extra_tools=_extra_tools or None,
+                    )
                 progress_bar.progress(100, text="Done!")
                 st.success(f"✅ Agent **{agent_name}** built and registered successfully!")
                 st.rerun()
@@ -490,40 +529,170 @@ elif page == "🏭 Agent Factory":
 # ═══════════════════════════════════════════════════════════════════════════
 elif page == "👥 System Orchestrator":
     st.header("👥 System Orchestrator")
-    st.markdown(
-        "Build an entire multi-agent team from a single description. "
-        "AetheerAI designs the agent roster, writes each system prompt, and registers them all."
-    )
 
-    sys_col1, sys_col2 = st.columns([1, 2])
-    with sys_col1:
-        system_name = st.text_input("System Name", placeholder="e.g. NewsletterSystem")
-    with sys_col2:
-        system_desc = st.text_area(
-            "System Description",
-            placeholder="Build me a newsletter system with a Researcher who gathers stories and a Publisher who formats and sends them.",
-            height=120,
+    _orch_tab1, _orch_tab2, _orch_tab3 = st.tabs([
+        "🏗️ Build AI System",
+        "🔄 Pipeline Run",
+        "🗣️ Agent Debate",
+    ])
+
+    # ── Tab 1: Build AI System ─────────────────────────────────────────
+    with _orch_tab1:
+        st.subheader("🏗️ Build AI System")
+        st.markdown(
+            "Build an entire multi-agent team from a single description. "
+            "AetheerAI designs the agent roster, writes each system prompt, "
+            "and registers them all."
         )
 
-    if st.button("🏗️ Generate System", type="primary", disabled=not (system_name and system_desc)):
-        sys_progress = st.progress(0, text="Starting system design...")
+        sys_col1, sys_col2 = st.columns([1, 2])
+        with sys_col1:
+            system_name = st.text_input("System Name", placeholder="e.g. NewsletterSystem")
+        with sys_col2:
+            system_desc = st.text_area(
+                "System Description",
+                placeholder="Build me a newsletter system with a Researcher who gathers stories and a Publisher who formats and sends them.",
+                height=120,
+            )
 
-        def _sys_prog(step: int, total: int, msg: str) -> None:
-            sys_progress.progress(int(step / total * 100), text=msg)
+        if st.button("🏗️ Generate System", type="primary", disabled=not (system_name and system_desc)):
+            sys_progress = st.progress(0, text="Starting system design...")
 
-        try:
-            with st.spinner(f"Designing **{system_name}**..."):
-                result = kernel.create_ai_system(system_name, system_desc, progress=_sys_prog)
-            sys_progress.progress(100, text="Done!")
-            if result.get("error"):
-                st.error(f"System error: {result['error']}")
-            else:
-                agents_built = result.get("agents", [])
-                st.success(f"✅ System **{system_name}** created with {len(agents_built)} agent(s)!")
-                st.json(result)
-                st.rerun()
-        except Exception as exc:
-            st.error(f"Failed to build system: {exc}")
+            def _sys_prog(step: int, total: int, msg: str) -> None:
+                sys_progress.progress(int(step / total * 100), text=msg)
+
+            try:
+                with st.spinner(f"Designing **{system_name}**..."):
+                    result = kernel.create_ai_system(system_name, system_desc, progress=_sys_prog)
+                sys_progress.progress(100, text="Done!")
+                if result.get("error"):
+                    st.error(f"System error: {result['error']}")
+                else:
+                    agents_built = result.get("agents", [])
+                    st.success(f"✅ System **{system_name}** created with {len(agents_built)} agent(s)!")
+                    st.json(result)
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"Failed to build system: {exc}")
+
+    # ── Tab 2: Pipeline Run ────────────────────────────────────────────
+    with _orch_tab2:
+        st.subheader("🔄 Pipeline Run")
+        st.markdown(
+            "Run a sequence of agents as a **relay race** — each agent's output "
+            "becomes the next agent's input.  The pipeline uses conversational "
+            "handoff messages so every agent knows who sent the work and why."
+        )
+
+        _pipe_names = _agent_names()
+        if not _pipe_names:
+            st.warning("No agents found. Create some in **Agent Factory** first.")
+        else:
+            _pipe_task = st.text_area(
+                "Initial task",
+                placeholder="e.g. Research the top 5 AI trends of 2026 and then write a blog post about them.",
+                height=100,
+                key="pipe_task",
+            )
+            st.caption("Drag agents into the order you want them to run:")
+            _pipe_agents = st.multiselect(
+                "Pipeline agents (in order)",
+                options=_pipe_names,
+                key="pipe_agents",
+            )
+
+            if st.button(
+                "▶️ Run Pipeline",
+                type="primary",
+                disabled=not (_pipe_task and len(_pipe_agents) >= 1),
+                key="pipe_run",
+            ):
+                import asyncio as _asyncio
+                _pipe_steps = st.empty()
+                try:
+                    with st.spinner("Running pipeline..."):
+                        _pipe_result = kernel.run_pipeline(_pipe_agents, _pipe_task)
+                    st.success("✅ Pipeline complete!")
+                    st.markdown("**Final output:**")
+                    st.markdown(_pipe_result)
+                except Exception as _e:
+                    st.error(f"Pipeline error: {_e}")
+
+    # ── Tab 3: Agent Debate ────────────────────────────────────────────
+    with _orch_tab3:
+        st.subheader("🗣️ Agent Debate")
+        st.markdown(
+            "Have two agents **argue or collaborate** on a topic for N rounds. "
+            "Perfect for code review, decision analysis, creative brainstorming, "
+            "or stress-testing an idea from multiple expert perspectives."
+        )
+
+        _debate_names = _agent_names()
+        if len(_debate_names) < 2:
+            st.warning("You need at least **2 registered agents** to run a debate. "
+                       "Create more in **Agent Factory**.")
+        else:
+            _dcol1, _dcol2, _dcol3 = st.columns([1, 1, 1])
+            with _dcol1:
+                _d_agent1 = st.selectbox("Agent 1 (Proposer)", _debate_names, key="debate_a1")
+            with _dcol2:
+                _remaining = [n for n in _debate_names if n != _d_agent1]
+                _d_agent2 = st.selectbox("Agent 2 (Challenger)", _remaining, key="debate_a2")
+            with _dcol3:
+                _d_rounds = st.number_input(
+                    "Rounds each", min_value=1, max_value=6, value=2, step=1, key="debate_rounds"
+                )
+
+            _d_topic = st.text_area(
+                "Debate topic / question",
+                placeholder=(
+                    "e.g. Should this PR use async/await or callbacks? "
+                    "· Which Python web framework—FastAPI or Django—is better for this use-case? "
+                    "· Is PostgreSQL or MongoDB the right database for this project?"
+                ),
+                height=90,
+                key="debate_topic",
+            )
+
+            if st.button(
+                "🗣️ Start Debate",
+                type="primary",
+                disabled=not _d_topic.strip(),
+                key="debate_run",
+            ):
+                with st.spinner(
+                    f"Running {int(_d_rounds)} round(s) between **{_d_agent1}** and **{_d_agent2}**..."
+                ):
+                    try:
+                        _debate_result = kernel.agent_debate(
+                            _d_agent1, _d_agent2, _d_topic.strip(), int(_d_rounds)
+                        )
+                    except Exception as _de:
+                        st.error(f"Debate error: {_de}")
+                        _debate_result = {}
+
+                if _debate_result.get("error"):
+                    st.error(_debate_result["error"])
+                elif _debate_result:
+                    st.success(
+                        f"✅ Debate complete — "
+                        f"{len(_debate_result.get('transcript', []))} turns total."
+                    )
+                    # Render transcript
+                    st.markdown("---")
+                    st.markdown(f"### 📜 Transcript: *{_d_topic.strip()}*")
+                    _prev_round = 0
+                    for _turn in _debate_result.get("transcript", []):
+                        if _turn["round"] != _prev_round:
+                            st.markdown(f"**— Round {_turn['round']} —**")
+                            _prev_round = _turn["round"]
+                        with st.chat_message("user" if _turn["agent"] == _d_agent1 else "assistant"):
+                            st.markdown(f"**{_turn['agent']}**")
+                            st.markdown(_turn["argument"])
+                    # Render summary
+                    st.markdown("---")
+                    st.markdown("### 🏁 Debate Summary")
+                    st.markdown(_debate_result.get("summary", ""))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

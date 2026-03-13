@@ -54,6 +54,8 @@ class AetherKernel:
             memory=self.memory,
             tool_manager=self.tool_manager,
         )
+        # Inject engine into tools that need cross-agent comms (Pattern 2)
+        self.tool_manager.inject_engine(self.workflow_engine)
         self.team_manager = TeamManager(registry=self.registry)
         self.orchestrator = Orchestrator(
             registry=self.registry,
@@ -113,6 +115,7 @@ class AetherKernel:
         context: str = "",
         progress=None,
         permission_level: int = 1,
+        extra_tools: list[str] | None = None,
     ) -> BaseAgent:
         """
         Smart agent builder — three-step AI research pipeline:
@@ -155,10 +158,27 @@ class AetherKernel:
             f"Output ONLY valid JSON — no markdown, no extra text:\n"
             f'{{"skills": ["skill1", "skill2", "..."], "tools": ["tool1", "..."]}}\n\n'
             f"Available tools (ONLY choose from this list):\n"
-            f"  web_search, file_writer, file_reader, code_runner, calculator,\n"
-            f"  json_tool, csv_tool, text_analyzer, regex_tool, hash_tool,\n"
-            f"  datetime_tool, note_taker, template_tool, markdown_tool,\n"
-            f"  url_tool, security_tool, code_search, linter_tool\n\n"
+            f"  # Utilities\n"
+            f"  calculator, datetime_tool, hash_tool, base64_tool, regex_tool,\n"
+            f"  text_analyzer, json_tool, markdown_tool, url_tool, template_tool, diff_tool,\n"
+            f"  # Research & web\n"
+            f"  web_search, http_client, browser_tool, web_scraper_pro,\n"
+            f"  # Files & data\n"
+            f"  file_reader, file_writer, directory_scanner, csv_tool, pdf_tool,\n"
+            f"  note_taker, analytics_tool, local_file_tool,\n"
+            f"  # Code & dev\n"
+            f"  code_runner, terminal_tool, code_analyzer, code_search, linter_tool,\n"
+            f"  code_formatter, github_tool, sql_db_tool, playwright_tool,\n"
+            f"  # AI & media\n"
+            f"  vision_tool, image_gen_tool, speech_tool,\n"
+            f"  # Communication\n"
+            f"  email_tool, slack_discord_tool,\n"
+            f"  # Cloud & infra\n"
+            f"  aws_gcp_tool, kubernetes_tool,\n"
+            f"  # Security\n"
+            f"  security_tool, system_info,\n"
+            f"  # Multi-agent\n"
+            f"  ping_agent\n\n"
             f"Rules:\n"
             f"- Include 10-20 highly relevant skills (specific, not vague)\n"
             f"- Only include tools this agent genuinely needs"
@@ -176,6 +196,12 @@ class AetherKernel:
             skills = list(AGENT_PRESETS.get(preset_key, {}).get("skills", []))
         if not tools:
             tools  = list(AGENT_PRESETS.get(preset_key, {}).get("tools",  []))
+
+        # Merge any manually requested extra tools (de-duplicate, preserve order)
+        if extra_tools:
+            for _t in extra_tools:
+                if _t not in tools:
+                    tools.append(_t)
 
         # ── Step 3: Write instructions (system prompt) ───────────────
         _prog(3, 4, f"Writing instructions for '{name}'...")
@@ -400,8 +426,14 @@ class AetherKernel:
     def agent_debate(
         self, agent1: str, agent2: str, topic: str, rounds: int = 2
     ) -> dict:
-        """Two agents debate a topic for N rounds."""
+        """Two agents debate a topic for N rounds (synchronous)."""
         return self.orchestrator.debate(agent1, agent2, topic, rounds)
+
+    async def agent_debate_async(
+        self, agent1: str, agent2: str, topic: str, rounds: int = 2
+    ) -> dict:
+        """Two agents debate a topic for N rounds (async — non-blocking)."""
+        return await self.orchestrator.debate_async(agent1, agent2, topic, rounds)
 
     def orchestrate(self, task: str) -> dict:
         """AI auto-selects the best agents + mode for the task."""
@@ -542,10 +574,16 @@ class AetherKernel:
                 f"Output ONLY valid JSON — no markdown, no extra text:\n"
                 f'{{"skills": ["skill1", "skill2"], "tools": ["tool1"]}}\n\n'
                 f"Available tools (ONLY choose from this list):\n"
-                f"  web_search, file_writer, file_reader, code_runner, calculator,\n"
-                f"  json_tool, csv_tool, text_analyzer, regex_tool, hash_tool,\n"
-                f"  datetime_tool, note_taker, template_tool, markdown_tool,\n"
-                f"  url_tool, security_tool, code_search, linter_tool\n\n"
+                f"  calculator, datetime_tool, hash_tool, base64_tool, regex_tool,\n"
+                f"  text_analyzer, json_tool, markdown_tool, url_tool, template_tool, diff_tool,\n"
+                f"  web_search, http_client, browser_tool, web_scraper_pro,\n"
+                f"  file_reader, file_writer, directory_scanner, csv_tool, pdf_tool,\n"
+                f"  note_taker, analytics_tool, local_file_tool,\n"
+                f"  code_runner, terminal_tool, code_analyzer, code_search, linter_tool,\n"
+                f"  code_formatter, github_tool, sql_db_tool, playwright_tool,\n"
+                f"  vision_tool, image_gen_tool, speech_tool,\n"
+                f"  email_tool, slack_discord_tool, aws_gcp_tool, kubernetes_tool,\n"
+                f"  security_tool, system_info, ping_agent\n\n"
                 f"- Include 10-20 relevant skills (specific, not vague)\n"
                 f"- Only pick tools this agent genuinely needs"
             )
@@ -790,19 +828,33 @@ class AetherKernel:
 
     # Map from tool name → pip packages required at runtime.
     _TOOL_DEPENDENCIES: dict[str, list[str]] = {
-        "web_search":      ["requests", "beautifulsoup4"],
-        "http_client":     ["requests"],
-        "browser_tool":    ["playwright"],
-        "pdf_tool":        ["pypdf2"],
-        "csv_tool":        ["pandas"],
-        "analytics_tool":  ["pandas", "numpy"],
-        "media_tool":      ["pillow"],
-        "code_runner":     ["docker"],
-        "url_tool":        ["requests"],
-        "security_tool":   ["cryptography"],
-        "linter_tool":     ["pylint"],
-        "code_formatter":  ["black"],
-        "memory_manager":  ["chromadb", "pysqlite3-binary"],
+        "web_search":        ["requests", "beautifulsoup4"],
+        "http_client":       ["requests"],
+        "browser_tool":      ["playwright"],
+        "pdf_tool":          ["pypdf2"],
+        "csv_tool":          ["pandas"],
+        "analytics_tool":    ["pandas", "numpy"],
+        "media_tool":        ["pillow"],
+        "code_runner":       ["docker"],
+        "url_tool":          ["requests"],
+        "security_tool":     ["cryptography"],
+        "linter_tool":       ["pylint"],
+        "code_formatter":    ["black"],
+        "memory_manager":    ["chromadb", "pysqlite3-binary"],
+        # ── Enterprise expansion tools ─────────────────────────────
+        "github_tool":       ["PyGithub"],
+        "sql_db_tool":       ["sqlalchemy"],
+        "playwright_tool":   ["playwright"],
+        "web_scraper_pro":   ["requests", "beautifulsoup4", "markdownify"],
+        "vision_tool":       ["openai", "anthropic", "requests"],
+        "image_gen_tool":    ["openai", "requests"],
+        "speech_tool":       ["openai"],
+        "email_tool":        [],
+        "slack_discord_tool":["requests"],
+        "aws_gcp_tool":      ["boto3", "google-cloud-storage"],
+        "kubernetes_tool":   ["kubernetes"],
+        # Multi-agent communication
+        "ping_agent":        [],   # no extra packages — uses kernel internals
     }
 
     # Base packages always needed for any exported agent

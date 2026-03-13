@@ -264,6 +264,87 @@ class Orchestrator:
         }
 
     # ------------------------------------------------------------------
+    # Debate async  —  async version for use within async workflows
+    # ------------------------------------------------------------------
+
+    async def debate_async(
+        self, agent1_name: str, agent2_name: str, topic: str, rounds: int = 2
+    ) -> dict:
+        """
+        Async version of debate() — uses execute_async so the event loop
+        is never blocked.  Suitable for use inside async pipelines or
+        the Streamlit callback thread.
+
+        Returns the same dict shape as debate():
+            {
+                "topic": str,
+                "participants": [agent1_name, agent2_name],
+                "transcript": [{"round": int, "agent": str, "argument": str}, ...],
+                "summary": str,
+            }
+        """
+        agent1 = self.registry.get(agent1_name)
+        agent2 = self.registry.get(agent2_name)
+        missing = [
+            n for n, a in [(agent1_name, agent1), (agent2_name, agent2)] if a is None
+        ]
+        if missing:
+            return {"error": f"Agent(s) not found: {', '.join(missing)}"}
+
+        transcript: list[dict] = []
+        history = ""
+
+        for round_num in range(1, rounds + 1):
+            for agent, name in [(agent1, agent1_name), (agent2, agent2_name)]:
+                if history:
+                    prompt = (
+                        f"Topic: {topic}\n\n"
+                        f"Debate so far:\n{history}\n\n"
+                        f"You are {name} (role: {agent.role}). "
+                        f"Give your Round {round_num} argument. "
+                        f"Be specific and concise (2-4 sentences)."
+                    )
+                else:
+                    prompt = (
+                        f"Topic: {topic}\n\n"
+                        f"You are {name} (role: {agent.role}). "
+                        f"Give your opening argument. "
+                        f"Be specific and concise (2-4 sentences)."
+                    )
+                try:
+                    argument = await self.workflow_engine.execute_async(
+                        agent=agent, task=prompt
+                    )
+                except Exception as exc:
+                    argument = f"[Error: {exc}]"
+
+                transcript.append(
+                    {"round": round_num, "agent": name, "argument": argument}
+                )
+                history += f"\n[{name}]: {argument}\n"
+
+        import asyncio
+        summary_prompt = (
+            f'Topic: "{topic}"\n\n'
+            f"Debate transcript:\n{history}\n\n"
+            f"Summarize the key arguments from each side and identify "
+            f"any consensus reached or which side made stronger points."
+        )
+        loop = asyncio.get_event_loop()
+        summary = await loop.run_in_executor(
+            None,
+            lambda: self.ai_adapter.chat(
+                [{"role": "user", "content": summary_prompt}]
+            ),
+        )
+        return {
+            "topic": topic,
+            "participants": [agent1_name, agent2_name],
+            "transcript": transcript,
+            "summary": summary,
+        }
+
+    # ------------------------------------------------------------------
     # Auto-orchestrate  —  AI chooses agents + mode
     # ------------------------------------------------------------------
 

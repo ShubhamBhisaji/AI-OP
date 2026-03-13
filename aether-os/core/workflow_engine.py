@@ -23,9 +23,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os as _os
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Optional
+
+# ---------------------------------------------------------------------------
+# Shared workspace directory — agents read/write shared artefacts here
+# ---------------------------------------------------------------------------
+_WORKSPACE_DIR = Path(__file__).parent.parent / "workspace"
+
+
+def _get_workspace_manifest() -> str:
+    """Return a brief listing of files in the shared agent workspace."""
+    if not _WORKSPACE_DIR.exists():
+        return "Shared workspace is currently empty."
+    files = sorted(
+        str(f.relative_to(_WORKSPACE_DIR))
+        for f in _WORKSPACE_DIR.rglob("*")
+        if f.is_file()
+    )
+    if not files:
+        return "Shared workspace is currently empty."
+    listing = "\n- ".join(files[:60])  # cap at 60 entries to stay readable
+    return f"Files currently in the shared workspace:\n- {listing}"
 
 logger = logging.getLogger(__name__)
 
@@ -421,8 +443,23 @@ class WorkflowEngine:
         context = task
         total = len(agents)
         for step, agent in enumerate(agents, start=1):
+            prev_name = agents[step - 2].name if step > 1 else "User"
             logger.info("Pipeline step %d/%d: agent '%s'", step, total, agent.name)
-            context = self.execute(agent=agent, task=context)
+            workspace_state = _get_workspace_manifest()
+            if step == 1:
+                prompt = (
+                    f"System Task: {context}\n\n"
+                    f"[SYSTEM METADATA]\n{workspace_state}"
+                )
+            else:
+                prompt = (
+                    f"Message from {prev_name}:\n\n"
+                    f"Here is the output from my previous step. "
+                    f"Please continue the workflow:\n{context}\n\n"
+                    f"[SYSTEM METADATA]\n{workspace_state}"
+                )
+            print(f"\n\U0001f504 Handoff: {prev_name} \u27a4 {agent.name}")
+            context = self.execute(agent=agent, task=prompt)
             # execute() already called _hitl_gate internally; no double-gate here
         return context
 
@@ -431,12 +468,27 @@ class WorkflowEngine:
     # ------------------------------------------------------------------
 
     async def run_pipeline_async(self, agents: list, task: str) -> str:
-        """Async sequential pipeline — awaits each step; HITL gate between steps (Fix 8)."""
+        """Async sequential pipeline with conversational handoffs and workspace state."""
         context = task
         total = len(agents)
         for step, agent in enumerate(agents, start=1):
+            prev_name = agents[step - 2].name if step > 1 else "User"
             logger.info("Pipeline[async] step %d/%d: agent '%s'", step, total, agent.name)
-            context = await self.execute_async(agent=agent, task=context)
+            workspace_state = _get_workspace_manifest()
+            if step == 1:
+                prompt = (
+                    f"System Task: {context}\n\n"
+                    f"[SYSTEM METADATA]\n{workspace_state}"
+                )
+            else:
+                prompt = (
+                    f"Message from {prev_name}:\n\n"
+                    f"Here is the output from my previous step. "
+                    f"Please continue the workflow:\n{context}\n\n"
+                    f"[SYSTEM METADATA]\n{workspace_state}"
+                )
+            print(f"\n\U0001f504 Handoff: {prev_name} \u27a4 {agent.name}")
+            context = await self.execute_async(agent=agent, task=prompt)
             # execute_async() already called _hitl_gate_async internally
         return context
 

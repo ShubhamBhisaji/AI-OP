@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 TOOL_PERMISSIONS: dict[str, int] = {
     # Level 0 — safe utilities
     "calculator":       0,
+    "ping_agent":       1,   # inter-agent comms — standard level
     "datetime_tool":    0,
     "hash_tool":        0,
     "base64_tool":      0,
@@ -102,7 +103,26 @@ class ToolManager:
 
     def __init__(self):
         self._tools: dict[str, Callable[..., Any]] = {}
+        self._engine = None          # set later by inject_engine()
         self._register_builtins()
+
+    def inject_engine(self, engine) -> None:
+        """
+        Wire the WorkflowEngine into tools that need cross-agent access.
+
+        Must be called after both ToolManager and WorkflowEngine are created
+        (i.e. inside AetherKernel.__init__ after workflow_engine is built).
+        Currently wires: ping_agent.
+        """
+        import functools
+        from tools.agent_ping_tool import ping_agent
+
+        self._engine = engine
+        bound = functools.partial(ping_agent, _engine=engine)
+        # Preserve the name attribute so list_tools() / logging remain readable
+        bound.__name__ = "ping_agent"   # type: ignore[attr-defined]
+        self.register("ping_agent", bound)
+        logger.info("ToolManager: WorkflowEngine injected into ping_agent.")
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
         self._tools[name] = fn
@@ -157,6 +177,14 @@ class ToolManager:
     # ------------------------------------------------------------------
 
     def _register_builtins(self) -> None:
+        # ── Inter-agent communication ─────────────────────────────────
+        # ping_agent is registered with a None engine here; the engine is
+        # injected properly via inject_engine() after the kernel is fully
+        # initialised.  Until then the tool is present but returns an error
+        # if called without the engine.
+        from tools.agent_ping_tool import ping_agent
+        self.register("ping_agent", ping_agent)
+
         # ── Original tools ────────────────────────────────────────────
         from tools.web_search import web_search
         from tools.file_writer import file_writer
