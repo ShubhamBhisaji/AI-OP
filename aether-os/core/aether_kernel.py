@@ -943,6 +943,10 @@ class AetherKernel:
         exports/<name>/.  Returns dict with 'output_dir', 'files', 'error'.
         Sub-agents belonging to an AI System are not exportable.
         """
+        exporter = getattr(self, "exporter", None)
+        if exporter is not None and hasattr(exporter, "_base_export_agent"):
+            return exporter._base_export_agent(name)
+
         import json, shutil, textwrap
         from pathlib import Path
 
@@ -2123,6 +2127,10 @@ class AetherKernel:
         exports/<system_name>/  with a shared launcher and per-agent subfolders.
         Returns dict with 'output_dir', 'agents', 'error'.
         """
+        exporter = getattr(self, "exporter", None)
+        if exporter is not None and hasattr(exporter, "_base_export_system"):
+            return exporter._base_export_system(system_name, agent_names)
+
         import json, shutil, textwrap
         from pathlib import Path
 

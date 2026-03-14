@@ -69,6 +69,65 @@ MemoryManager  ──►  Store results + agent state
 Result → User
 ```
 
+## Autonomous Factory Mode (Production Baseline)
+
+Autonomous Factory mode adds policy-governed execution and feedback loops on
+top of the base orchestration model.
+
+### Execution Path
+
+```
+User Prompt
+  │
+  ▼
+WorkflowEngine
+  │
+  ▼
+ToolManager.call(...)
+  │
+  ├─► PolicyEngine.evaluate_tool_call(...)
+  │      ├─ deny: stop + audit
+  │      └─ allow: continue
+  │
+  ├─► ApprovalGate.request(...) for guarded tools
+  │
+  └─► Tool Execution
+      │
+      ▼
+     Result
+```
+
+### Build/Export Path
+
+`AetherKernel` is now a thin coordinator that delegates:
+
+- `build_application(...)` -> `CompilerService` -> kernel build implementation
+- `export_agent(...)` / `export_system(...)` -> `ExporterService` -> kernel export implementation
+- template rendering uses `TemplateRegistry` with external template files
+
+### Self-Improvement Path
+
+```
+Eval Cases
+  │
+  ▼
+SelfImproveCoordinator
+  │
+  ├─► EvalRunner (timeouts, bounds, truncation)
+  ├─► Failure Clustering
+  └─► Recommendations
+      │
+      ▼
+Redacted summary persisted in MemoryManager
+```
+
+### Security Invariants
+
+- Unknown tools are denied by default.
+- Guarded tools require explicit approval.
+- Code execution requires Docker sandbox (no host fallback).
+- Export/build output paths are sanitized and constrained to approved roots.
+
 ## Agent Lifecycle
 
 ```

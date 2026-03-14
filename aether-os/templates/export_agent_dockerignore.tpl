@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+dist/
+build/
+*.spec
+memory/memory_store.json
+memory/chroma_store/

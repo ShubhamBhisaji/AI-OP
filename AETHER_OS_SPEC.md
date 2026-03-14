@@ -216,3 +216,33 @@ build_application ecommerce_app
 ## Goal
 
 Aether should function as an **AI Operating System** that manages intelligent agents like processes in a computer operating system.
+
+---
+
+## Production: Autonomous Factory Mode
+
+Autonomous Factory mode is the production-grade execution model for safe
+autonomy and continuous improvement.
+
+### What it adds
+
+- Policy-governed tool authorization before execution.
+- Human approval gates for destructive/high-risk tool calls.
+- Audit logging for allow/deny decisions.
+- Async-safe workflow runtime with timeout/cancellation controls.
+- Hardened build/export path handling and provider-safe generation defaults.
+- Self-improvement loop (`self_improve_once`) with redacted persistence.
+
+### Operational Requirements
+
+1. Docker must be available for runtime code execution (`code_runner`).
+2. Environment keys must be configured for selected providers.
+3. HITL should remain enabled during initial production rollout.
+4. CI gates must pass before enabling automatic improvement flows.
+
+### Suggested Rollout Phases
+
+1. Governance + HITL enabled for all guarded tools.
+2. Async workflow rollout under bounded parallelism.
+3. Export/build automation with template registry.
+4. Self-improvement loop with conservative thresholds.
