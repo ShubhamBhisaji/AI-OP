@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import React from 'react';
 import { Tag } from '@/components/common/Tag';
 import { getPostBySlug } from '@/lib/posts';
+import { sanitizeRichHtml } from '@/lib/sanitize';
 import { Post } from '@/types/post';
 
 interface PostPageParams {
@@ -56,6 +57,8 @@ export default async function PostPage({ params }: PostPageParams) {
     notFound();
   }
 
+  const safeContent = sanitizeRichHtml(post.content);
+
   return (
     <article className="container mx-auto py-8 px-4">
       <header className="mb-8 text-center">
@@ -81,7 +84,7 @@ export default async function PostPage({ params }: PostPageParams) {
         )}
       </header>
 
-      <main className="prose lg:prose-xl max-w-none mx-auto" dangerouslySetInnerHTML={{ __html: post.content }} />
+      <main className="prose lg:prose-xl max-w-none mx-auto" dangerouslySetInnerHTML={{ __html: safeContent }} />
 
       <section className="mt-12 border-t pt-8">
         <h2 className="text-2xl font-bold mb-4">About the Author</h2>

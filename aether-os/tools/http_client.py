@@ -4,11 +4,23 @@ import json, logging
 import urllib.request
 import urllib.parse
 import urllib.error
+import socket
+import ipaddress
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 15          # seconds
 _MAX_BODY = 20_000     # chars to display from response body
+
+_BLOCKED_HOSTS = {
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "169.254.169.254",
+    "metadata.google.internal",
+    "metadata",
+}
 
 
 def http_client(
@@ -33,6 +45,9 @@ def http_client(
     url = url.strip()
     if not url.startswith(("http://", "https://")):
         return "Error: URL must start with http:// or https://"
+    ok, reason = _is_public_url(url)
+    if not ok:
+        return f"Error: URL blocked by SSRF guard ({reason})."
 
     method = (method or "GET").strip().upper()
     if method not in {"GET", "POST", "PUT", "DELETE", "HEAD", "PATCH"}:
@@ -68,7 +83,8 @@ def http_client(
         req.add_header(k, v)
 
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # noqa: S310
+        opener = urllib.request.build_opener(_SafeRedirectHandler())
+        with opener.open(req, timeout=_TIMEOUT) as resp:  # noqa: S310
             status  = resp.status
             reason  = resp.reason
             hdrs    = dict(resp.headers)
@@ -100,3 +116,44 @@ def http_client(
         f"{'─'*40}\n"
         f"{content}{truncated}"
     )
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects that target private/loopback/link-local hosts."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        ok, reason = _is_public_url(newurl)
+        if not ok:
+            raise urllib.error.URLError(f"Blocked redirect target: {reason}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _is_public_url(raw_url: str) -> tuple[bool, str]:
+    parsed = urllib.parse.urlparse(raw_url)
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "missing host"
+    if host in _BLOCKED_HOSTS:
+        return False, f"blocked host '{host}'"
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False, f"unable to resolve host '{host}'"
+
+    for info in infos:
+        ip = info[4][0]
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_multicast
+            or addr.is_reserved
+            or addr.is_unspecified
+        ):
+            return False, f"resolved to non-public IP {ip}"
+    return True, "ok"

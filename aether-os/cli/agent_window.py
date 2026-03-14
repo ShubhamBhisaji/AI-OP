@@ -835,8 +835,8 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
             if _pkg_js_path.exists():
                 print(f"\n  Upgrading npm dependencies to latest stable versions...")
                 _ncu = _sp_bld.run(
-                    "npx --yes npm-check-updates -u",
-                    cwd=str(app_dir), shell=True,
+                    ["npx", "--yes", "npm-check-updates", "-u"],
+                    cwd=str(app_dir),
                     capture_output=True, text=True
                 )
                 _ncu_out = (_ncu.stdout + _ncu.stderr).strip()
@@ -844,7 +844,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
                     for _ln in _ncu_out.splitlines()[-20:]:
                         print(f"  {_ln}")
                 print(f"  Installing latest dependencies (this may take a minute)...")
-                _sp_bld.run("npm install --legacy-peer-deps", cwd=str(app_dir), shell=True)
+                _sp_bld.run(["npm", "install", "--legacy-peer-deps"], cwd=str(app_dir))
                 print(f"  ✓ Dependencies up to date.")
 
             print(f"\n  ✓ Build complete — {len(all_written)}/{total} file(s) written")
@@ -1008,7 +1008,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
                 # Only auto-install if package.json is valid JSON
                 if _pkg_json_ok and not (run_dir / "node_modules").exists():
                     print("  Installing dependencies (first run)...")
-                    _sp.run("npm install", cwd=str(run_dir), shell=True)
+                    _sp.run(["npm", "install"], cwd=str(run_dir))
                 # Always set a check command: prefer 'npm run build', fallback to 'npm install'
                 # so EJSONPARSE and other npm errors are always captured
                 if "build" in _scripts:
@@ -1075,7 +1075,6 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
                         text=True,
                         encoding="utf-8",
                         errors="replace",
-                        shell=True,
                     )
                     _combined = (_res.stdout or "") + "\n" + (_res.stderr or "")
                     if _res.returncode == 0:
@@ -1086,13 +1085,12 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
 
                 elif _app_kind == "python" and _py_file:
                     _res = _sp.run(
-                        f'python -m py_compile "{_py_file}"',
+                        ["python", "-m", "py_compile", str(_py_file)],
                         cwd=str(run_dir),
                         capture_output=True,
                         text=True,
                         encoding="utf-8",
                         errors="replace",
-                        shell=True,
                     )
                     if _res.returncode == 0:
                         print(f"  ✓ No syntax errors!\n")

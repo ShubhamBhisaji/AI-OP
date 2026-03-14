@@ -26,6 +26,8 @@ from __future__ import annotations
 import logging
 import re
 import urllib.parse
+import ipaddress
+import socket
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ _REMOVE_TAGS = {
 }
 
 _UA = "Mozilla/5.0 (compatible; AetheerAI/1.0)"
+_MAX_REDIRECTS = 10
 
 
 def web_scraper_pro(url: str, action: str = "scrape") -> str:
@@ -74,12 +77,30 @@ def web_scraper_pro(url: str, action: str = "scrape") -> str:
         )
 
     try:
-        resp = requests.get(
-            url,
-            timeout=_TIMEOUT,
-            headers={"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"},
-            allow_redirects=True,
-        )
+        current = url
+        resp = None
+        for _ in range(_MAX_REDIRECTS):
+            _ok, _reason = _is_public_url(current)
+            if not _ok:
+                return f"❌ Security: blocked URL during redirect chain ({_reason})."
+
+            r = requests.get(
+                current,
+                timeout=_TIMEOUT,
+                headers={"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"},
+                allow_redirects=False,
+            )
+            if r.is_redirect or r.is_permanent_redirect:
+                nxt = r.headers.get("Location", "").strip()
+                if not nxt:
+                    break
+                current = urllib.parse.urljoin(current, nxt)
+                continue
+            resp = r
+            break
+
+        if resp is None:
+            return "Error fetching URL: too many redirects."
         resp.raise_for_status()
         html = resp.text
     except Exception as exc:
@@ -196,3 +217,35 @@ def _is_private_host(host: str) -> bool:
         return addr.is_private or addr.is_loopback or addr.is_link_local
     except ValueError:
         return False
+
+
+def _is_public_url(raw_url: str) -> tuple[bool, str]:
+    parsed = urllib.parse.urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"}:
+        return False, "unsupported scheme"
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "missing host"
+    if _is_private_host(host):
+        return False, f"private host '{host}'"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False, f"unable to resolve host '{host}'"
+
+    for info in infos:
+        ip = info[4][0]
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_multicast
+            or addr.is_reserved
+            or addr.is_unspecified
+        ):
+            return False, f"resolved to non-public IP {ip}"
+    return True, "ok"
