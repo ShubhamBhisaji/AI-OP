@@ -2474,12 +2474,23 @@ class AetherKernel:
 
     def self_improve_once(self, eval_cases: list[dict[str, Any]]) -> dict[str, Any]:
         """Run one eval pass and return clustered failures with recommendations."""
+        from datetime import datetime, timezone
 
         def _run_prompt(prompt: str) -> str:
             return self.ai_adapter.chat(messages=[{"role": "user", "content": prompt}])
 
         result = self.self_improver.run_once(eval_cases, run_fn=_run_prompt)
-        self.memory.save(key="self_improve:last_run", value=result)
+
+        eval_summary = dict(result.get("eval_summary", {}))
+        eval_summary.pop("results", None)
+        failure_clusters = result.get("failure_clusters", {}) or {}
+        redacted = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "eval_summary": eval_summary,
+            "failure_clusters": {k: len(v or []) for k, v in failure_clusters.items()},
+            "recommendations": list(result.get("recommendations", [])),
+        }
+        self.memory.save(key="self_improve:last_run", value=redacted)
         return result
 
     # ------------------------------------------------------------------
