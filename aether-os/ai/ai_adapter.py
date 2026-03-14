@@ -1,7 +1,10 @@
 """
-AIAdapter — Abstraction layer for multiple AI providers.
+AIAdapter — litellm-backed abstraction layer for multiple AI providers.
 Supports GitHub Models (free with GitHub account), OpenAI, Claude, Gemini, Ollama, HuggingFace.
 Switch providers by changing the `provider` argument at init time.
+
+LiteLLM handles streaming, structured outputs, retries, and rate limiting uniformly
+across all providers — no manual urllib or per-SDK HTTP plumbing needed.
 
 Quickest start (no paid API key needed):
     1. Go to https://github.com/settings/tokens → Generate new token (classic)
@@ -16,6 +19,11 @@ import asyncio
 import logging
 import os
 from typing import Any
+
+import litellm
+
+litellm.suppress_debug_info = True
+litellm.drop_params = True  # silently ignore params unsupported by a given provider
 
 logger = logging.getLogger(__name__)
 
@@ -119,146 +127,45 @@ class AIAdapter:
         logger.info("AIAdapter switched: provider=%s model=%s", self.provider, self.model)
 
     # ------------------------------------------------------------------
-    # Shared OpenAI-compatible REST helper (no SDK)
+    # litellm core call + token tracking
     # ------------------------------------------------------------------
 
-    def _openai_compat_chat(
-        self,
-        endpoint: str,
-        api_key: str,
-        messages: list[dict],
-        **kwargs,
-    ) -> str:
-        """POST to any OpenAI-compatible /chat/completions endpoint using stdlib urllib.
-        Auto-retries with gpt-4o if the configured model is not available on the endpoint.
-        """
-        import json as _json
-        import urllib.request
-        import urllib.error
-
-        # GitHub Models fallback order — confirmed working with standard PAT
-        _GITHUB_FALLBACKS = [
-            "gpt-4.1",      # best general-purpose, free tier
-            "gpt-5-mini",   # GPT-5 mini, free tier
-            "gpt-4o",       # reliable baseline
-            "gpt-4o-mini",  # lightest option
-            "gpt-4.1-mini",
-        ]
-
-        def _do_request(model_name: str) -> str:
-            payload: dict = {"model": model_name, "messages": messages}
-            for k, v in kwargs.items():
-                if k == "stream":
-                    continue
-                payload[k] = v
-            body = _json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                endpoint,
-                data=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = _json.loads(resp.read().decode("utf-8"))
-
-            # ── Fix 4: capture token usage ────────────────────────────
-            raw_usage = data.get("usage") or {}
-            pt  = int(raw_usage.get("prompt_tokens",     0))
-            ct  = int(raw_usage.get("completion_tokens", 0))
-            tt  = int(raw_usage.get("total_tokens",      pt + ct))
-            self.usage = {
-                "prompt_tokens": pt,
-                "completion_tokens": ct,
-                "total_tokens": tt,
-            }
-            self._session_usage["prompt_tokens"]     += pt
+    def _call(self, model: str, messages: list[dict], **kwargs) -> str:
+        """Route a completion request through litellm and capture token usage."""
+        response = litellm.completion(model=model, messages=messages, **kwargs)
+        usage = getattr(response, "usage", None)
+        if usage:
+            pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+            ct = int(getattr(usage, "completion_tokens", 0) or 0)
+            tt = int(getattr(usage, "total_tokens", pt + ct) or (pt + ct))
+            self.usage = {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt}
+            self._session_usage["prompt_tokens"] += pt
             self._session_usage["completion_tokens"] += ct
-            self._session_usage["total_tokens"]      += tt
+            self._session_usage["total_tokens"] += tt
             if tt:
                 logger.info(
-                    "Token usage — prompt: %d, completion: %d, total: %d "
-                    "(session total: %d)",
+                    "Token usage — prompt: %d, completion: %d, total: %d (session: %d)",
                     pt, ct, tt, self._session_usage["total_tokens"],
                 )
+        return response.choices[0].message.content or ""
 
-            return data["choices"][0]["message"]["content"] or ""
+    # Kept for internal fallback iteration only
+    _GITHUB_FALLBACK_MODELS: list[str] = [
+        "gpt-4.1", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-mini",
+    ]
 
-        # First attempt with the currently configured model
-        import time as _time
-        _MAX_RATE_RETRIES = 3
-        _rate_attempt = 0
+    # placeholder so the old deletion boundary is easy to find
+    def _openai_compat_chat(self, *_a, **_kw):  # type: ignore[override]
+        raise NotImplementedError("_openai_compat_chat replaced by litellm backends")  # noqa
 
-        while True:
-            try:
-                return _do_request(self.model)
-            except urllib.error.HTTPError as exc:
-                try:
-                    detail = _json.loads(exc.read().decode("utf-8"))
-                except Exception:
-                    detail = {}
-                err_code = detail.get("error", {}).get("code", "")
-                err_msg  = detail.get("error", {}).get("message", str(exc))
-
-                # Auto-wait and retry on 429 rate limit (up to 3 times)
-                if exc.code == 429:
-                    _rate_attempt += 1
-                    if _rate_attempt <= _MAX_RATE_RETRIES:
-                        # Try to read Retry-After header, else default 65s
-                        _wait = 65
-                        try:
-                            _wait = int(exc.headers.get("Retry-After", 65)) + 2
-                        except Exception:
-                            pass
-                        print(f"\n  ⏳ Rate limit hit — waiting {_wait}s before retry "
-                              f"({_rate_attempt}/{_MAX_RATE_RETRIES})...")
-                        _time.sleep(_wait)
-                        continue  # retry the while loop
-                    raise RuntimeError(
-                        f"API error (429): {err_msg} — rate limit persists after "
-                        f"{_MAX_RATE_RETRIES} retries."
-                    ) from exc
-
-                # If model not found, walk the fallback list and retry
-                if exc.code == 400 and err_code == "unknown_model":
-                    tried = {self.model}
-                    for fallback in _GITHUB_FALLBACKS:
-                        if fallback in tried:
-                            continue
-                        tried.add(fallback)
-                        try:
-                            result = _do_request(fallback)
-                            # Persist the working model so future calls use it directly
-                            import logging as _log
-                            _log.getLogger(__name__).info(
-                                "Model '%s' not available, switched to '%s'",
-                                self.model, fallback
-                            )
-                            self.model = fallback
-                            return result
-                        except urllib.error.HTTPError:
-                            continue
-                    raise RuntimeError(
-                        f"API error ({exc.code}): {err_msg} "
-                        f"(tried: {', '.join(tried)})"
-                    ) from exc
-
-                raise RuntimeError(f"API error ({exc.code}): {err_msg}") from exc
-            except Exception as exc:
-                raise RuntimeError(f"API error: {exc}") from exc
+    _GITHUB_FALLBACKS: list[str] = []  # kept to avoid AttributeError on any stale references
 
     # ------------------------------------------------------------------
     # Provider implementations
     # ------------------------------------------------------------------
 
     def _chat_github(self, messages: list[dict], **kwargs) -> str:
-        """
-        GitHub Models — free AI access using a GitHub Personal Access Token.
-        Uses stdlib urllib — no openai SDK required.
-        Get your free token at: https://github.com/settings/tokens
-        """
+        """GitHub Models — free AI via GitHub PAT. litellm routes as openai-compatible."""
         token = os.environ.get("GITHUB_TOKEN")
         if not token:
             raise EnvironmentError(
@@ -266,46 +173,60 @@ class AIAdapter:
                 "Get a free token at https://github.com/settings/tokens\n"
                 "Then add GITHUB_TOKEN=<token> to your .env file."
             )
-        return self._openai_compat_chat(
-            endpoint=f"{_GITHUB_MODELS_ENDPOINT}/chat/completions",
-            api_key=token,
-            messages=messages,
-            **kwargs,
+        # Walk the fallback list; on unknown-model errors try the next candidate.
+        tried: set[str] = set()
+        for model_name in dict.fromkeys([self.model] + self._GITHUB_FALLBACK_MODELS):
+            tried.add(model_name)
+            try:
+                result = self._call(
+                    model=f"openai/{model_name}",
+                    messages=messages,
+                    base_url=_GITHUB_MODELS_ENDPOINT,
+                    api_key=token,
+                    num_retries=3,
+                    **kwargs,
+                )
+                if model_name != self.model:
+                    logger.info(
+                        "GitHub Models: '%s' unavailable, switched to '%s'",
+                        self.model, model_name,
+                    )
+                    self.model = model_name
+                return result
+            except (litellm.BadRequestError, litellm.NotFoundError) as exc:
+                msg = str(exc).lower()
+                if any(k in msg for k in ("unknown_model", "model_not_found", "not found", "invalid model")):
+                    continue  # try next fallback
+                raise RuntimeError(f"GitHub Models error: {exc}") from exc
+        raise RuntimeError(
+            f"GitHub Models: all models exhausted (tried: {', '.join(tried)})"
         )
 
     def _chat_openai(self, messages: list[dict], **kwargs) -> str:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY environment variable not set.")
-        return self._openai_compat_chat(
-            endpoint="https://api.openai.com/v1/chat/completions",
-            api_key=api_key,
+        return self._call(
+            model=self.model,
             messages=messages,
+            api_key=api_key,
+            num_retries=3,
             **kwargs,
         )
 
     def _chat_claude(self, messages: list[dict], **kwargs) -> str:
-        try:
-            import anthropic  # type: ignore
-        except ImportError:
-            raise ImportError("Install anthropic: pip install anthropic")
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise EnvironmentError("ANTHROPIC_API_KEY environment variable not set.")
-        client = anthropic.Anthropic(api_key=api_key)
-        # Anthropic separates system from user messages
-        system_msg = next(
-            (m["content"] for m in messages if m["role"] == "system"), ""
-        )
-        user_messages = [m for m in messages if m["role"] != "system"]
-        response = client.messages.create(
-            model=self.model,
-            max_tokens=4096,
-            system=system_msg,
-            messages=user_messages,
+        # litellm auto-detects Anthropic from the "claude-" prefix; add it if missing
+        model = self.model if self.model.startswith("claude") else f"anthropic/{self.model}"
+        return self._call(
+            model=model,
+            messages=messages,
+            api_key=api_key,
+            num_retries=3,
             **kwargs,
         )
-        return response.content[0].text if response.content else ""
 
     def _chat_gemini(self, messages: list[dict], **kwargs) -> str:
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -315,73 +236,26 @@ class AIAdapter:
                 "Get a free key at https://aistudio.google.com/apikey\n"
                 "Then add GEMINI_API_KEY=<key> to your .env file."
             )
-
-        # Convert messages → Gemini REST format
-        # {"contents": [{"role": "user"|"model", "parts": [{"text": "..."}]}]}
-        contents = []
-        system_instruction: str | None = None
-        for m in messages:
-            role = m["role"]
-            if role == "system":
-                system_instruction = m["content"]
-                continue
-            gemini_role = "model" if role == "assistant" else "user"
-            contents.append({"role": gemini_role, "parts": [{"text": m["content"]}]})
-
-        payload: dict = {"contents": contents}
-        if system_instruction:
-            payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
-
-        # Direct REST API using stdlib urllib — no extra packages needed.
-        # POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=KEY
-        endpoint = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model}:generateContent?key={api_key}"
+        model = self.model if self.model.startswith("gemini/") else f"gemini/{self.model}"
+        return self._call(
+            model=model,
+            messages=messages,
+            api_key=api_key,
+            num_retries=3,
+            **kwargs,
         )
-
-        import json as _json
-        import urllib.request
-        import urllib.error
-
-        body = _json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            endpoint,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = _json.loads(resp.read().decode("utf-8"))
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        except urllib.error.HTTPError as exc:
-            try:
-                detail = _json.loads(exc.read().decode("utf-8"))
-                msg = detail.get("error", {}).get("message", str(exc))
-            except Exception:
-                msg = str(exc)
-            raise RuntimeError(f"Gemini API error ({exc.code}): {msg}") from exc
-        except Exception as exc:
-            raise RuntimeError(f"Gemini API error: {exc}") from exc
 
     def _chat_ollama(self, messages: list[dict], **kwargs) -> str:
-        try:
-            import ollama  # type: ignore
-        except ImportError:
-            raise ImportError("Install ollama: pip install ollama")
-        response = ollama.chat(model=self.model, messages=messages)
-        return response["message"]["content"] or ""
+        model = self.model if self.model.startswith("ollama/") else f"ollama/{self.model}"
+        return self._call(model=model, messages=messages, **kwargs)
 
     def _chat_huggingface(self, messages: list[dict], **kwargs) -> str:
-        try:
-            from huggingface_hub import InferenceClient  # type: ignore
-        except ImportError:
-            raise ImportError("Install huggingface-hub: pip install huggingface-hub")
         api_key = os.environ.get("HF_API_KEY")
-        client = InferenceClient(model=self.model, token=api_key)
-        prompt = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages)
-        result = client.text_generation(prompt, max_new_tokens=1024)
-        return result or ""
+        model = (
+            self.model if self.model.startswith("huggingface/")
+            else f"huggingface/{self.model}"
+        )
+        return self._call(model=model, messages=messages, api_key=api_key, **kwargs)
 
     # ------------------------------------------------------------------
     # Helpers
