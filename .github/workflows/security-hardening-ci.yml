@@ -50,3 +50,30 @@ jobs:
 
       - name: Test
         run: npm test
+
+  self-improve-patch-proposal:
+    runs-on: ubuntu-latest
+    needs: [python-security-checks, tours-app-checks]
+    defaults:
+      run:
+        working-directory: aether-os
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate quality-gated patch proposal artifact
+        run: python -m evals.quality_gate_patch_proposal
+
+      - name: Upload patch proposal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-improve-patch-proposal
+          path: aether-os/memory/proposed_patches/latest.json

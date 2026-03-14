@@ -26,6 +26,26 @@ class ServiceExtractionTemplateTests(unittest.TestCase):
         self.assertEqual(out["name"], "alpha")
         self.assertTrue(out["ok"])
 
+    def test_export_impl_prefers_exporter_base_when_present(self):
+        kernel = object.__new__(AetherKernel)
+
+        class _Exporter:
+            def _base_export_agent(self, name):
+                return {"path": "base", "name": name}
+
+            def _base_export_system(self, system_name, agent_names):
+                return {"path": "base", "system": system_name, "agents": agent_names}
+
+        kernel.exporter = _Exporter()
+
+        out_agent = AetherKernel._export_agent_impl(kernel, "alpha")
+        out_system = AetherKernel._export_system_impl(kernel, "sys", ["a1"])
+
+        self.assertEqual(out_agent["path"], "base")
+        self.assertEqual(out_agent["name"], "alpha")
+        self.assertEqual(out_system["path"], "base")
+        self.assertEqual(out_system["system"], "sys")
+
     def test_template_registry_renders_templates(self):
         reg = TemplateRegistry(templates_dir=ROOT / "templates")
         out = reg.render(
