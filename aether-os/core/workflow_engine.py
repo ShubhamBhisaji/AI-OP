@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os as _os
+import inspect as _inspect
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -197,6 +198,7 @@ class WorkflowEngine:
         tool_manager=None,
         hitl_mode: bool = False,
         feedback_callback: Optional[Callable[[WorkflowCheckpoint], WorkflowFeedback]] = None,
+        feedback_callback_async: Optional[Callable[[WorkflowCheckpoint], Any]] = None,
     ):
         self.registry = registry
         self.ai_adapter = ai_adapter
@@ -207,6 +209,7 @@ class WorkflowEngine:
         self.feedback_callback: Callable[[WorkflowCheckpoint], WorkflowFeedback] = (
             feedback_callback or _default_hitl_callback
         )
+        self.feedback_callback_async = feedback_callback_async
 
     # ------------------------------------------------------------------
     # HITL gate helper (Fix 8)
@@ -287,15 +290,63 @@ class WorkflowEngine:
         step: int = 1,
         total_steps: Optional[int] = None,
     ) -> str:
-        """Async version of _hitl_gate — runs the blocking callback in a thread."""
+        """Async version of _hitl_gate with async callback support."""
         if not self.hitl_mode:
             return result
-        loop = asyncio.get_event_loop()
-        # The callback may block (console input) — run it off the event loop
-        return await loop.run_in_executor(
-            None,
-            lambda: self._hitl_gate(agent, task, result, step, total_steps),
+
+        checkpoint = WorkflowCheckpoint(
+            agent_name=agent.name,
+            task=task,
+            result=result,
+            step=step,
+            total_steps=total_steps,
         )
+
+        async def _get_feedback_async() -> WorkflowFeedback:
+            if self.feedback_callback_async is not None:
+                maybe = self.feedback_callback_async(checkpoint)
+                feedback = await maybe if _inspect.isawaitable(maybe) else maybe
+                return feedback
+
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, lambda: self.feedback_callback(checkpoint))
+
+        MAX_REVISE_CYCLES = 3
+        for _ in range(MAX_REVISE_CYCLES):
+            feedback = await _get_feedback_async()
+
+            if feedback.action == HITLAction.APPROVE:
+                logger.info("HITL[async]: operator approved output of agent '%s'.", agent.name)
+                return result
+
+            if feedback.action == HITLAction.CANCEL:
+                logger.warning("HITL[async]: operator cancelled workflow at agent '%s'.", agent.name)
+                raise WorkflowCancelled(
+                    f"Workflow cancelled by operator at agent '{agent.name}'."
+                )
+
+            if feedback.action == HITLAction.REVISE:
+                revised_task = feedback.revised_task.strip()
+                logger.info(
+                    "HITL[async]: operator requested revision for agent '%s' — re-running.",
+                    agent.name,
+                )
+                prompt = self._build_prompt(agent=agent, task=revised_task)
+                messages = [{"role": "user", "content": prompt}]
+                result = await self.ai_adapter.async_chat(messages=messages)
+                checkpoint = WorkflowCheckpoint(
+                    agent_name=agent.name,
+                    task=revised_task,
+                    result=result,
+                    step=step,
+                    total_steps=total_steps,
+                )
+
+        logger.warning(
+            "HITL[async]: max revision cycles (%d) reached for agent '%s'; accepting last result.",
+            MAX_REVISE_CYCLES, agent.name,
+        )
+        return result
 
     # ------------------------------------------------------------------
     # RBAC-enforced tool call (Fix 3 — RBAC wiring)
@@ -492,13 +543,48 @@ class WorkflowEngine:
             # execute_async() already called _hitl_gate_async internally
         return context
 
-    async def run_broadcast_async(self, agents: list, task: str) -> list[Any]:
+    async def run_broadcast_async(
+        self,
+        agents: list,
+        task: str,
+        timeout_seconds: float | None = None,
+        max_parallel: int | None = None,
+    ) -> list[Any]:
         """
         Run all agents on the SAME task concurrently (Fix 2).
         Returns a list of results in the same order as *agents*.
         """
-        coros = [self.execute_async(agent=a, task=task) for a in agents]
-        return await asyncio.gather(*coros, return_exceptions=True)
+        if not agents:
+            return []
+
+        limit = max_parallel if max_parallel and max_parallel > 0 else len(agents)
+        sem = asyncio.Semaphore(limit)
+
+        async def _run(agent):
+            async with sem:
+                return await self.execute_async(agent=agent, task=task)
+
+        tasks = [asyncio.create_task(_run(a)) for a in agents]
+
+        if timeout_seconds is None:
+            return await asyncio.gather(*tasks, return_exceptions=True)
+
+        done, pending = await asyncio.wait(tasks, timeout=timeout_seconds)
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        results: list[Any] = []
+        for t in tasks:
+            if t.cancelled() or t in pending:
+                results.append(TimeoutError(f"Broadcast timed out after {timeout_seconds}s"))
+                continue
+            try:
+                results.append(t.result())
+            except Exception as exc:
+                results.append(exc)
+        return results
 
     # ------------------------------------------------------------------
     # Autonomous task decomposition (synchronous — legacy)
