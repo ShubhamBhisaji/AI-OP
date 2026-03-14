@@ -1,7 +1,6 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { authOptions } from '@/lib/auth'; // Changed import path to use absolute import
+import NextAuth from "next-auth";
+import { authOptions } from "@/lib/auth";
 
-export default function handler(req: NextApiRequest, res: NextApiResponse) {
-  // Add your authentication logic here.
-  res.status(200).json({ message: 'Auth route working!' });
-}
+const handler = NextAuth(authOptions);
+
+export { handler as GET, handler as POST };

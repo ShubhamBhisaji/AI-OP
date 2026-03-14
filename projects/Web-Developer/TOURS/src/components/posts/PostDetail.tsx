@@ -1,6 +1,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { Post } from '@/types/post';
+import { sanitizeRichHtml } from '@/lib/sanitize';
 import Tag from '../common/Tag';
 import { format } from 'date-fns';
 
@@ -10,6 +11,7 @@ interface PostDetailProps {
 
 const PostDetail: React.FC<PostDetailProps> = ({ post }) => {
   const formattedDate = format(new Date(post.createdAt), 'MMMM dd, yyyy');
+  const safeContent = sanitizeRichHtml(post.content);
 
   return (
     <article className="container mx-auto px-4 py-8">
@@ -55,7 +57,7 @@ const PostDetail: React.FC<PostDetailProps> = ({ post }) => {
         </figure>
       )}
 
-      <div className="prose lg:prose-xl max-w-none text-gray-800 dark:text-gray-200" dangerouslySetInnerHTML={{ __html: post.content }} />
+      <div className="prose lg:prose-xl max-w-none text-gray-800 dark:text-gray-200" dangerouslySetInnerHTML={{ __html: safeContent }} />
     </article>
   );
 };

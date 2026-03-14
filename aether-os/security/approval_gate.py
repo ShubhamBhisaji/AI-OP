@@ -154,6 +154,12 @@ def require_approval(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        # ToolManager may already have performed the approval check centrally.
+        # In that case skip the duplicate prompt and execute immediately.
+        if kwargs.pop("_approval_already_granted", False):
+            kwargs.pop("_agent_name", None)
+            return fn(*args, **kwargs)
+
         agent_name: str = kwargs.pop("_agent_name", "unknown-agent")
         # Build a short human-readable summary of the call arguments
         arg_parts = [repr(a)[:80] for a in args]
