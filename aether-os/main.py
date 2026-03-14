@@ -47,13 +47,20 @@ _PROVIDER_KEY = {
 
 def _save_to_env(key: str, value: str) -> None:
     """Persist a key=value pair into the project .env file."""
+    import re
+
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     try:
-        with open(env_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+
+        key_re = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}\s*=")
         replaced = False
         for i, line in enumerate(lines):
-            if line.strip().startswith(f"{key}="):
+            if key_re.match(line):
                 lines[i] = f"{key}={value}\n"
                 replaced = True
                 break
