@@ -29,6 +29,7 @@ from security.approval_gate import (
     ApprovalDenied,
     ApprovalGate,
     ALL_GUARDED_TOOLS,
+    get_approval_bypass_token,
 )  # re-exported for callers
 
 logger = logging.getLogger(__name__)
@@ -189,7 +190,7 @@ class ToolManager:
         if accepts_var_kw:
             # If the function is decorated with @require_approval, this flag
             # prevents a second prompt after the centralized check above.
-            kwargs["_approval_already_granted"] = True
+            kwargs["_approval_bypass_token"] = get_approval_bypass_token()
             kwargs["_agent_name"] = agent_name
 
         return fn(*args, **kwargs)

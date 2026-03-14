@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+import re
 
 from agents.base_agent import BaseAgent
 from factory.agent_factory import AgentFactory
@@ -65,6 +66,27 @@ class AetherKernel:
         # Wire AI adapter into skill engine after creation
         self.skill_engine.ai_adapter = self.ai_adapter
         logger.info("AetheerAI — An AI Master!! kernel ready.")
+
+    @staticmethod
+    def _safe_fs_component(raw: str, fallback: str = "item") -> str:
+        """Return a filesystem-safe single path component from untrusted input."""
+        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", (raw or "").strip())
+        cleaned = cleaned.strip("._-")
+        return cleaned or fallback
+
+    @staticmethod
+    def _safe_child_path(base_dir, child_name: str, fallback: str = "item"):
+        """Resolve a child path under base_dir and enforce containment."""
+        from pathlib import Path
+
+        base = Path(base_dir).resolve()
+        safe_name = AetherKernel._safe_fs_component(child_name, fallback=fallback)
+        target = (base / safe_name).resolve()
+        try:
+            target.relative_to(base)
+        except ValueError:
+            raise ValueError("Refusing to write outside the target base directory")
+        return target
 
     # ------------------------------------------------------------------
     # HITL control (Fix 8)
@@ -898,7 +920,8 @@ class AetherKernel:
             }
 
         project_root = Path(__file__).parent.parent
-        export_dir = project_root / "exports" / name
+        exports_root = (project_root / "exports").resolve()
+        export_dir = self._safe_child_path(exports_root, name, fallback="agent")
         export_dir.mkdir(parents=True, exist_ok=True)
 
         files_written: list[str] = []
@@ -1332,7 +1355,7 @@ class AetherKernel:
             # ── Boot kernel & load agent profile ─────────────────────────
             _provider = os.environ.get("AETHER_DEFAULT_PROVIDER", "github")
             _model    = os.environ.get("AETHER_DEFAULT_MODEL") or None
-            kernel    = AetherKernel(ai_provider=_provider, model=_model or "gpt-4.1")
+            kernel    = AetherKernel(ai_provider=_provider, model=_model)
 
             with open(os.path.join(_ROOT, "agent_profile.json"), encoding="utf-8") as _f:
                 _profile = json.load(_f)
@@ -1880,7 +1903,7 @@ class AetherKernel:
                 provider = os.environ.get("AETHER_DEFAULT_PROVIDER",
                            os.environ.get("AI_PROVIDER", "github"))
                 model    = os.environ.get("AETHER_DEFAULT_MODEL",
-                           os.environ.get("AI_MODEL", "gpt-4.1")) or "gpt-4.1"
+                           os.environ.get("AI_MODEL", "")).strip() or None
                 kernel = AetherKernel(ai_provider=provider, model=model)
                 kernel.set_hitl(
                     enabled=True,
@@ -2058,7 +2081,8 @@ class AetherKernel:
         agents = [self.registry.get(n) for n in agent_names]
 
         project_root = Path(__file__).parent.parent
-        sys_dir = project_root / "exports" / system_name
+        exports_root = (project_root / "exports").resolve()
+        sys_dir = self._safe_child_path(exports_root, system_name, fallback="system")
         sys_dir.mkdir(parents=True, exist_ok=True)
 
         # ── 1. Copy shared source once at system root ────────────────────
@@ -2089,7 +2113,8 @@ class AetherKernel:
         agents_dir = sys_dir / "agent_profiles"
         agents_dir.mkdir(exist_ok=True)
         for agent in agents:
-            (agents_dir / f"{agent.name}.json").write_text(
+            safe_agent_file = self._safe_fs_component(agent.name, fallback="agent") + ".json"
+            (agents_dir / safe_agent_file).write_text(
                 json.dumps(agent.to_dict(), indent=2), encoding="utf-8"
             )
 
@@ -2436,15 +2461,23 @@ class AetherKernel:
         )
         matches = pattern.findall(raw)
 
-        output_dir = str(Path(__file__).parent.parent / "agent_output" / app_name.replace(" ", "_"))
+        safe_app = self._safe_fs_component(app_name, fallback="application")
+        output_dir = str(Path(__file__).parent.parent / "agent_output" / safe_app)
         files_written = []
 
         if matches:
             total = len(matches)
             for i, (rel_path, content) in enumerate(matches, start=1):
-                rel_path = rel_path.strip()
+                from pathlib import PurePosixPath
+
+                raw_rel = rel_path.strip().replace("\\", "/")
+                posix_rel = PurePosixPath(raw_rel)
+                rel_parts = [p for p in posix_rel.parts if p not in ("", ".", "..")]
+                rel_path = "/".join(rel_parts)
+                if raw_rel.startswith("/") or raw_rel.startswith("../") or not rel_path:
+                    rel_path = f"generated_{i}.txt"
                 result = file_writer(
-                    filename=os.path.join(app_name.replace(" ", "_"), rel_path),
+                    filename=os.path.join(safe_app, rel_path),
                     content=content,
                 )
                 files_written.append((rel_path, result))
@@ -2454,7 +2487,7 @@ class AetherKernel:
         else:
             # Fallback: save the raw response as a single plan file
             result = file_writer(
-                filename=os.path.join(app_name.replace(" ", "_"), "plan.md"),
+                filename=os.path.join(safe_app, "plan.md"),
                 content=raw,
             )
             files_written.append(("plan.md", result))

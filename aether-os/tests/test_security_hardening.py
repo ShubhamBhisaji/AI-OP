@@ -8,9 +8,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.tool_manager import ToolManager
-from security.approval_gate import ApprovalGate
+from security.approval_gate import ApprovalGate, require_approval
 from tools.http_client import http_client
 from tools.web_scraper_pro import web_scraper_pro
+from core.aether_kernel import AetherKernel
 
 
 class _LeanToolManager(ToolManager):
@@ -57,6 +58,21 @@ class SecurityHardeningTests(unittest.TestCase):
     def test_web_scraper_blocks_localhost(self):
         out = web_scraper_pro("http://localhost", action="scrape")
         self.assertIn("Security", out)
+
+    def test_approval_legacy_bypass_flag_is_ignored(self):
+        @require_approval
+        def guarded_echo(value, **kwargs):
+            return value
+
+        with patch("builtins.input", return_value="n"):
+            with self.assertRaises(PermissionError):
+                guarded_echo("ok", _approval_already_granted=True, _agent_name="attacker")
+
+    def test_safe_fs_component_strips_traversal_chars(self):
+        safe = AetherKernel._safe_fs_component("../../windows/system32", fallback="x")
+        self.assertNotIn("/", safe)
+        self.assertNotIn("\\", safe)
+        self.assertNotIn("..", safe)
 
 
 if __name__ == "__main__":
