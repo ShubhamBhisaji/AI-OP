@@ -2,9 +2,10 @@
 # Install with: pip install -r requirements.txt
 
 # ── Core AI providers ──────────────────────────────────────────────────
-# Uncomment the providers you want to use.
+# litellm is the unified interface — it calls the provider SDKs listed below
+litellm>=1.67.0                # Unified LLM interface (replaces per-provider urllib logic)
 
-openai>=1.30.0                 # OpenAI GPT-4o, GPT-4, etc.
+openai>=1.30.0                 # OpenAI GPT-4o, GPT-4, etc. (also used by litellm for GitHub Models)
 anthropic>=0.25.0              # Anthropic Claude 3.x
 google-generativeai>=0.5.0     # Google Gemini
 ollama>=0.1.8                  # Ollama (local LLMs)

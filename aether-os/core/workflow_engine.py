@@ -702,8 +702,17 @@ class WorkflowEngine:
             async def _run_subtask(subtask: dict, idx: int) -> tuple[str, Any]:
                 agent_name = agents[idx % len(agents)]
                 agent = self.registry.get(agent_name)
-                result = await self.execute_async(agent=agent, task=subtask["description"])
-                return subtask["id"], result
+                try:
+                    result = await self.execute_async(agent=agent, task=subtask["description"])
+                    return subtask["id"], result
+                except asyncio.CancelledError:
+                    raise  # propagate cancellation; handled by outer loop
+                except Exception as exc:
+                    logger.error(
+                        "decompose_and_run_async: subtask '%s' failed: %s",
+                        subtask["id"], exc,
+                    )
+                    return subtask["id"], f"FAILED: {exc}"
 
             coros = [_run_subtask(s, i) for i, s in enumerate(ready)]
             logger.info(
@@ -714,8 +723,16 @@ class WorkflowEngine:
 
             for item in batch_results:
                 if isinstance(item, BaseException):
-                    logger.error("decompose_and_run_async: subtask raised: %s", item)
-                    continue
+                    # CancelledError or similar escaped the inner handler —
+                    # mark every ready task as failed so remaining drains correctly.
+                    logger.error(
+                        "decompose_and_run_async: unhandled subtask error: %s", item
+                    )
+                    for s in ready:
+                        if s["id"] not in completed:
+                            completed[s["id"]] = f"FAILED: {item}"
+                            remaining.pop(s["id"], None)
+                    break
                 sid, sresult = item
                 completed[sid] = sresult
                 remaining.pop(sid, None)

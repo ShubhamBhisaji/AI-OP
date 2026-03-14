@@ -182,63 +182,22 @@ def code_runner(code: str, language: str = "python", extra_deps: list[str] | Non
             tmp.write(code)
             tmp_path = tmp.name
 
-        # ── Fix 2: Docker sandbox (preferred) ────────────────────────
-        if _docker_available():
-            try:
-                return _run_in_docker(tmp_path, deps=all_deps)
-            except subprocess.TimeoutExpired:
-                return f"Error: Docker execution timed out after {_TIMEOUT_SECONDS}s."
-            except Exception as exc:
-                logger.warning("code_runner: Docker execution failed (%s); falling back.", exc)
-                # Fall through to subprocess fallback
-
-        # ── Restricted subprocess fallback ────────────────────────────
-        logger.warning(
-            "code_runner: Docker not available — running on host (fallback). "
-            "Install Docker for full sandboxing."
-        )
-
-        # Bug 3 fix — frozen .exe fork bomb guard:
-        # When compiled with PyInstaller sys.executable is the .exe itself, NOT
-        # python.exe.  Running [sys.executable, script.py] would re-launch the
-        # entire AetheerAI application instead of executing the Python script.
-        # Use the bare "python" command so the OS finds the real interpreter.
-        _python_cmd = "python" if getattr(sys, "frozen", False) else sys.executable
-
-        # Auto-install missing deps on the host as well (Fix 7 fallback)
-        if all_deps:
-            logger.info("code_runner: installing deps on host: %s", all_deps)
-            try:
-                subprocess.run(
-                    [_python_cmd, "-m", "pip", "install", "--quiet"] + all_deps,
-                    capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
-                )
-            except FileNotFoundError:
-                logger.warning("code_runner: 'python' not found on PATH; skipping dep install.")
+        # ── Docker sandbox (required for security) ───────────────────
+        if not _docker_available():
+            return (
+                "Error: Docker is not installed or not running. "
+                "Code execution is disabled for security. "
+                "Install Docker Desktop from https://www.docker.com/products/docker-desktop/ "
+                "and ensure the daemon is running, then retry."
+            )
 
         try:
-            result = subprocess.run(
-                [_python_cmd, tmp_path],
-                capture_output=True,
-                stdin=subprocess.DEVNULL,
-                text=True,
-                timeout=_TIMEOUT_SECONDS,
-            )
-        except FileNotFoundError:
-            return (
-                "Error: Python is not installed or not on PATH on this system.\n"
-                "Install Python 3.10+ from https://www.python.org/downloads/ and "
-                "ensure it is added to your PATH."
-            )
-        output = result.stdout
-        if result.stderr:
-            output += "\n[stderr]\n" + result.stderr
-        return (
-            "[⚠ SANDBOX WARNING: Docker unavailable — code ran on host machine]\n\n"
-            + (output.strip() or "(no output)")
-        )
-    except subprocess.TimeoutExpired:
-        return f"Error: code execution timed out after {_TIMEOUT_SECONDS}s."
+            return _run_in_docker(tmp_path, deps=all_deps)
+        except subprocess.TimeoutExpired:
+            return f"Error: Docker execution timed out after {_TIMEOUT_SECONDS}s."
+        except Exception as exc:
+            logger.error("code_runner: Docker execution failed: %s", exc)
+            return f"Error: Docker execution failed — {exc}"
     except Exception as exc:
         logger.error("code_runner: unexpected error: %s", exc)
         return f"Error: {exc}"
