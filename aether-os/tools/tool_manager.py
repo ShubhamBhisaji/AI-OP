@@ -25,12 +25,14 @@ import logging
 import inspect
 from typing import Any, Callable
 
+from security.audit_logger import AuditLogger
 from security.approval_gate import (
     ApprovalDenied,
     ApprovalGate,
     ALL_GUARDED_TOOLS,
     get_approval_bypass_token,
 )  # re-exported for callers
+from security.policy_engine import PolicyEngine
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +109,11 @@ class ToolManager:
     Destructive/high-risk tool calls go through the ApprovalGate (Fix 1).
     """
 
-    def __init__(self):
+    def __init__(self, policy_engine: PolicyEngine | None = None, audit_logger: AuditLogger | None = None):
         self._tools: dict[str, Callable[..., Any]] = {}
         self._engine = None          # set later by inject_engine()
+        self._policy = policy_engine or PolicyEngine()
+        self._audit = audit_logger or AuditLogger.default()
         self._register_builtins()
 
     def inject_engine(self, engine) -> None:
@@ -156,13 +160,34 @@ class ToolManager:
         if fn is None:
             raise KeyError(f"Tool '{name}' is not registered.")
 
-        # ── RBAC check ────────────────────────────────────────────────
         required = TOOL_PERMISSIONS.get(name, _DEFAULT_TOOL_PERMISSION)
-        if agent_level < required:
-            raise PermissionDenied(
-                f"Agent '{agent_name}' (level {agent_level}) cannot use '{name}' "
-                f"(requires level {required})."
+        decision = self._policy.evaluate_tool_call(
+            tool_name=name,
+            tool_registered=True,
+            agent_level=agent_level,
+            required_level=required,
+        )
+        if not decision.allowed:
+            self._audit.log(
+                {
+                    "event": "tool_call",
+                    "agent": agent_name,
+                    "tool": name,
+                    "decision": "deny",
+                    "reason": decision.reason,
+                }
             )
+            raise PermissionDenied(decision.reason)
+
+        self._audit.log(
+            {
+                "event": "tool_call",
+                "agent": agent_name,
+                "tool": name,
+                "decision": "allow",
+                "reason": decision.reason,
+            }
+        )
 
         # ── Centralized approval gate ───────────────────────────────
         # Enforce approval for all guarded tools even if a specific tool

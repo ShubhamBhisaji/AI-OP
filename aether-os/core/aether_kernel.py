@@ -22,6 +22,11 @@ from core.workflow_engine import (
 )
 from core.team_manager import TeamManager
 from core.orchestrator import Orchestrator
+from core.exporter import ExporterService
+from core.compiler import CompilerService
+from core.template_registry import TemplateRegistry
+from core.self_improve import SelfImproveCoordinator
+from evals.benchmark_runner import BenchmarkRunner
 from tools.tool_manager import ToolManager
 from ai.ai_adapter import AIAdapter
 from memory.memory_manager import MemoryManager
@@ -37,7 +42,7 @@ class AetherKernel:
     All subsystems are initialized and coordinated here.
     """
 
-    def __init__(self, ai_provider: str = "openai", model: str = "gpt-4o"):
+    def __init__(self, ai_provider: str = "openai", model: str | None = "gpt-4o"):
         logger.info("Booting AetheerAI — An AI Master!! kernel...")
         self.ai_adapter = AIAdapter(provider=ai_provider, model=model)
         self.memory = MemoryManager()
@@ -63,6 +68,11 @@ class AetherKernel:
             ai_adapter=self.ai_adapter,
             workflow_engine=self.workflow_engine,
         )
+        self.exporter = ExporterService(kernel=self)
+        self.compiler = CompilerService(kernel=self)
+        self.template_registry = TemplateRegistry()
+        self.eval_runner = BenchmarkRunner()
+        self.self_improver = SelfImproveCoordinator(eval_runner=self.eval_runner)
         # Wire AI adapter into skill engine after creation
         self.skill_engine.ai_adapter = self.ai_adapter
         logger.info("AetheerAI — An AI Master!! kernel ready.")
@@ -96,6 +106,7 @@ class AetherKernel:
         self,
         enabled: bool = True,
         callback=None,
+        async_callback=None,
     ) -> None:
         """
         Enable or disable the Human-in-the-Loop checkpoint gate.
@@ -106,6 +117,9 @@ class AetherKernel:
         callback : Optional callable ``(WorkflowCheckpoint) -> WorkflowFeedback``.
                    When None the default interactive console prompt is used.
                    Pass a custom function to integrate with a GUI / REST API.
+        async_callback : Optional async callable
+                ``async (WorkflowCheckpoint) -> WorkflowFeedback``.
+                Used by async workflows to avoid blocking the event loop.
 
         Example — silent auto-approve (for unit tests)::
 
@@ -117,6 +131,7 @@ class AetherKernel:
         from core.workflow_engine import _default_hitl_callback
         self.workflow_engine.hitl_mode = enabled
         self.workflow_engine.feedback_callback = callback or _default_hitl_callback
+        self.workflow_engine.feedback_callback_async = async_callback
         state = "ENABLED" if enabled else "DISABLED"
         logger.info("HITL mode %s (callback=%s).", state, callback.__name__ if callback else "console")
 
@@ -344,8 +359,10 @@ class AetherKernel:
             )
         return result
 
-    async def run_agent_async(self, name: str, task: str) -> Any:
+    async def run_agent_async(self, name: str, task: str, timeout_seconds: float | None = None) -> Any:
         """Non-blocking async version of run_agent."""
+        import asyncio
+
         agent = self.registry.get(name)
         if agent is None:
             raise KeyError(f"Agent '{name}' not found in registry.")
@@ -353,29 +370,48 @@ class AetherKernel:
             "Running agent '%s' async (permission=%s) on task: %s",
             name, agent.permission_level, task,
         )
-        result = await self.workflow_engine.execute_async(agent=agent, task=task)
+        coro = self.workflow_engine.execute_async(agent=agent, task=task)
+        result = await asyncio.wait_for(coro, timeout=timeout_seconds) if timeout_seconds else await coro
         self.memory.save(key=f"{name}:last_result", value=result)
         usage = self.ai_adapter.usage
         if usage.get("total_tokens"):
             self.memory.save(key=f"{name}:last_token_usage", value=usage)
         return result
 
-    async def run_pipeline_async(self, agent_names: list[str], task: str) -> str:
+    async def run_pipeline_async(
+        self,
+        agent_names: list[str],
+        task: str,
+        timeout_seconds: float | None = None,
+    ) -> str:
         """Async sequential pipeline — each agent's output feeds the next."""
-        agents = [self.registry.get(n) for n in agent_names]
-        missing = [n for n, a in zip(agent_names, agents) if a is None]
-        if missing:
-            raise KeyError(f"Agents not found: {missing}")
-        return await self.workflow_engine.run_pipeline_async(agents=agents, task=task)
-
-    async def broadcast_async(self, agent_names: list[str], task: str) -> list[dict]:
-        """Run all agents concurrently on the same task."""
         import asyncio
+
         agents = [self.registry.get(n) for n in agent_names]
         missing = [n for n, a in zip(agent_names, agents) if a is None]
         if missing:
             raise KeyError(f"Agents not found: {missing}")
-        raw = await self.workflow_engine.run_broadcast_async(agents=agents, task=task)
+        coro = self.workflow_engine.run_pipeline_async(agents=agents, task=task)
+        return await asyncio.wait_for(coro, timeout=timeout_seconds) if timeout_seconds else await coro
+
+    async def broadcast_async(
+        self,
+        agent_names: list[str],
+        task: str,
+        timeout_seconds: float | None = None,
+        max_parallel: int | None = None,
+    ) -> list[dict]:
+        """Run all agents concurrently on the same task."""
+        agents = [self.registry.get(n) for n in agent_names]
+        missing = [n for n, a in zip(agent_names, agents) if a is None]
+        if missing:
+            raise KeyError(f"Agents not found: {missing}")
+        raw = await self.workflow_engine.run_broadcast_async(
+            agents=agents,
+            task=task,
+            timeout_seconds=timeout_seconds,
+            max_parallel=max_parallel,
+        )
         return [
             {"agent": name, "result": res}
             for name, res in zip(agent_names, raw)
@@ -896,6 +932,12 @@ class AetherKernel:
         return "\n".join(sorted(pkgs)) + "\n"
 
     def export_agent(self, name: str) -> dict:
+        exporter = getattr(self, "exporter", None)
+        if exporter is None:
+            return self._export_agent_impl(name)
+        return exporter.export_agent(name)
+
+    def _export_agent_impl(self, name: str) -> dict:
         """
         Export a self-contained runnable folder for the named agent under
         exports/<name>/.  Returns dict with 'output_dir', 'files', 'error'.
@@ -1302,11 +1344,16 @@ class AetherKernel:
             "</body>\n"
             "</html>\n"
         )
+        try:
+            rendered_index = self.template_registry.render(
+                "agent_index.html.tpl",
+                {"agent_name": name, "agent_role": agent.role},
+            )
+        except Exception:
+            rendered_index = _html_tpl.replace("__AGENT_NAME__", name).replace("__AGENT_ROLE__", agent.role)
+
         index_html = export_dir / "index.html"
-        index_html.write_text(
-            _html_tpl.replace("__AGENT_NAME__", name).replace("__AGENT_ROLE__", agent.role),
-            encoding="utf-8",
-        )
+        index_html.write_text(rendered_index, encoding="utf-8")
         files_written.append("index.html")
 
         # ── 9. server.py — FastAPI "black box" server (Method 1) ─────────
@@ -2065,6 +2112,12 @@ class AetherKernel:
         return {"output_dir": str(export_dir), "files": files_written, "error": None}
 
     def export_system(self, system_name: str, agent_names: list[str]) -> dict:
+        exporter = getattr(self, "exporter", None)
+        if exporter is None:
+            return self._export_system_impl(system_name, agent_names)
+        return exporter.export_system(system_name, agent_names)
+
+    def _export_system_impl(self, system_name: str, agent_names: list[str]) -> dict:
         """
         Export multiple agents as one self-contained AI System under
         exports/<system_name>/  with a shared launcher and per-agent subfolders.
@@ -2419,11 +2472,27 @@ class AetherKernel:
         self.memory.append(key="chat_history", value={"role": "assistant", "content": response})
         return response
 
+    def self_improve_once(self, eval_cases: list[dict[str, Any]]) -> dict[str, Any]:
+        """Run one eval pass and return clustered failures with recommendations."""
+
+        def _run_prompt(prompt: str) -> str:
+            return self.ai_adapter.chat(messages=[{"role": "user", "content": prompt}])
+
+        result = self.self_improver.run_once(eval_cases, run_fn=_run_prompt)
+        self.memory.save(key="self_improve:last_run", value=result)
+        return result
+
     # ------------------------------------------------------------------
     # Application builder
     # ------------------------------------------------------------------
 
     def build_application(self, app_name: str, progress=None) -> dict:
+        compiler = getattr(self, "compiler", None)
+        if compiler is None:
+            return self._build_application_impl(app_name, progress=progress)
+        return self.compiler.build_application(app_name, progress=progress)
+
+    def _build_application_impl(self, app_name: str, progress=None) -> dict:
         """
         Ask the AI to generate a complete application, parse the response
         into individual files, write them to agent_output/<app_name>/,
@@ -2439,17 +2508,23 @@ class AetherKernel:
 
         logger.info("Building application: %s", app_name)
 
-        prompt = (
-            f"You are an expert software engineer.\n"
-            f"Generate a complete, working '{app_name}' application.\n"
-            f"Output EVERY file using EXACTLY this format — no extra commentary outside the blocks:\n\n"
-            f"=== FILE: <relative/path/filename.ext> ===\n"
-            f"<full file content here>\n"
-            f"=== END FILE ===\n\n"
-            f"Include: all source files, a requirements.txt (if Python), "
-            f"a README.md explaining how to run it, and any config files needed.\n"
-            f"Make the code complete and runnable — no placeholders."
-        )
+        try:
+            prompt = self.template_registry.render(
+                "build_application_prompt.txt.tpl",
+                {"app_name": app_name},
+            )
+        except Exception:
+            prompt = (
+                f"You are an expert software engineer.\n"
+                f"Generate a complete, working '{app_name}' application.\n"
+                f"Output EVERY file using EXACTLY this format — no extra commentary outside the blocks:\n\n"
+                f"=== FILE: <relative/path/filename.ext> ===\n"
+                f"<full file content here>\n"
+                f"=== END FILE ===\n\n"
+                f"Include: all source files, a requirements.txt (if Python), "
+                f"a README.md explaining how to run it, and any config files needed.\n"
+                f"Make the code complete and runnable — no placeholders."
+            )
 
         messages = [{"role": "user", "content": prompt}]
         raw = self.ai_adapter.chat(messages=messages)
