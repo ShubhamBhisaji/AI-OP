@@ -1,6 +1,6 @@
-﻿@echo off
+@echo off
 :: ================================================================
-:: Build  AetheerAI — An AI Master!!  --  Standalone Windows .exe
+:: Build  AetheerAI -- An AI Master!!  --  Standalone Windows .exe
 :: ================================================================
 :: Output:  dist\AetheerAI_Master.exe
 ::
@@ -13,13 +13,13 @@
 :: Requirements: Python 3.10+ on PATH
 :: First run takes 2-5 minutes (PyInstaller compiles everything)
 :: ================================================================
-title Build  AetheerAI — An AI Master!!
+title Build AetheerAI Master EXE
 color 0B
 cd /d "%~dp0"
 
 echo.
 echo  ============================================================
-echo    AetheerAI — An AI Master!!  --  Build Launcher
+echo    AetheerAI -- An AI Master!!  --  Build Launcher
 echo  ============================================================
 echo.
 echo  Installing / updating PyInstaller and Streamlit...
@@ -28,7 +28,7 @@ echo.
 echo  Building AetheerAI_Master.exe  (please wait)...
 echo.
 
-:: Auto-detect Streamlit package location (works with venv and global installs)
+:: Auto-detect Streamlit package location
 for /f "delims=" %%i in ('python -c "import streamlit, os; print(os.path.dirname(streamlit.__file__))"') do set STREAMLIT_DIR=%%i
 echo  Streamlit found at: %STREAMLIT_DIR%
 echo.
@@ -51,7 +51,6 @@ pyinstaller ^
     --add-data "security;security" ^
     --add-data "skills;skills" ^
     --add-data "tools;tools" ^
-    --add-data "utils;utils" ^
     --add-data "workspace;workspace" ^
     --add-data "agent_output;agent_output" ^
     --add-data "memory\memory_store.json;memory" ^
@@ -80,15 +79,10 @@ pyinstaller ^
     --collect-submodules streamlit ^
     launcher.py
 
-:: NOTE: Enterprise tools require optional packages installed in the build
-:: environment BEFORE running this script.  Install whichever you need:
-::
+:: NOTE: Enterprise tools require optional packages installed BEFORE building.
 ::   pip install PyGithub sqlalchemy playwright beautifulsoup4 markdownify
 ::   pip install boto3 google-cloud-storage kubernetes
 ::   pip install pylint black pypdf2 pillow
-::
-:: If a package is not installed, the tool that needs it will show an
-:: "install required" message at runtime rather than crashing the exe.
 
 if %errorlevel%==0 (
     echo.
@@ -98,21 +92,20 @@ if %errorlevel%==0 (
     echo   Your executable is at:
     echo     dist\AetheerAI_Master.exe
     echo.
-    echo   IMPORTANT — before running the .exe:
-    echo     Copy your .env file into the same folder as the .exe
-    echo     (the dist\ folder).  It should contain your API key, e.g.:
+    echo   IMPORTANT -- before running the .exe:
+    echo     Copy your .env file into the dist\ folder.
+    echo     It should contain your API key, e.g.:
     echo       GITHUB_TOKEN=ghp_your_token_here
     echo.
     echo   To run:
     echo     Double-click  dist\AetheerAI_Master.exe
-    echo     OR drag it anywhere and run it from there.
     echo.
     echo   TIP: If Windows Defender shows a SmartScreen warning,
     echo        right-click the .exe ^> Properties ^> click Unblock
     echo  ============================================================
 ) else (
     echo.
-    echo  [FAIL]  Build failed — see output above for errors.
+    echo  [FAIL]  Build failed -- see output above for errors.
     echo.
     echo  Common fixes:
     echo    - Make sure you are running from the aether-os\ folder
