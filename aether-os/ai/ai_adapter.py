@@ -20,12 +20,19 @@ import logging
 import os
 from typing import Any
 
-import litellm
-
-litellm.suppress_debug_info = True
-litellm.drop_params = True  # silently ignore params unsupported by a given provider
-
 logger = logging.getLogger(__name__)
+
+
+def _litellm():
+    """Lazy import of litellm — avoids import-time failure when not installed."""
+    try:
+        import litellm as _ll  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError(
+            "litellm is required to make AI calls.\n"
+            "Install it with: pip install litellm"
+        ) from exc
+    return _ll
 
 SUPPORTED_PROVIDERS = ("github", "openai", "claude", "gemini", "ollama", "huggingface")
 
@@ -132,6 +139,9 @@ class AIAdapter:
 
     def _call(self, model: str, messages: list[dict], **kwargs) -> str:
         """Route a completion request through litellm and capture token usage."""
+        litellm = _litellm()
+        litellm.suppress_debug_info = True
+        litellm.drop_params = True
         response = litellm.completion(model=model, messages=messages, **kwargs)
         usage = getattr(response, "usage", None)
         if usage:
@@ -173,6 +183,7 @@ class AIAdapter:
                 "Get a free token at https://github.com/settings/tokens\n"
                 "Then add GITHUB_TOKEN=<token> to your .env file."
             )
+        litellm = _litellm()
         # Walk the fallback list; on unknown-model errors try the next candidate.
         tried: set[str] = set()
         for model_name in dict.fromkeys([self.model] + self._GITHUB_FALLBACK_MODELS):

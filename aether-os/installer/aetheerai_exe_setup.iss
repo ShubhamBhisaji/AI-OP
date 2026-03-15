@@ -62,8 +62,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 ; ---------------------------------------------------------------------------
 [Tasks]
-Name: "desktopicon"; Description: "Create a &Desktop shortcut"; \
+Name: "desktopicon";   Description: "Create a &Desktop shortcut"; \
     GroupDescription: "Additional icons:"; Flags: checked
+Name: "installreqs";  Description: "Install Python requirements (litellm, streamlit, etc.)"; \
+    GroupDescription: "Dependencies:"; Flags: checked
 
 ; ---------------------------------------------------------------------------
 [Files]
@@ -73,6 +75,9 @@ Source: "..\dist\AetheerAI_Master.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; ── Environment config ───────────────────────────────────────────────
 ; .env.example is bundled so users have a template to fill in
 Source: "..\\.env.example"; DestDir: "{app}"; Flags: ignoreversion
+
+; ── Python requirements list (used by optional install step) ─────────
+Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 ; ---------------------------------------------------------------------------
 [Icons]
@@ -103,18 +108,44 @@ Filename: "{app}\{#MyAppExe}"; \
 //  Pascal script — post-install steps
 // ========================================================================
 
+// Returns True if python.exe is findable on PATH
+function IsPythonAvailable(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := Exec(ExpandConstant('{cmd}'), '/c python --version',
+                 '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
+            and (ResultCode = 0);
+end;
+
+// Warn early if Python is missing but don't block the install
+procedure InitializeWizard();
+begin
+  if IsTaskSelected('installreqs') and not IsPythonAvailable() then
+    MsgBox(
+      'Python 3.10 or newer was not detected on this system.'     + #13#10#13#10 +
+      'The "Install Python requirements" option is selected, but' + #13#10 +
+      'pip requires Python to be installed first.'                 + #13#10#13#10 +
+      'Get Python from:  https://www.python.org/downloads/'       + #13#10 +
+      'IMPORTANT: check "Add Python to PATH" during install.'     + #13#10#13#10 +
+      'You can uncheck the requirements option and continue, or'  + #13#10 +
+      'install Python first, then re-run this installer.',
+      mbInformation, MB_OK
+    );
+end;
+
 // Copy .env.example -> .env on first install only
 procedure CopyEnvIfMissing();
 var
   EnvFile, ExampleFile: String;
 begin
-  EnvFile    := ExpandConstant('{app}\.env');
+  EnvFile     := ExpandConstant('{app}\.env');
   ExampleFile := ExpandConstant('{app}\.env.example');
   if (not FileExists(EnvFile)) and FileExists(ExampleFile) then
     FileCopy(ExampleFile, EnvFile, False);
 end;
 
-// Create the agent_output and workspace subdirectories the app expects
+// Create the runtime subdirectories the app expects
 procedure CreateAppDirs();
 begin
   CreateDir(ExpandConstant('{app}\agent_output'));
@@ -124,14 +155,62 @@ begin
   CreateDir(ExpandConstant('{app}\workspace'));
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+// Install Python requirements via pip
+procedure InstallRequirements(AppDir: String);
+var
+  ResultCode: Integer;
+  Ok: Boolean;
 begin
-  if CurStep <> ssPostInstall then Exit;
-  CopyEnvIfMissing();
-  CreateAppDirs();
+  WizardForm.StatusLabel.Caption := 'Installing Python requirements (this may take a few minutes)...';
+  Ok := Exec(
+    ExpandConstant('{cmd}'),
+    '/c pip install -r "' + AppDir + '\requirements.txt" --quiet',
+    AppDir, SW_HIDE, ewWaitUntilTerminated, ResultCode
+  ) and (ResultCode = 0);
+
+  if Ok then
+    MsgBox(
+      'Python requirements installed successfully!' + #13#10#13#10 +
+      'All dependencies from requirements.txt have been installed.',
+      mbInformation, MB_OK
+    )
+  else
+    MsgBox(
+      'Requirements installation failed (exit code: ' + IntToStr(ResultCode) + ').' + #13#10#13#10 +
+      'You can install them manually by running:'                                    + #13#10 +
+      '  pip install -r "' + AppDir + '\requirements.txt"'                         + #13#10#13#10 +
+      'Check your internet connection and that Python is on your PATH.',
+      mbError, MB_OK
+    );
 end;
 
-// After install — show the user where to put their API key
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  AppDir: String;
+begin
+  if CurStep <> ssPostInstall then Exit;
+
+  AppDir := ExpandConstant('{app}');
+
+  CopyEnvIfMissing();
+  CreateAppDirs();
+
+  // Install requirements only if the user kept the checkbox ticked
+  if IsTaskSelected('installreqs') then
+  begin
+    if IsPythonAvailable() then
+      InstallRequirements(AppDir)
+    else
+      MsgBox(
+        'Skipping requirements installation — Python was not found on PATH.' + #13#10#13#10 +
+        'Install Python 3.10+ from https://www.python.org/downloads/'        + #13#10 +
+        'then run:  pip install -r "' + AppDir + '\requirements.txt"',
+        mbExclamation, MB_OK
+      );
+  end;
+end;
+
+// After install — remind the user to add their API key
 procedure DeinitializeSetup();
 var
   EnvPath: String;

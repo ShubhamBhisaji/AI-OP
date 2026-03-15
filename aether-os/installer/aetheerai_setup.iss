@@ -65,8 +65,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 ; ---------------------------------------------------------------------------
 [Tasks]
-Name: "desktopicon"; Description: "Create a &Desktop shortcut"; \
+Name: "desktopicon";   Description: "Create a &Desktop shortcut"; \
     GroupDescription: "Additional icons:"; Flags: checked
+Name: "installreqs";  Description: "Install Python requirements (litellm, streamlit, etc.)"; \
+    GroupDescription: "Dependencies:"; Flags: checked
 
 ; ---------------------------------------------------------------------------
 ;  FILES — sources are relative to the .iss file location (installer\)
@@ -156,7 +158,7 @@ begin
       '  https://www.python.org/downloads/'                           + #13#10#13#10 +
       'IMPORTANT: Tick "Add Python to PATH" during installation.'     + #13#10#13#10 +
       'You can finish this installer now, but AetheerAI will not run' + #13#10 +
-      'until Python is installed.',
+      'until Python is installed and requirements are installed.',
       mbInformation, MB_OK
     );
 end;
@@ -225,7 +227,14 @@ begin
   WizardForm.StatusLabel.Caption := 'Writing .env configuration file...';
   CreateEnvIfMissing(AppDir);
 
-  // 3. Create virtual environment
+  // 3. Skip requirements if user unchecked the option
+  if not IsTaskSelected('installreqs') then
+  begin
+    WizardForm.StatusLabel.Caption := 'Skipping requirements installation (unchecked).';
+    Exit;
+  end;
+
+  // 4. Create virtual environment
   WizardForm.StatusLabel.Caption := 'Creating Python virtual environment...';
   Ok := RunCmd(
     ExpandConstant('{cmd}'),
@@ -235,30 +244,39 @@ begin
   );
   if not Ok then begin
     MsgBox(
-      'Failed to create the Python virtual environment.' + #13#10 +
-      'Ensure Python 3.10+ is installed and on your PATH.',
+      'Failed to create the Python virtual environment.'          + #13#10 +
+      'Ensure Python 3.10+ is installed and on your PATH.'        + #13#10#13#10 +
+      'You can create it manually later by running:'              + #13#10 +
+      '  python -m venv "' + AppDir + '\venv"'                  + #13#10 +
+      '  "' + VenvPip + '" install -r requirements.txt',
       mbError, MB_OK
     );
     Exit;
   end;
 
-  // 4. Upgrade pip
+  // 5. Upgrade pip
   WizardForm.StatusLabel.Caption := 'Upgrading pip...';
   RunCmd(VenvPip, 'install --upgrade pip --quiet', AppDir, 'Upgrading pip...');
 
-  // 5. Install requirements  
-  WizardForm.StatusLabel.Caption := 'Installing dependencies (this may take a few minutes)...';
+  // 6. Install requirements
+  WizardForm.StatusLabel.Caption := 'Installing Python requirements (this may take a few minutes)...';
   Ok := RunCmd(
     VenvPip,
-    'install -r "' + AppDir + '\requirements.txt"',
+    'install -r "' + AppDir + '\requirements.txt" --quiet',
     AppDir,
-    'Installing dependencies...'
+    'Installing Python requirements...'
   );
-  if not Ok then
+  if Ok then
     MsgBox(
-      'Dependency installation failed.' + #13#10 +
-      'Check your internet connection, then re-run the installer' + #13#10 +
-      'or run:  ' + VenvPip + ' install -r requirements.txt',
+      'Python requirements installed successfully!'               + #13#10#13#10 +
+      'All dependencies from requirements.txt have been installed into the venv.',
+      mbInformation, MB_OK
+    )
+  else
+    MsgBox(
+      'Dependency installation failed.'                          + #13#10 +
+      'Check your internet connection, then run manually:'       + #13#10 +
+      '  "' + VenvPip + '" install -r "' + AppDir + '\requirements.txt"',
       mbError, MB_OK
     );
 end;
