@@ -1,0 +1,2 @@
+{"ts": "2026-03-15T05:19:10.070035+00:00", "event": "tool_call", "agent": "tester", "tool": "plain_tool", "decision": "allow", "reason": "Allowed by default policy for registered tool and level."}
+{"ts": "2026-03-15T05:19:10.081541+00:00", "event": "tool_call", "agent": "agent-x", "tool": "github_tool", "decision": "allow", "reason": "Allowed by default policy for registered tool and level."}

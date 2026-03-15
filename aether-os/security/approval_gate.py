@@ -114,17 +114,22 @@ class ApprovalGate:
         tool_name: str,
         agent_name: str,
         args_summary: str,
+        force: bool = False,
     ) -> None:
         """
         Ask the operator whether to allow *tool_name* to run.
 
         Raises ApprovalDenied if rejected; returns normally if approved.
+        Set force=True to gate a tool that is not in the built-in guarded sets
+        (used by the @require_approval decorator on arbitrary functions).
         """
         tier = (
             "DESTRUCTIVE"
             if tool_name in DESTRUCTIVE_TOOLS
             else "HIGH-RISK"
             if tool_name in HIGH_RISK_TOOLS
+            else "CUSTOM"
+            if force
             else None
         )
         if tier is None:
@@ -214,6 +219,7 @@ def require_approval(fn: Callable[..., Any]) -> Callable[..., Any]:
             tool_name=fn.__name__,
             agent_name=agent_name,
             args_summary=args_summary,
+            force=True,
         )
         return fn(*args, **kwargs)
 

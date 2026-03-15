@@ -81,6 +81,8 @@ class AetherKernel:
     def _safe_fs_component(raw: str, fallback: str = "item") -> str:
         """Return a filesystem-safe single path component from untrusted input."""
         cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", (raw or "").strip())
+        # Collapse any remaining dotdot sequences (e.g. a_.._.._b → a___b)
+        cleaned = re.sub(r"\.{2,}", "_", cleaned)
         cleaned = cleaned.strip("._-")
         return cleaned or fallback
 
@@ -1733,7 +1735,7 @@ class AetherKernel:
                 echo "  -----------------------------------------------------------"
                 echo "  macOS CODE SIGNING  (removes Gatekeeper 'cannot be opened')"
                 echo "  -----------------------------------------------------------"
-                echo "  1. Enrol in Apple Developer Program (\$99/yr)"
+                echo "  1. Enrol in Apple Developer Program (\\$99/yr)"
                 echo "     https://developer.apple.com/programs/"
                 echo ""
                 echo "  2. Sign the binary:"
@@ -1884,11 +1886,11 @@ class AetherKernel:
                 echo  ============================================================
                 echo   ^[OK^]  Build complete!
                 echo.
-                echo   Your UI executable is in the  dist\  folder:
-                echo     dist\{safe_ui_name}.exe
+                echo   Your UI executable is in the  dist\\  folder:
+                echo     dist\\{safe_ui_name}.exe
                 echo.
                 echo   HOW TO USE:
-                echo     1. Copy dist\{safe_ui_name}.exe to your client / tester
+                echo     1. Copy dist\\{safe_ui_name}.exe to your client / tester
                 echo     2. They must place a .env file in the SAME folder
                 echo        containing their AI provider API key
                 echo        (e.g.  GITHUB_TOKEN=ghp_...)
