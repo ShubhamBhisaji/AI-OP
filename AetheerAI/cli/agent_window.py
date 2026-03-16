@@ -52,8 +52,15 @@ _FILE_BLOCK = re.compile(
 def _parse_and_write_files(response: str, base_dir: Path) -> list[str]:
     """Extract === FILE: path === ... === END FILE === blocks and write them."""
     written = []
+    from pathlib import PurePosixPath
     for match in _FILE_BLOCK.finditer(response):
-        rel = match.group(1).strip().replace("\\", "/").lstrip("/")
+        raw_rel = match.group(1).strip().replace("\\", "/")
+        # Strip path traversal sequences — same hardening as _build_application_impl
+        posix_rel = PurePosixPath(raw_rel)
+        rel_parts = [p for p in posix_rel.parts if p not in ("", ".", "..")]
+        rel = "/".join(rel_parts)
+        if not rel:
+            continue  # skip blank or traversal-only paths
         content = match.group(2)
         dest = base_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)

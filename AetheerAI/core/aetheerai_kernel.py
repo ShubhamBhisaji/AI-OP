@@ -2563,16 +2563,16 @@ class AetheerAiKernel:
         )
         matches = pattern.findall(raw)
 
+        from pathlib import PurePosixPath
+
         safe_app = self._safe_fs_component(app_name, fallback="application")
-        # Write to workspace-level projects/ folder (one level above AetheerAI/ root)
-        output_dir = str(Path(__file__).parent.parent.parent / "projects" / safe_app)
+        # Files are written to output/agent_output/<app>/ via file_writer's default sandbox
+        output_dir = str(Path(__file__).parent.parent / "output" / "agent_output" / safe_app)
         files_written = []
 
         if matches:
             total = len(matches)
             for i, (rel_path, content) in enumerate(matches, start=1):
-                from pathlib import PurePosixPath
-
                 raw_rel = rel_path.strip().replace("\\", "/")
                 posix_rel = PurePosixPath(raw_rel)
                 rel_parts = [p for p in posix_rel.parts if p not in ("", ".", "..")]

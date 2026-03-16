@@ -26,3 +26,9 @@ Thumbs.db
 .env
 *.key
 *.pem
+
+# Runtime / generated data
+logs/
+*.log
+AetheerAI/memory/chroma_store/
+*.sqlite3

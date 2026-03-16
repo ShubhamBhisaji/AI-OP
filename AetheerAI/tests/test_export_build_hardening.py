@@ -66,7 +66,8 @@ class ExportBuildHardeningTests(unittest.TestCase):
         for name in written:
             normalized = name.replace("\\", "/")
             self.assertNotIn("..", normalized)
-            self.assertTrue(normalized.startswith("my_app/"))
+            # _safe_fs_component converts spaces to hyphens (kebab-case)
+            self.assertTrue(normalized.startswith("my-app/"))
 
     def test_no_hardcoded_gpt41_fallback_in_export_runtime_templates(self):
         src = (ROOT / "core" / "aetheerai_kernel.py").read_text(encoding="utf-8")

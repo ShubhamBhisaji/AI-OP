@@ -1,4 +1,4 @@
-﻿"""
+"""
 app.py — AetheerAI — An AI Master!! Dashboard (Streamlit GUI)
 
 Run with:  python -m streamlit run app.py
@@ -22,76 +22,38 @@ from core.workflow_engine import WorkflowFeedback, HITLAction
 
 # ── Page config — must be first Streamlit call ───────────────────────────
 st.set_page_config(
-    page_title="AetheerAI — An AI Master!!",
-    page_icon="⚡",
+    page_title="AetheerAI Workspace",
+    page_icon="✨",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS — website-style design ────────────────────────────────────
+# ── Custom CSS — premium workspace design ────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-* { font-family: 'Inter', sans-serif !important; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
 
 /* ── Hide Streamlit chrome ─────────────────────────────────────────── */
 #MainMenu, footer { visibility: hidden; }
+header { visibility: hidden; }
 [data-testid="stHeader"], [data-testid="stToolbar"] { display: none !important; }
 div[data-testid="stStatusWidget"] { display: none; }
 
-/* ── Fixed top navigation bar ─────────────────────────────────────── */
-.top-navbar {
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    height: 56px;
-    z-index: 9999;
-    background: rgba(248,250,252,0.92);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid #e2e8f0;
-    display: flex;
-    align-items: center;
-    padding: 0 28px;
-    gap: 14px;
-}
-.top-navbar-logo { font-size: 22px; line-height: 1; }
-.top-navbar-title {
-    font-size: 14px; font-weight: 700;
-    color: #0f172a; letter-spacing: -0.2px;
-}
-.top-navbar-sub {
-    font-size: 11px; color: #94a3b8; font-weight: 500;
-    border-left: 1px solid #e2e8f0; padding-left: 14px; margin-left: 4px;
-}
-.top-navbar-badge {
-    margin-left: auto;
-    font-size: 11px; color: #059669;
-    background: rgba(16,185,129,0.08);
-    border: 1px solid rgba(16,185,129,0.2);
-    padding: 4px 12px; border-radius: 20px; font-weight: 600;
-    display: flex; align-items: center; gap: 6px;
-}
-.top-navbar-badge::before {
-    content: '';
-    width: 7px; height: 7px; border-radius: 50%;
-    background: #10b981;
-    box-shadow: 0 0 8px rgba(16,185,129,0.4);
-    animation: pulse-dot 2s infinite;
-}
-@keyframes pulse-dot {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.4; }
+/* ── Main app background ───────────────────────────────────────────── */
+.stApp {
+    background-color: #FCFCFD;
 }
 
-/* ── Push content below fixed header ─────────────────────────────── */
-[data-testid="stAppViewContainer"] { padding-top: 56px !important; background: #f8fafc; }
-[data-testid="stMain"] { background: #f8fafc; }
+/* ── Sidebar ─────────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    top: 56px !important;
-    height: calc(100vh - 56px) !important;
-    background: #ffffff !important;
-    border-right: 1px solid #e2e8f0 !important;
-    box-shadow: 4px 0 24px rgba(0,0,0,0.02) !important;
+    background-color: rgba(245, 245, 247, 0.8) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-right: 1px solid rgba(226, 232, 240, 0.6) !important;
 }
 [data-testid="stSidebarContent"] { padding: 0 !important; }
 
@@ -133,12 +95,12 @@ div[data-testid="stStatusWidget"] { display: none; }
     margin: 1px 0;
 }
 [data-testid="stSidebar"] .stRadio label:hover {
-    background: #f8fafc !important;
+    background: rgba(255,255,255,0.7) !important;
     color: #0f172a !important;
 }
 [data-testid="stSidebar"] .stRadio label[data-selected="true"],
 [data-testid="stSidebar"] .stRadio label[aria-checked="true"] {
-    background: #eff6ff !important;
+    background: rgba(255,255,255,0.9) !important;
     color: #1d4ed8 !important;
     font-weight: 600 !important;
 }
@@ -147,7 +109,7 @@ div[data-testid="stStatusWidget"] { display: none; }
 .agent-chip {
     display: flex; align-items: center; gap: 8px;
     padding: 7px 14px; border-radius: 6px;
-    background: #f8fafc; border: 1px solid #e2e8f0;
+    background: rgba(255,255,255,0.6); border: 1px solid rgba(226,232,240,0.7);
     margin: 2px 0; font-size: 12px; color: #64748b;
 }
 
@@ -156,6 +118,25 @@ div[data-testid="stStatusWidget"] { display: none; }
     padding-top: 1.5rem !important;
     padding-bottom: 3rem !important;
     max-width: 1100px;
+}
+
+/* ── Premium heading classes ──────────────────────────────────────── */
+.premium-title {
+    text-align: center;
+    color: #0f172a;
+    font-weight: 900;
+    font-size: 2.5rem;
+    letter-spacing: -0.025em;
+    margin-top: 2rem;
+    margin-bottom: 0.5rem;
+    line-height: 1.15;
+}
+.premium-subtitle {
+    text-align: center;
+    color: #64748b;
+    font-weight: 500;
+    font-size: 1rem;
+    margin-bottom: 3rem;
 }
 
 /* ── Typography ───────────────────────────────────────────────────── */
@@ -180,7 +161,7 @@ p, li { color: #64748b; }
     transform: translateY(-1px);
 }
 .stButton > button[kind="secondary"] {
-    background: #f8fafc !important; border: 1px solid #e2e8f0 !important; color: #475569 !important;
+    background: rgba(255,255,255,0.8) !important; border: 1px solid #e2e8f0 !important; color: #475569 !important;
 }
 .stButton > button[kind="secondary"]:hover {
     border-color: #3b82f6 !important; color: #2563eb !important; background: #eff6ff !important;
@@ -305,23 +286,6 @@ if os.path.exists(_icon_path):
             unsafe_allow_html=True,
         )
 
-# ── Fixed top navbar HTML ─────────────────────────────────────────────────
-st.markdown(f"""
-<div class="top-navbar">
-    <div style="width:30px;height:30px;border-radius:8px;
-                background:#2563eb;
-                display:flex;align-items:center;justify-content:center;
-                box-shadow:0 2px 8px rgba(37,99,235,0.3);flex-shrink:0;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-        </svg>
-    </div>
-    <span class="top-navbar-title">AetheerAI</span>
-    <span class="top-navbar-sub">by <span style="color:#2563eb;font-weight:700;">Tecbunny</span></span>
-    <span class="top-navbar-badge">System Online</span>
-</div>
-""", unsafe_allow_html=True)
-
 
 # ── Boot OS kernel — one isolated instance per browser session ───────────
 # Bug 4 fix: @st.cache_resource is a GLOBAL shared cache (all browser tabs
@@ -371,28 +335,12 @@ def _run_agent_sync(agent_obj, task: str) -> str:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────
 with st.sidebar:
-    # ── Brand / Logo block ────────────────────────────────────────────
-    st.markdown(f"""
-    <div class="sidebar-brand">
-        <div style="display:flex;align-items:center;gap:12px;">
-            <div style="width:34px;height:34px;border-radius:9px;
-                        background:#2563eb;
-                        display:flex;align-items:center;justify-content:center;
-                        flex-shrink:0;box-shadow:0 4px 12px rgba(37,99,235,0.25);">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                </svg>
-            </div>
-            <div>
-                <div class="sidebar-brand-title">AetheerAI</div>
-                <div class="sidebar-brand-sub">Workspace · Tecbunny</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # ── Brand block ───────────────────────────────────────────────────
+    st.markdown("### ✨ AetheerAI\n**WORKSPACE**")
+    st.markdown("---")
 
     # ── Navigation ────────────────────────────────────────────────────
-    st.markdown('<div class="nav-section-label">Navigation</div>', unsafe_allow_html=True)
+    st.markdown('<p style="font-size: 0.75rem; color: #94a3b8; font-weight: 700; letter-spacing: 0.1em;">MAIN MENU</p>', unsafe_allow_html=True)
 
     page = st.radio("nav", [
         "💬 Task Executor",
@@ -402,19 +350,22 @@ with st.sidebar:
         "⚙️ Settings & Export",
     ], label_visibility="collapsed")
 
+    st.markdown("---")
+
     # ── Registered Agents ─────────────────────────────────────────────
-    st.markdown('<div class="nav-section-label" style="margin-top:10px;">Agents</div>', unsafe_allow_html=True)
+    st.markdown('<p style="font-size: 0.75rem; color: #94a3b8; font-weight: 700; letter-spacing: 0.1em;">ACTIVE AGENTS</p>', unsafe_allow_html=True)
     names = _agent_names()
     if names:
         for n in names:
             st.markdown(f'<div class="agent-chip">🤖 <span>{n}</span></div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div style="font-size:11.5px;color:#2d4a6a;padding:4px 18px 6px;">No agents — use Agent Factory</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:11.5px;color:#94a3b8;padding:4px 2px 6px;">No agents — use Agent Factory</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
 
     # ── Provider info ─────────────────────────────────────────────────
-    st.divider()
     st.markdown(
-        f'<div style="font-size:11px;color:#94a3b8;padding:2px 4px 6px;">'
+        f'<div style="font-size:11px;color:#94a3b8;padding:2px 0 6px;">'
         f'AI &nbsp;<span style="color:#2563eb;font-weight:600;">{kernel.ai_adapter.provider}</span>'
         f' &nbsp;/&nbsp; <span style="color:#7c3aed;font-weight:600;">{kernel.ai_adapter.model}</span></div>',
         unsafe_allow_html=True,
@@ -427,15 +378,13 @@ with st.sidebar:
         import time as _t; _t.sleep(1)
         import os as _os; _os._exit(0)
 
-    # ── Bottom user strip ─────────────────────────────────────────────
+    # ── Bottom user profile strip ─────────────────────────────────────
     st.markdown("""
-    <div style="display:flex;align-items:center;gap:10px;padding:14px 4px 6px;border-top:1px solid #f1f5f9;margin-top:4px;">
-        <div style="width:32px;height:32px;border-radius:50%;background:#e2e8f0;
-                    display:flex;align-items:center;justify-content:center;
-                    font-size:11px;font-weight:700;color:#64748b;flex-shrink:0;">TB</div>
-        <div style="flex:1;min-width:0;">
-            <div style="font-size:13px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Tecbunny</div>
-            <div style="font-size:11px;color:#94a3b8;">Pro Plan</div>
+    <div style='display: flex; align-items: center; gap: 10px; padding: 10px; background: white; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.05); margin-top: 8px;'>
+        <div style='width: 32px; height: 32px; border-radius: 50%; background: #f1f5f9; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #334155; font-size: 12px;'>TB</div>
+        <div>
+            <div style='font-size: 14px; font-weight: 700; color: #0f172a;'>Tecbunny</div>
+            <div style='font-size: 10px; font-weight: 600; color: #10b981; text-transform: uppercase;'>🟢 Pro Tier</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -450,22 +399,8 @@ if page == "💬 Task Executor":
     _chat_is_empty = not bool(st.session_state.get(history_key_check))
 
     if _chat_is_empty:
-        st.markdown("""
-        <div style="text-align:center;padding:32px 0 24px;">
-            <div style="display:inline-flex;align-items:center;justify-content:center;
-                        width:52px;height:52px;border-radius:16px;
-                        background:#ffffff;border:1px solid #e2e8f0;
-                        box-shadow:0 2px 8px rgba(0,0,0,0.05);margin-bottom:16px;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                    <path d="M2 17l10 5 10-5"/>
-                    <path d="M2 12l10 5 10-5"/>
-                </svg>
-            </div>
-            <h1 style="font-size:30px;font-weight:800;color:#0f172a;margin:0 0 8px;letter-spacing:-0.5px;">How can I help you?</h1>
-            <p style="color:#64748b;font-size:15px;margin:0;">Assign tasks to your AI agents in real-time.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("<div class='premium-title'>What's next on the agenda?</div>", unsafe_allow_html=True)
+        st.markdown("<div class='premium-subtitle'>Deploy autonomous agents to execute complex workflows, generate assets, or analyze data in real-time.</div>", unsafe_allow_html=True)
 
     names = _agent_names()
     if not names:
@@ -510,15 +445,16 @@ if page == "💬 Task Executor":
 
     # Show previous messages
     for msg in st.session_state[history_key]:
-        with st.chat_message(msg["role"]):
+        _av = "✨" if msg["role"] == "assistant" else "👤"
+        with st.chat_message(msg["role"], avatar=_av):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input(f"Message {selected_agent}..."):
+    if prompt := st.chat_input(f"Assign a task to {selected_agent}..."):
         st.session_state[history_key].append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar="👤"):
             st.markdown(prompt)
 
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="✨"):
             with st.spinner(f"⚡ {selected_agent} is working..."):
                 try:
                     agent_obj = kernel.registry.get(selected_agent)
