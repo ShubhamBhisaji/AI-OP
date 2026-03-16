@@ -1,4 +1,4 @@
-# Autonomous AI Factory - Implementation PR Plan
+﻿# Autonomous AI Factory - Implementation PR Plan
 
 ## Objective
 Transition AetheerAI from a powerful toolkit into an autonomous, self-improving AI factory with strong governance, reliability, and measurable quality gains.
@@ -30,10 +30,10 @@ Use an incremental 6-PR sequence with strict acceptance gates per PR.
 - Add append-only audit log for every guarded action.
 
 ### Files/Modules (target)
-- `aether-os/security/policy_engine.py` (new)
-- `aether-os/security/approval_gate.py` (extend)
-- `aether-os/tools/tool_manager.py` (wire policy + ticket validation)
-- `aether-os/memory/audit_log.jsonl` (new runtime artifact)
+- `AetheerAI/security/policy_engine.py` (new)
+- `AetheerAI/security/approval_gate.py` (extend)
+- `AetheerAI/tools/tool_manager.py` (wire policy + ticket validation)
+- `AetheerAI/memory/audit_log.jsonl` (new runtime artifact)
 
 ### Acceptance Criteria
 - All guarded tool calls require policy allow + valid approval context.
@@ -55,9 +55,9 @@ Use an incremental 6-PR sequence with strict acceptance gates per PR.
 - Add bounded concurrency controls and timeout/cancellation semantics.
 
 ### Files/Modules (target)
-- `aether-os/security/approval_gate.py`
-- `aether-os/core/workflow_engine.py`
-- `aether-os/core/aether_kernel.py`
+- `AetheerAI/security/approval_gate.py`
+- `AetheerAI/core/workflow_engine.py`
+- `AetheerAI/core/aetheerai_kernel.py`
 
 ### Acceptance Criteria
 - Async pipeline with HITL enabled does not hang event loop.
@@ -78,8 +78,8 @@ Use an incremental 6-PR sequence with strict acceptance gates per PR.
 - Remove provider-incompatible hardcoded model fallbacks.
 
 ### Files/Modules (target)
-- `aether-os/core/aether_kernel.py`
-- `aether-os/main.py`
+- `AetheerAI/core/aetheerai_kernel.py`
+- `AetheerAI/main.py`
 
 ### Acceptance Criteria
 - Inputs like `../../x` never escape approved output roots.
@@ -95,17 +95,17 @@ Use an incremental 6-PR sequence with strict acceptance gates per PR.
 ## PR-4: Extract Exporter/Compiler Service (Kernel Decomposition)
 
 ### Scope
-- Move export/build code generation out of `AetherKernel` into dedicated services.
+- Move export/build code generation out of `AetheerAiKernel` into dedicated services.
 - Introduce interfaces for orchestrator, exporter, compiler.
 - Keep behavior stable while reducing kernel responsibility.
 
 ### Files/Modules (target)
-- `aether-os/core/exporter.py` (new)
-- `aether-os/core/compiler.py` (new)
-- `aether-os/core/aether_kernel.py` (thin coordinator)
+- `AetheerAI/core/exporter.py` (new)
+- `AetheerAI/core/compiler.py` (new)
+- `AetheerAI/core/aetheerai_kernel.py` (thin coordinator)
 
 ### Acceptance Criteria
-- `AetherKernel` no longer owns inline template generation logic.
+- `AetheerAiKernel` no longer owns inline template generation logic.
 - Existing CLI/API commands preserve outputs and signatures.
 - Cyclomatic complexity and file length of kernel reduce materially.
 
@@ -123,9 +123,9 @@ Use an incremental 6-PR sequence with strict acceptance gates per PR.
 - Introduce template compatibility matrix (provider/tooling/runtime).
 
 ### Files/Modules (target)
-- `aether-os/templates/**` (new)
-- `aether-os/core/template_registry.py` (new)
-- `aether-os/core/exporter.py`
+- `AetheerAI/templates/**` (new)
+- `AetheerAI/core/template_registry.py` (new)
+- `AetheerAI/core/exporter.py`
 
 ### Acceptance Criteria
 - No large embedded template strings remain in kernel/service code.
@@ -146,9 +146,9 @@ Use an incremental 6-PR sequence with strict acceptance gates per PR.
 - Add auto-PR generation only when all quality gates pass.
 
 ### Files/Modules (target)
-- `aether-os/evals/benchmark_runner.py` (new)
-- `aether-os/evals/failure_clustering.py` (new)
-- `aether-os/core/self_improve.py` (new)
+- `AetheerAI/evals/benchmark_runner.py` (new)
+- `AetheerAI/evals/failure_clustering.py` (new)
+- `AetheerAI/core/self_improve.py` (new)
 - `.github/workflows/security-hardening-ci.yml` (extend)
 
 ### Acceptance Criteria

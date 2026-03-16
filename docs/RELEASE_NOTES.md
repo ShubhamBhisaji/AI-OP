@@ -1,9 +1,9 @@
-# Release Notes
+﻿# Release Notes
 
 ## vNext (2026-03-14) - Autonomous Factory Baseline
 
 ### Release Summary
-This release promotes Aether OS to a production-oriented Autonomous Factory baseline with policy-governed execution, stronger runtime hardening, service decomposition, and an initial self-improvement loop.
+This release promotes AetheerAI to a production-oriented Autonomous Factory baseline with policy-governed execution, stronger runtime hardening, service decomposition, and an initial self-improvement loop.
 
 ### Breaking Changes
 - Code execution now requires Docker sandbox availability. Host fallback execution was removed for security.
@@ -26,11 +26,11 @@ This release promotes Aether OS to a production-oriented Autonomous Factory base
 - Added ExporterService and CompilerService and delegated public kernel build/export paths.
 - Added TemplateRegistry and externalized initial templates.
 - Added eval and self-improvement primitives:
-  - aether-os/core/eval_runner.py
-  - aether-os/core/failure_clustering.py
-  - aether-os/core/self_improve.py
-  - aether-os/evals/benchmark_runner.py
-  - aether-os/evals/failure_clustering.py
+  - AetheerAI/core/eval_runner.py
+  - AetheerAI/core/failure_clustering.py
+  - AetheerAI/core/self_improve.py
+  - AetheerAI/evals/benchmark_runner.py
+  - AetheerAI/evals/failure_clustering.py
 
 ### Migration Steps
 1. Ensure Docker Desktop is installed and running on hosts that use code_runner.
