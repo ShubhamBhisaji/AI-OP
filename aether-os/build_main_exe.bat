@@ -25,6 +25,12 @@ echo.
 echo  Installing / updating PyInstaller and Streamlit...
 pip install pyinstaller streamlit --quiet
 echo.
+
+:: Kill any running instance so Windows releases the file lock on the old EXE
+taskkill /F /IM AetheerAI_Master.exe >nul 2>&1
+:: Give the OS a moment to fully release the file handle
+timeout /t 2 /nobreak >nul 2>&1
+
 echo  Building AetheerAI_Master.exe  (please wait)...
 echo.
 
@@ -45,12 +51,15 @@ pyinstaller ^
     --add-data "ai;ai" ^
     --add-data "cli;cli" ^
     --add-data "core;core" ^
+    --add-data "evals;evals" ^
     --add-data "factory;factory" ^
     --add-data "memory;memory" ^
     --add-data "registry;registry" ^
     --add-data "security;security" ^
     --add-data "skills;skills" ^
+    --add-data "templates;templates" ^
     --add-data "tools;tools" ^
+    --add-data "utils;utils" ^
     --add-data "workspace;workspace" ^
     --add-data "agent_output;agent_output" ^
     --add-data "memory\memory_store.json;memory" ^
@@ -77,6 +86,33 @@ pyinstaller ^
     --collect-submodules chromadb ^
     --collect-submodules tiktoken_ext ^
     --collect-submodules streamlit ^
+    --collect-submodules litellm ^
+    --copy-metadata streamlit ^
+    --hidden-import litellm ^
+    --hidden-import litellm.main ^
+    --hidden-import litellm.utils ^
+    --hidden-import litellm.exceptions ^
+    --hidden-import imaplib ^
+    --hidden-import smtplib ^
+    --hidden-import email ^
+    --hidden-import email.mime.text ^
+    --hidden-import email.mime.multipart ^
+    --hidden-import email.mime.base ^
+    --hidden-import email.encoders ^
+    --hidden-import ssl ^
+    --hidden-import socket ^
+    --hidden-import ipaddress ^
+    --hidden-import csv ^
+    --hidden-import ast ^
+    --hidden-import hashlib ^
+    --hidden-import base64 ^
+    --hidden-import difflib ^
+    --hidden-import fnmatch ^
+    --hidden-import stat ^
+    --hidden-import sysconfig ^
+    --hidden-import textwrap ^
+    --hidden-import webbrowser ^
+    --hidden-import shlex ^
     launcher.py
 
 :: NOTE: Enterprise tools require optional packages installed BEFORE building.

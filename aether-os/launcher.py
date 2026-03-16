@@ -30,6 +30,221 @@ from tkinter import ttk
 multiprocessing.freeze_support()
 
 
+# ── .env helpers ─────────────────────────────────────────────────────────
+_PLACEHOLDER_VALUES = {
+    "your_github_token_here", "your_openai_key_here",
+    "your_anthropic_key_here", "your_gemini_key_here",
+    "your_huggingface_token_here", "",
+}
+
+_PROVIDER_CHOICES = [
+    ("GitHub Models",    "GITHUB_TOKEN"),
+    ("OpenAI",           "OPENAI_API_KEY"),
+    ("Anthropic Claude", "ANTHROPIC_API_KEY"),
+    ("Google Gemini",    "GEMINI_API_KEY"),
+    ("HuggingFace",      "HF_API_KEY"),
+]
+
+
+def _get_env_path() -> str:
+    """Return the .env path for frozen exe or source-run mode."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(os.path.dirname(sys.executable), ".env")
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(here, ".env")
+
+
+def _load_env_file(path: str) -> None:
+    """Minimal .env loader — sets os.environ for keys not already present."""
+    if not os.path.isfile(path):
+        return
+    import re
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, rest = line.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        value = rest.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        else:
+            value = re.sub(r'\s+#.*$', '', value)
+        if key not in os.environ:
+            os.environ[key] = value
+
+
+def _has_valid_key() -> bool:
+    """Return True if at least one provider API key is configured."""
+    for _, env_key in _PROVIDER_CHOICES:
+        val = os.environ.get(env_key, "")
+        if val and val not in _PLACEHOLDER_VALUES:
+            return True
+    return False
+
+
+def _save_key_to_env(env_path: str, key: str, value: str) -> None:
+    """Write (or update) a KEY=value line in the .env file."""
+    import re
+    try:
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+        key_re = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}\s*=")
+        replaced = False
+        for i, line in enumerate(lines):
+            if key_re.match(line):
+                lines[i] = f"{key}={value}\n"
+                replaced = True
+                break
+        if not replaced:
+            lines.append(f"{key}={value}\n")
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        os.environ[key] = value
+    except OSError:
+        pass
+
+
+class EnvSetupDialog:
+    """
+    Tkinter dialog shown at startup when no API key is configured.
+    Lets the user pick a provider, enter their key, and save it to .env.
+    """
+
+    def __init__(self, env_path: str):
+        self._env_path = env_path
+        self._result: str = "skip"  # "saved" | "ollama" | "skip"
+
+        self._root = tk.Tk()
+        self._root.title("AetheerAI — Setup")
+        self._root.resizable(False, False)
+        self._root.configure(bg="#0e1117")
+        self._root.protocol("WM_DELETE_WINDOW", self._on_skip)
+
+        w, h = 480, 370
+        sw = self._root.winfo_screenwidth()
+        sh = self._root.winfo_screenheight()
+        self._root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = self._root
+        f = tk.Frame(root, bg="#0e1117", padx=28, pady=24)
+        f.pack(fill="both", expand=True)
+
+        tk.Label(f, text="⚡", font=("Segoe UI", 32),
+                 bg="#0e1117", fg="#3b82f6").pack()
+        tk.Label(f, text="AetheerAI — First-Run Setup",
+                 font=("Segoe UI", 16, "bold"),
+                 bg="#0e1117", fg="#ffffff").pack(pady=(4, 2))
+        tk.Label(f, text="No API key found. Configure one to enable AI features.",
+                 font=("Segoe UI", 9), bg="#0e1117", fg="#94a3b8").pack()
+
+        # Provider dropdown
+        pf = tk.Frame(f, bg="#0e1117")
+        pf.pack(fill="x", pady=(16, 4))
+        tk.Label(pf, text="AI Provider:", font=("Segoe UI", 9, "bold"),
+                 bg="#0e1117", fg="#cbd5e1", width=14, anchor="w").pack(side="left")
+        self._provider_var = tk.StringVar(value=_PROVIDER_CHOICES[0][0])
+        provider_menu = ttk.Combobox(
+            pf, textvariable=self._provider_var,
+            values=[p[0] for p in _PROVIDER_CHOICES],
+            state="readonly", font=("Segoe UI", 9), width=28,
+        )
+        provider_menu.pack(side="left", padx=(4, 0))
+
+        # API key field
+        kf = tk.Frame(f, bg="#0e1117")
+        kf.pack(fill="x", pady=4)
+        tk.Label(kf, text="API Key:", font=("Segoe UI", 9, "bold"),
+                 bg="#0e1117", fg="#cbd5e1", width=14, anchor="w").pack(side="left")
+        self._key_var = tk.StringVar()
+        self._key_entry = tk.Entry(
+            kf, textvariable=self._key_var, show="•",
+            font=("Segoe UI", 9), bg="#1e293b", fg="#e2e8f0",
+            insertbackground="#e2e8f0", relief="flat",
+            highlightthickness=1, highlightbackground="#334155",
+            width=30,
+        )
+        self._key_entry.pack(side="left", padx=(4, 4), ipady=4)
+        self._show_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            kf, text="Show", variable=self._show_var,
+            command=self._toggle_show,
+            bg="#0e1117", fg="#94a3b8", selectcolor="#1e293b",
+            activebackground="#0e1117", font=("Segoe UI", 8),
+        ).pack(side="left")
+
+        # .env path hint
+        tk.Label(f, text=f"Saved to: {self._env_path}",
+                 font=("Segoe UI", 7), bg="#0e1117", fg="#475569").pack(pady=(2, 12))
+
+        # Buttons
+        bf = tk.Frame(f, bg="#0e1117")
+        bf.pack()
+        tk.Button(
+            bf, text="Save & Start", command=self._on_save,
+            bg="#3b82f6", fg="white", relief="flat",
+            font=("Segoe UI", 9, "bold"), padx=14, pady=6,
+            cursor="hand2", activebackground="#2563eb", activeforeground="white",
+        ).pack(side="left", padx=4)
+        tk.Button(
+            bf, text="Use Ollama (local, free)", command=self._on_ollama,
+            bg="#1e293b", fg="#60a5fa", relief="flat",
+            font=("Segoe UI", 9), padx=14, pady=6,
+            cursor="hand2", activebackground="#334155", activeforeground="#60a5fa",
+        ).pack(side="left", padx=4)
+        tk.Button(
+            bf, text="Skip", command=self._on_skip,
+            bg="#1e293b", fg="#94a3b8", relief="flat",
+            font=("Segoe UI", 9), padx=10, pady=6,
+            cursor="hand2", activebackground="#334155", activeforeground="#94a3b8",
+        ).pack(side="left", padx=4)
+
+        self._status_var = tk.StringVar()
+        tk.Label(f, textvariable=self._status_var,
+                 font=("Segoe UI", 8), bg="#0e1117", fg="#ef4444").pack(pady=(8, 0))
+
+    def _toggle_show(self) -> None:
+        self._key_entry.config(show="" if self._show_var.get() else "•")
+
+    def _on_save(self) -> None:
+        key_val = self._key_var.get().strip()
+        if not key_val or key_val in _PLACEHOLDER_VALUES:
+            self._status_var.set("Please enter a valid API key.")
+            return
+        provider_name = self._provider_var.get()
+        env_key = next(ek for pn, ek in _PROVIDER_CHOICES if pn == provider_name)
+        _save_key_to_env(self._env_path, env_key, key_val)
+        self._result = "saved"
+        self._root.destroy()
+
+    def _on_ollama(self) -> None:
+        os.environ["AI_PROVIDER"] = "ollama"
+        self._result = "ollama"
+        self._root.destroy()
+
+    def _on_skip(self) -> None:
+        self._result = "skip"
+        self._root.destroy()
+
+    def run(self) -> str:
+        """Show the dialog and return 'saved', 'ollama', or 'skip'."""
+        self._root.mainloop()
+        return self._result
+
+
 def find_free_port() -> int:
     """Find an available TCP port so a stale process never blocks re-launch (Bug 4 fix)."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -82,8 +297,78 @@ class _StreamlitHandle:
         self._t.join()
 
 
+def _patch_frozen_streamlit() -> None:
+    """
+    Apply all patches needed to run Streamlit inside a daemon thread in a
+    frozen PyInstaller .exe.  Safe no-op when running from source.
+
+    Patch 1 — importlib.metadata.version():
+        streamlit/version.py calls version('streamlit') at import time.
+        PyInstaller doesn't bundle .dist-info by default, so this raises
+        PackageNotFoundError.  We wrap version() to return '0.0.0' for any
+        package whose metadata is missing.  Streamlit only uses the version
+        string for the About dialog — no functional impact.
+
+    Patch 2 — signal.signal():
+        streamlit/web/bootstrap.py calls signal.signal() inside run_server()
+        via _set_up_signal_handler().  The stdlib enforces that signal
+        handlers can only be registered from the main thread of the main
+        interpreter.  Running stcli.main() in our daemon thread always
+        triggers  ValueError: signal only works in main thread.
+        We wrap signal.signal() to silently skip registration when called
+        from a non-main thread — Streamlit shuts down via asyncio cancellation
+        anyway, so missing SIGTERM/SIGINT handlers in the thread are harmless.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+
+    # ── Patch 1: metadata ──────────────────────────────────────────────────
+    # Wrap importlib.metadata.version() to return '0.0.0' for any package
+    # whose .dist-info was not bundled by PyInstaller.
+    try:
+        import importlib.metadata as _imd
+        _orig_version = _imd.version
+
+        def _safe_version(pkg: str) -> str:  # type: ignore[override]
+            try:
+                return _orig_version(pkg)
+            except _imd.PackageNotFoundError:
+                return "0.0.0"
+
+        _imd.version = _safe_version  # type: ignore[assignment]
+        # Also patch requires() / metadata() used by some packages
+        _orig_requires = _imd.requires
+
+        def _safe_requires(pkg: str):  # type: ignore[override]
+            try:
+                return _orig_requires(pkg)
+            except _imd.PackageNotFoundError:
+                return []
+
+        _imd.requires = _safe_requires  # type: ignore[assignment]
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ── Patch 2: signal ────────────────────────────────────────────────────
+    try:
+        import signal as _signal
+        import threading as _threading
+        _orig_signal = _signal.signal
+
+        def _safe_signal(sig, handler):  # type: ignore[override]
+            if _threading.current_thread() is _threading.main_thread():
+                return _orig_signal(sig, handler)
+            # Called from daemon thread — silently skip; asyncio handles shutdown
+
+        _signal.signal = _safe_signal  # type: ignore[assignment]
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _stcli_thread() -> None:
     """Thread target: invoke Streamlit via its bundled CLI entry point."""
+    # Apply frozen-mode patches BEFORE the first streamlit import.
+    _patch_frozen_streamlit()
     try:
         try:
             from streamlit.web import cli as stcli   # Streamlit >= 1.12
@@ -92,6 +377,18 @@ def _stcli_thread() -> None:
         stcli.main()
     except SystemExit:
         pass  # stcli always calls sys.exit() on shutdown — harmless in a thread
+    except Exception:  # noqa: BLE001
+        # Log to a file next to the exe so the user can diagnose the crash
+        log_path = os.path.join(os.path.dirname(sys.executable)
+                                if getattr(sys, "frozen", False)
+                                else _ROOT, "aether_error.log")
+        try:
+            with open(log_path, "a", encoding="utf-8") as fh:
+                import traceback
+                fh.write("\n--- Streamlit thread crash ---\n")
+                traceback.print_exc(file=fh)
+        except OSError:
+            pass
 
 
 def _start_streamlit():
@@ -118,6 +415,7 @@ def _start_streamlit():
             "--server.headless=true",
             "--browser.gatherUsageStats=false",
             f"--server.address={_HOST}",
+            "--global.developmentMode=false",
         ]
         t = threading.Thread(target=_stcli_thread, daemon=True)
         t.start()
@@ -281,6 +579,17 @@ def _wait_and_open(splash: SplashWindow, proc: subprocess.Popen, root: tk.Tk):
 
 
 def main():
+    # ── Pre-flight: load .env and check for a valid API key ───────────────
+    env_path = _get_env_path()
+    _load_env_file(env_path)
+
+    if not _has_valid_key():
+        dlg = EnvSetupDialog(env_path)
+        result = dlg.run()
+        # Re-load .env in case the user just saved a key
+        if result == "saved":
+            _load_env_file(env_path)
+
     # Start Streamlit silently in background
     proc = _start_streamlit()
 

@@ -55,6 +55,10 @@ echo   STEP 1 / 2  --  Building AetheerAI_Master.exe
 echo  ============================================================
 echo.
 
+:: Kill any running instance so Windows releases the file lock on the old EXE
+taskkill /F /IM AetheerAI_Master.exe >nul 2>&1
+timeout /t 2 /nobreak >nul 2>&1
+
 call build_main_exe.bat
 if errorlevel 1 (
     echo.

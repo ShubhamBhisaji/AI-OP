@@ -29,8 +29,10 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Auto-load .env file — stdlib only, no packages needed
-from core.env_loader import load_env as _load_env
-_load_env(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+from core.env_loader import load_env as _load_env, check_env_file as _check_env_file
+_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+_load_env(_ENV_PATH)
+_check_env_file(_ENV_PATH)
 
 from core.aether_kernel import AetherKernel
 from cli.command_interface import CommandInterface

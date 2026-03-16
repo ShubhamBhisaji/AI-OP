@@ -38,7 +38,7 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 
 ; Output — goes to the dist\ folder alongside the compiled EXE
-OutputDir=..\dist
+OutputDir=..\..\builds
 OutputBaseFilename=AetheerAI_Setup_v{#MyAppVersion}
 
 ; UI
