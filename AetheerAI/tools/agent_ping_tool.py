@@ -20,9 +20,19 @@ import threading
 # Circular-call guard
 # Keyed on "caller_name->target_name" so A can still reach C even while C
 # pings B, but A→B→A is rejected.
+#
+# Uses threading.local() so each thread (workflow) maintains its own call
+# stack — concurrent workflows no longer share state and cannot falsely
+# block each other's legitimate pings.
 # ---------------------------------------------------------------------------
-_PING_STACK: set[str] = set()
-_PING_LOCK = threading.Lock()
+_PING_LOCAL = threading.local()
+
+
+def _get_ping_stack() -> set[str]:
+    """Return the per-thread ping stack, creating it on first access."""
+    if not hasattr(_PING_LOCAL, "stack"):
+        _PING_LOCAL.stack = set()
+    return _PING_LOCAL.stack
 
 
 def ping_agent(
@@ -59,14 +69,14 @@ def ping_agent(
     caller = _agent_name or "UnknownAgent"
     interaction_key = f"{caller}->{target_agent_name}"
 
-    with _PING_LOCK:
-        if interaction_key in _PING_STACK:
-            return (
-                f"❌ Circular communication detected: '{caller}' cannot ping "
-                f"'{target_agent_name}' — that agent is already in the current "
-                f"call chain. Resolve this yourself instead."
-            )
-        _PING_STACK.add(interaction_key)
+    ping_stack = _get_ping_stack()
+    if interaction_key in ping_stack:
+        return (
+            f"❌ Circular communication detected: '{caller}' cannot ping "
+            f"'{target_agent_name}' — that agent is already in the current "
+            f"call chain. Resolve this yourself instead."
+        )
+    ping_stack.add(interaction_key)
 
     try:
         prompt = (
@@ -106,5 +116,4 @@ def ping_agent(
     except Exception as exc:
         return f"❌ Error communicating with '{target_agent_name}': {exc}"
     finally:
-        with _PING_LOCK:
-            _PING_STACK.discard(interaction_key)
+        _get_ping_stack().discard(interaction_key)

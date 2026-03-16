@@ -40,10 +40,12 @@ def file_writer(filename: str, content: str, output_dir: str | None = None) -> s
         return "Error: filename must be a non-empty string."
 
     # Resolve the full target path and sandbox-check it (Bug 3 fix)
+    # Use os.path.normcase() for case-insensitive comparison on Windows.
     base = (Path(output_dir) if output_dir else _OUTPUT_DIR).resolve()
     target = (base / os.path.normpath(filename)).resolve()
-    _sb = str(_WRITE_SANDBOX) + os.sep
-    if not (str(target) == str(_WRITE_SANDBOX) or str(target).startswith(_sb)):
+    try:
+        Path(os.path.normcase(target)).relative_to(Path(os.path.normcase(_WRITE_SANDBOX)))
+    except ValueError:
         return (
             f"❌ Security Violation: Path '{filename}' escapes the write sandbox. "
             f"Writes are confined to: {_WRITE_SANDBOX}"

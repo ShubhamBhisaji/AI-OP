@@ -102,6 +102,7 @@ class AgentRegistry:
                     role=profile["role"],
                     tools=profile.get("tools", []),
                     skills=profile.get("skills", []),
+                    permission_level=profile.get("permission_level", 1),
                 )
                 agent.profile.update(profile)
                 self._agents[name] = agent

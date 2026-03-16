@@ -47,7 +47,7 @@ _GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com"
 _GITHUB_MODELS = [
     # Free on all plans (multiplier: 0) — confirmed via REST API
     "gpt-4.1",          # best general-purpose, default
-    "gpt-5-mini",       # GPT-5 mini — free tier, fast
+    "gpt-5-mini",       # GPT-5 mini — may not yet be available on REST API
     "gpt-4o",           # reliable baseline
     "gpt-4o-mini",      # fastest / cheapest
     "gpt-4.1-mini",     # lighter gpt-4.1 variant

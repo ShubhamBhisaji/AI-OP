@@ -310,7 +310,7 @@ class WorkflowEngine:
                 feedback = await maybe if _inspect.isawaitable(maybe) else maybe
                 return feedback
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, lambda: self.feedback_callback(checkpoint))
 
         MAX_REVISE_CYCLES = 3
@@ -410,6 +410,9 @@ class WorkflowEngine:
                 f"a corrected response.  Do NOT repeat the same mistake."
             )
             messages.append({"role": "user", "content": correction_prompt})
+            # Prune context window before retry to prevent blowout (Bug 1)
+            if len(messages) > _MAX_HISTORY_MESSAGES:
+                messages = messages[:1] + messages[-(_MAX_HISTORY_MESSAGES - 1):]
             result = self.ai_adapter.chat(messages=messages)
 
         if _looks_like_error(result):

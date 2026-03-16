@@ -106,35 +106,88 @@ def _run_in_docker(tmp_path: str, deps: list[str]) -> str:
     Execute *tmp_path* inside a minimal, network-isolated Docker container.
     Mounts only the tempfile (read-only) and discards all changes on exit.
 
-    If *deps* is non-empty a pip install step runs first inside the container
-    so that third-party libraries are available at runtime (Fix 7).
+    If *deps* is non-empty a two-phase approach is used (Fix 7 + security):
+      Phase 1 — pip install into a named Docker volume (network enabled, but
+                 --cap-drop ALL limits syscall exposure).
+      Phase 2 — run the code with --network none, mounting the volume read-only.
+    The volume is always removed in the finally block.
     """
-    # Build the shell command: optionally install deps then run the script.
-    if deps:
-        pip_cmd = "pip install --quiet " + " ".join(deps) + " && "
-    else:
-        pip_cmd = ""
-    shell_cmd = f"{pip_cmd}python -u /code.py"
+    import re as _re
+    import uuid as _uuid
 
-    result = subprocess.run(
-        [
-            "docker", "run", "--rm",
-            "--memory", "256m",            # bumped slightly to allow pip install
-            "--cpus", "0.5",              # CPU quota
-            "--read-only",                # immutable container filesystem
-            "--tmpfs", "/tmp:size=64m",   # writable /tmp (pip cache + bytecode)
-            "--tmpfs", "/root:size=32m",  # pip writes to ~/.cache/pip
-            # NOTE: --network none is dropped when deps need installing so pip
-            # can download packages.  Re-applied if no deps.
-            *([] if deps else ["--network", "none"]),
-            "-v", f"{tmp_path}:/code.py:ro",  # mount code read-only
-            _DOCKER_IMAGE,
-            "sh", "-c", shell_cmd,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=_TIMEOUT_SECONDS + (30 if deps else 0),  # extra time for pip
-    )
+    # Validate dependency names to block injection (e.g. shell metacharacters)
+    _SAFE_DEP = _re.compile(r"^[A-Za-z0-9_.\-]+$")
+    unsafe = [d for d in deps if not _SAFE_DEP.match(d)]
+    if unsafe:
+        return f"Error: Unsafe dependency name(s) blocked — {unsafe}"
+
+    if deps:
+        logger.warning(
+            "code_runner: installing packages %s. "
+            "Phase 1 uses network; Phase 2 execution runs with --network none.",
+            deps,
+        )
+        vol_name = f"aetheerai_deps_{_uuid.uuid4().hex[:12]}"
+        try:
+            # Phase 1: pip install with network into a named volume
+            install = subprocess.run(
+                [
+                    "docker", "run", "--rm",
+                    "--memory", "256m",
+                    "--cap-drop", "ALL",
+                    "--cap-add", "NET_BIND_SERVICE",  # pip TLS calls need this
+                    "-v", f"{vol_name}:/packages",
+                    _DOCKER_IMAGE,
+                    "sh", "-c",
+                    "pip install --quiet --no-warn-script-location "
+                    "--target /packages " + " ".join(deps),
+                ],
+                capture_output=True, text=True, timeout=90,
+            )
+            if install.returncode != 0:
+                return f"Error: pip install failed:\n{install.stderr[:2000]}"
+
+            # Phase 2: run code with --network none, packages mounted read-only
+            result = subprocess.run(
+                [
+                    "docker", "run", "--rm",
+                    "--memory", "256m",
+                    "--cpus", "0.5",
+                    "--read-only",
+                    "--tmpfs", "/tmp:size=64m",
+                    "--tmpfs", "/root:size=32m",
+                    "--network", "none",
+                    "--cap-drop", "ALL",
+                    "-v", f"{vol_name}:/packages:ro",
+                    "-v", f"{tmp_path}:/code.py:ro",
+                    "--env", "PYTHONPATH=/packages",
+                    _DOCKER_IMAGE,
+                    "python", "-u", "/code.py",
+                ],
+                capture_output=True, text=True, timeout=_TIMEOUT_SECONDS,
+            )
+        finally:
+            subprocess.run(
+                ["docker", "volume", "rm", vol_name],
+                capture_output=True, timeout=10,
+            )
+    else:
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "--memory", "256m",
+                "--cpus", "0.5",
+                "--read-only",
+                "--tmpfs", "/tmp:size=64m",
+                "--tmpfs", "/root:size=32m",
+                "--network", "none",
+                "--cap-drop", "ALL",
+                "-v", f"{tmp_path}:/code.py:ro",
+                _DOCKER_IMAGE,
+                "python", "-u", "/code.py",
+            ],
+            capture_output=True, text=True, timeout=_TIMEOUT_SECONDS,
+        )
     output = result.stdout
     if result.stderr:
         output += "\n[stderr]\n" + result.stderr

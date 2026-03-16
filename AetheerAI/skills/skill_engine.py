@@ -360,17 +360,6 @@ class SkillEngine:
     def _determine_new_skills(self, agent) -> list[str]:
         return self._catalog_suggestions(agent) or ["problem_solving", "critical_thinking"]
 
-
-
-class SkillEngine:
-    """
-    Handles skill upgrades for registered agents.
-    """
-
-    def __init__(self, registry, ai_adapter=None):
-        self.registry = registry
-        self.ai_adapter = ai_adapter  # optional — enables AI-researched upgrades
-
     def ai_upgrade(self, agent_name: str) -> dict[str, Any]:
         """
         Ask the AI to research the best skills for this agent's role.

@@ -271,8 +271,8 @@ class AetheerAiKernel:
         _prog(3, 4, f"Evaluating '{name}' with a mock task...")
         MAX_EVAL_RETRIES = 2
         for eval_attempt in range(MAX_EVAL_RETRIES + 1):
-            # 4a. Build a temporary agent (not yet persisted)
-            _tmp_agent = self.factory.create(
+            # 4a. Build a temporary agent (NOT registered — avoids orphan entries)
+            _tmp_agent = BaseAgent(
                 name=name, role=role, tools=tools, skills=skills,
                 permission_level=permission_level,
             )
@@ -333,7 +333,9 @@ class AetheerAiKernel:
 
         _prog(4, 4, f"Agent '{name}' validated (score={score}).")
 
-        # ── Build and register the agent ─────────────────────────────
+        # ── Remove any temp eval registrations, then build the final agent ──────
+        if name in self.registry:
+            self.registry.remove(name)
         agent = self.factory.create(name=name, role=role, tools=tools, skills=skills, permission_level=permission_level)
         agent.profile["instructions"]     = instructions
         agent.profile["research_summary"] = research[:600]

@@ -330,7 +330,7 @@ class Orchestrator:
             f"Summarize the key arguments from each side and identify "
             f"any consensus reached or which side made stronger points."
         )
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         summary = await loop.run_in_executor(
             None,
             lambda: self.ai_adapter.chat(

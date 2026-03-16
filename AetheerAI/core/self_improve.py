@@ -17,6 +17,12 @@ class SelfImproveCoordinator:
         cases: list[dict[str, Any]],
         run_fn: Callable[[str], str],
     ) -> dict[str, Any]:
+        if not cases:
+            return {
+                "eval_summary": {"total": 0, "passed": 0, "failed": 0, "pass_rate": 0.0, "results": []},
+                "failure_clusters": {},
+                "recommendations": ["No eval cases provided — skipping self-improvement run."],
+            }
         summary = self.eval_runner.run_cases(cases, run_fn=run_fn)
         clusters = cluster_failures(summary.get("results", []))
 

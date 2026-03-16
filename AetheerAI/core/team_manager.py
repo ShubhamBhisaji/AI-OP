@@ -103,7 +103,20 @@ class TeamManager:
 
     def _save(self) -> None:
         _STORE.parent.mkdir(parents=True, exist_ok=True)
-        _STORE.write_text(json.dumps(self._teams, indent=2), encoding="utf-8")
+        # Atomic write: write to .tmp then rename so a crash mid-write never
+        # leaves the teams store corrupt or empty.
+        import os as _os
+        tmp = _STORE.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(self._teams, indent=2), encoding="utf-8")
+            _os.replace(tmp, _STORE)
+        except OSError as exc:
+            logger.error("TeamManager: failed to persist teams: %s", exc)
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
 
     def _load(self) -> None:
         if _STORE.exists():
