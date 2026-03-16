@@ -199,14 +199,9 @@ class SkillEngine:
                 f"  7. Exclude skills the agent already has."
             )
             try:
-                import json as _json
+                from utils.json_parser import extract_json, ParseError
                 raw = self.ai_adapter.chat([{"role": "user", "content": prompt}])
-                raw_clean = raw.strip()
-                if raw_clean.startswith("```"):
-                    raw_clean = raw_clean.split("```")[1]
-                    if raw_clean.lower().startswith("json"):
-                        raw_clean = raw_clean[4:]
-                parsed = _json.loads(raw_clean)
+                parsed = extract_json(raw, safe=False)
                 suggested = [
                     s.strip().lower().replace(" ", "_")
                     for s in parsed.get("skills", [])

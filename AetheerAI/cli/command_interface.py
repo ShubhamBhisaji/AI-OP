@@ -377,6 +377,16 @@ class CommandInterface:
             "quit": self._cmd_exit,
         }
 
+        # Priority fix: try two-word commands before single-word lookup.
+        # e.g. "run agent AlphaBot do X" → cmd="run_agent", args=["AlphaBot","do","X"]
+        # This prevents single-word handlers (like 'run') from swallowing
+        # two-word commands that begin with the same first token.
+        if len(parts) >= 2:
+            two_word = (parts[0] + "_" + parts[1]).lower()
+            if two_word in handlers:
+                cmd = two_word
+                args = parts[2:]
+
         handler = handlers.get(cmd)
         if handler is None:
             # Try natural language resolution

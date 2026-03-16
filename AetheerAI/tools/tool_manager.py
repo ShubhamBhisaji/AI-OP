@@ -92,8 +92,11 @@ TOOL_PERMISSIONS: dict[str, int] = {
     "kubernetes_tool":  3,
 }
 
-# Default level for any tool not listed above
-_DEFAULT_TOOL_PERMISSION = 1
+# Default level for any tool NOT explicitly listed above.
+# Fail-safe: require ADMIN (3) so newly added tools are locked down until
+# explicitly classified.  A developer who forgets to add a permission entry
+# gets a clear PermissionDenied instead of silently allowing access.
+_DEFAULT_TOOL_PERMISSION = 3
 
 
 class PermissionDenied(PermissionError):

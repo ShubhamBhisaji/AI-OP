@@ -89,6 +89,14 @@ class AgentRegistry:
         try:
             data: dict[str, Any] = json.loads(_REGISTRY_FILE.read_text())
             for name, profile in data.items():
+                try:
+                    # Validate & normalise profile via Pydantic schema (raises on bad data)
+                    profile = BaseAgent.validate_profile(profile)
+                except Exception as exc:
+                    logger.warning(
+                        "Skipping agent '%s': invalid profile — %s", name, exc
+                    )
+                    continue
                 agent = BaseAgent(
                     name=profile["name"],
                     role=profile["role"],

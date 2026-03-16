@@ -120,7 +120,7 @@ class AIAdapter:
         when asyncio.gather() fans out many subtasks simultaneously (Bug 1 fix).
         (Fix 2 — Asynchronous Execution)
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         async with self._semaphore:
             return await loop.run_in_executor(None, lambda: self.chat(messages, **kwargs))
 
@@ -159,16 +159,11 @@ class AIAdapter:
                 )
         return response.choices[0].message.content or ""
 
-    # Kept for internal fallback iteration only
+    # Fallback model list iterated when the primary GitHub model returns an
+    # "unknown model" error — tries each candidate in order until one succeeds.
     _GITHUB_FALLBACK_MODELS: list[str] = [
         "gpt-4.1", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-mini",
     ]
-
-    # placeholder so the old deletion boundary is easy to find
-    def _openai_compat_chat(self, *_a, **_kw):  # type: ignore[override]
-        raise NotImplementedError("_openai_compat_chat replaced by litellm backends")  # noqa
-
-    _GITHUB_FALLBACKS: list[str] = []  # kept to avoid AttributeError on any stale references
 
     # ------------------------------------------------------------------
     # Provider implementations

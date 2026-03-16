@@ -278,12 +278,13 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
     print(f"     {workspace_dir}\n")
 
     history: list[dict] = []
+    _pending: list = []  # local queue — not a function attribute (avoids cross-call leakage)
 
     while True:
         try:
             # Drain any pending chained commands before prompting user
-            if hasattr(run_agent_window, '_pending') and run_agent_window._pending:
-                _next_cmd, _next_arg = run_agent_window._pending.pop(0)
+            if _pending:
+                _next_cmd, _next_arg = _pending.pop(0)
                 raw = f"{_next_cmd} {_next_arg}".strip()
                 print(f"  [{agent_name}]> {raw}  ← (auto-chained)")
             else:
@@ -400,10 +401,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
             _intent_chain = _resolve_intent(raw)
             if len(_intent_chain) > 1 or (_intent_chain and _intent_chain[0][0] != cmd):
                 # Re-queue each intent as if the user typed them sequentially
-                # We do this by pushing them onto a local pending list
-                if not hasattr(run_agent_window, '_pending'):
-                    run_agent_window._pending = []
-                run_agent_window._pending = list(_intent_chain[1:]) + run_agent_window._pending
+                _pending = list(_intent_chain[1:]) + _pending
                 cmd, arg = _intent_chain[0]
             else:
                 if _intent_chain:
@@ -414,9 +412,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
             if _re_chain.search(r'\s+(?:then|and then|after that|next)\s+', raw.lower()):
                 _intent_chain = _resolve_intent(raw)
                 if len(_intent_chain) > 1:
-                    if not hasattr(run_agent_window, '_pending'):
-                        run_agent_window._pending = []
-                    run_agent_window._pending = list(_intent_chain[1:]) + run_agent_window._pending
+                    _pending = list(_intent_chain[1:]) + _pending
                     cmd, arg = _intent_chain[0]
 
         if cmd in ("exit", "quit"):
@@ -607,7 +603,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
                 f"  Do NOT use outdated versions. Choose the most current stable release as of today.\n"
                 f"## Core Features\n"
                 f"## File Structure\n"
-                f"  List every file as: `- \`relative/path.ext\` — one-line purpose`\n"
+                f"  List every file as: `- `relative/path.ext` — one-line purpose`\n"
                 f"  Do NOT hardcode a minimum file set. List exactly what THIS specific {app_type} needs.\n"
                 f"## Build Notes\n"
                 f"  Any special build steps, commands, or configurations needed.\n\n"
@@ -707,13 +703,11 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
                                   f"(website/api/bot/cli/game/other): ").strip() or "website"
                 _desc     = input(f"  Describe '{app_name}' briefly: ").strip() or f"a {_app_type} application"
                 print(f"  Running: plan {_app_type} {app_name} {_desc}")
-                if not hasattr(run_agent_window, '_pending'):
-                    run_agent_window._pending = []
                 # Plan runs first (creates PLAN.md), then build reads it
-                run_agent_window._pending = [
+                _pending = [
                     ('plan', f"{_app_type} {app_name} {_desc}"),
                     ('build', app_name),
-                ] + run_agent_window._pending
+                ] + _pending
                 continue
 
             plan_content = plan_path.read_text(encoding="utf-8")
@@ -1307,7 +1301,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
   remove_skill <name>              — Remove a skill
   exit / quit                      — Close this window
 
-  Files are written to:  AI-OP\projects\{agent_name}\
+  Files are written to:  AI-OP\\projects\\{agent_name}\\
 """)
         else:
             # Treat anything else as a task for convenience

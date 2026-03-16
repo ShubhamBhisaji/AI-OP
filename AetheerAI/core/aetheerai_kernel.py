@@ -310,7 +310,12 @@ class AetheerAiKernel:
             eval_data: dict = extract_json(eval_raw, safe=True, default={"passed": True})
 
             passed = bool(eval_data.get("passed", True))
-            score  = eval_data.get("score", 7)
+            # Clamp score to valid range so downstream persistence is always clean
+            _raw_score = eval_data.get("score", 7)
+            try:
+                score = max(0, min(10, int(_raw_score)))
+            except (TypeError, ValueError):
+                score = 7
             issues = eval_data.get("issues", [])
             improved = (eval_data.get("improved_instructions") or "").strip()
 

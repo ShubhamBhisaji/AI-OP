@@ -34,6 +34,8 @@ from typing import Any, Callable, Optional
 # Shared workspace directory — agents read/write shared artefacts here
 # ---------------------------------------------------------------------------
 _WORKSPACE_DIR = Path(__file__).parent.parent / "workspace"
+# Ensure the directory always exists so agents can write to it immediately
+_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _get_workspace_manifest() -> str:
@@ -753,10 +755,14 @@ class WorkflowEngine:
         # Global system instructions — set via Train AI page or kernel.memory
         sys_instr = self.memory.load("system_instructions", default="", namespace="global")
         sys_block = f"\nGlobal System Instructions:\n{sys_instr}\n" if sys_instr else ""
+        # Shared workspace manifest — lets agents know what artefacts exist
+        workspace_info = _get_workspace_manifest()
+        workspace_block = f"\nShared Workspace:\n{workspace_info}\n"
         return (
             f"You are a {agent.role}.{sys_block}{instr_block}\n"
             f"Your skills: {skills_str}.\n"
-            f"Available tools: {tools_str}.\n\n"
+            f"Available tools: {tools_str}.\n"
+            f"{workspace_block}\n"
             f"IMPORTANT RULE: You ONLY handle tasks that are directly related to "
             f"your role as a {agent.role}. "
             f"If the task is outside your role or expertise, respond with exactly:\n"
