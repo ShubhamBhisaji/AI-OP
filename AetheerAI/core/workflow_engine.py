@@ -212,7 +212,9 @@ class WorkflowEngine:
             feedback_callback or _default_hitl_callback
         )
         self.feedback_callback_async = feedback_callback_async
-        self.self_healer = None   # SelfHealingDebugger | None (Feature 1)
+        self.self_healer = None          # SelfHealingDebugger | None (Feature 1)
+        self.priority_controller = None  # PriorityController | None  (Feature 5)
+        self.checkpoint_manager = None   # CheckpointManager | None   (Feature 6)
 
     # ------------------------------------------------------------------
     # HITL gate helper (Fix 8)
@@ -539,6 +541,18 @@ class WorkflowEngine:
             print(f"\n\U0001f504 Handoff: {prev_name} \u27a4 {agent.name}")
             context = self.execute(agent=agent, task=prompt)
             # execute() already called _hitl_gate internally; no double-gate here
+            # ── State Checkpoint (Feature 6) ─────────────────────────────────
+            if self.checkpoint_manager is not None:
+                try:
+                    self.checkpoint_manager.checkpoint(
+                        agent_name=agent.name,
+                        task=prompt,
+                        result=str(context),
+                        step=step,
+                        total_steps=total,
+                    )
+                except Exception as _cp_exc:
+                    logger.debug("Checkpoint save failed (non-fatal): %s", _cp_exc)
         return context
 
     # ------------------------------------------------------------------
@@ -568,6 +582,18 @@ class WorkflowEngine:
             print(f"\n\U0001f504 Handoff: {prev_name} \u27a4 {agent.name}")
             context = await self.execute_async(agent=agent, task=prompt)
             # execute_async() already called _hitl_gate_async internally
+            # ── State Checkpoint (Feature 6) ─────────────────────────────────
+            if self.checkpoint_manager is not None:
+                try:
+                    self.checkpoint_manager.checkpoint(
+                        agent_name=agent.name,
+                        task=prompt,
+                        result=str(context),
+                        step=step,
+                        total_steps=total,
+                    )
+                except Exception as _cp_exc:
+                    logger.debug("Checkpoint save failed (non-fatal): %s", _cp_exc)
         return context
 
     async def run_broadcast_async(

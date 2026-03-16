@@ -352,6 +352,11 @@ with st.sidebar:
         "🔗 Interoperability",
         "🧠 Memory OS",
         "🔥 Self-Healer",
+        "⚖️ Priority Controller",
+        "⏱️ Checkpointing",
+        "🐝 Swarm Bus",
+        "🔨 Tool Synthesizer",
+        "🖥️ Computer Use",
     ], label_visibility="collapsed")
 
     st.markdown("---")
@@ -2001,3 +2006,564 @@ elif page == "🔥 Self-Healer":
                         st.markdown(f"- Outcome: {cycle.get('outcome', 'N/A')}")
     else:
         st.info("Enable Self-Healing and run some agents to see healing history here.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 10. PRIORITY CONTROLLER — Agent Constitution & Conflict Resolution
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "⚖️ Priority Controller":
+    st.header("⚖️ Global Priority Controller & Agent Constitution")
+    st.caption(
+        "Define business rules (the 'Constitution') that govern every agent action. "
+        "Conflicts between agents are resolved automatically by priority rank and the Master AI."
+    )
+    from core.priority_controller import ConstitutionRule, ActionOutcome
+
+    tab_rules, tab_ctx, tab_eval, tab_conflict, tab_history = st.tabs([
+        "📜 Rules", "🌐 Context", "🔍 Evaluate Action", "⚔️ Resolve Conflict", "📊 History"
+    ])
+
+    # ── Tab 1: Rules ──────────────────────────────────────────────────
+    with tab_rules:
+        st.subheader("Constitution Rules")
+        st.markdown("**Add Preset Rule**")
+        pc1, pc2, pc3, pc4 = st.columns(4)
+        with pc1:
+            if st.button("🔒 Uptime > Cost", use_container_width=True):
+                kernel.add_constitution_rule(ConstitutionRule.uptime_over_cost())
+                st.success("Rule added: uptime_over_cost")
+        with pc2:
+            if st.button("🛡️ Security First", use_container_width=True):
+                kernel.add_constitution_rule(ConstitutionRule.security_first())
+                st.success("Rule added: security_first")
+        with pc3:
+            if st.button("💰 Billing Approval", use_container_width=True):
+                kernel.add_constitution_rule(ConstitutionRule.human_approval_for_billing())
+                st.success("Rule added: human_approval_for_billing")
+        with pc4:
+            if st.button("💾 No Delete w/o Backup", use_container_width=True):
+                kernel.add_constitution_rule(ConstitutionRule.no_data_deletion_without_backup())
+                st.success("Rule added: no_data_deletion_without_backup")
+
+        st.markdown("---")
+        st.markdown("**Custom Rule**")
+        r_name      = st.text_input("Rule name (snake_case)", key="cr_name")
+        r_text      = st.text_area("Rule text (plain English)", key="cr_text")
+        r_priority  = st.slider("Priority (0=lowest, 99=highest)", 0, 99, 50, key="cr_prio")
+        r_contexts  = st.text_input("Active contexts (comma-separated, empty=always)", key="cr_ctx")
+        r_outcome   = st.selectbox("Violation outcome", ["block", "warn", "escalate", "allow"], key="cr_out")
+        if st.button("➕ Add Custom Rule", type="primary"):
+            if not r_name or not r_text:
+                st.warning("Name and rule text are required.")
+            else:
+                from core.priority_controller import ActionOutcome as _AO
+                contexts = {c.strip() for c in r_contexts.split(",") if c.strip()}
+                rule = ConstitutionRule(
+                    name=r_name.strip(),
+                    rule_text=r_text.strip(),
+                    priority=r_priority,
+                    active_contexts=contexts,
+                    default_outcome=_AO(r_outcome),
+                )
+                kernel.add_constitution_rule(rule)
+                st.success(f"Rule **{r_name}** added.")
+
+        st.markdown("---")
+        st.markdown("**Active Rules**")
+        rules = kernel.constitution_rules()
+        if not rules:
+            st.info("No rules in the Constitution yet.")
+        else:
+            for r in rules:
+                with st.expander(f"[{r['priority']:3d}] {r['name']} — {r.get('default_outcome','')}"):
+                    st.write(r["rule_text"])
+                    if r["active_contexts"]:
+                        st.caption(f"Active in: {', '.join(r['active_contexts'])}")
+                    if st.button(f"🗑️ Remove {r['name']}", key=f"del_rule_{r['name']}"):
+                        kernel.remove_constitution_rule(r["name"])
+                        st.rerun()
+
+    # ── Tab 2: Context ────────────────────────────────────────────────
+    with tab_ctx:
+        st.subheader("Operational Context")
+        stats = kernel.constitution_stats()
+        st.metric("Current Context", stats.get("current_context", "default"))
+        new_ctx = st.text_input("Set new context", placeholder="product_launch / cost_saving / incident_response", key="ctx_input")
+        if st.button("🌐 Switch Context", type="primary"):
+            if new_ctx.strip():
+                kernel.set_constitution_context(new_ctx.strip())
+                st.success(f"Context → **{new_ctx.strip()}**")
+            else:
+                st.warning("Enter a context name.")
+        st.divider()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Evaluations", stats.get("total_evaluations", 0))
+        c2.metric("Active Rules", stats.get("active_rules", 0))
+        c3.metric("Blocked Actions", stats.get("by_outcome", {}).get("block", 0))
+
+    # ── Tab 3: Evaluate Action ────────────────────────────────────────
+    with tab_eval:
+        st.subheader("Evaluate a Proposed Action")
+        ev_agent  = st.selectbox("Agent", _agent_names() or ["(none)"], key="ev_agent")
+        ev_action = st.text_area("Describe the action the agent wants to take", key="ev_action")
+        if st.button("⚖️ Evaluate", type="primary"):
+            if not ev_action.strip():
+                st.warning("Describe the action.")
+            else:
+                with st.spinner("Consulting the Constitution..."):
+                    try:
+                        decision = kernel.evaluate_action(ev_agent, ev_action.strip())
+                        outcome  = decision.get("outcome", "warn")
+                        if outcome == "allow":
+                            st.success(f"✅ **ALLOWED** — {decision.get('reasoning', '')}")
+                        elif outcome == "warn":
+                            st.warning(f"⚠️ **WARNED** — {decision.get('reasoning', '')}")
+                        elif outcome == "block":
+                            st.error(f"🚫 **BLOCKED** — {decision.get('reasoning', '')}")
+                        else:
+                            st.info(f"⏫ **ESCALATE** — {decision.get('reasoning', '')}")
+                        if decision.get("violated_rule"):
+                            st.caption(f"Violated rule: **{decision['violated_rule']}**")
+                    except Exception as exc:
+                        st.error(f"Evaluation failed: {exc}")
+
+    # ── Tab 4: Resolve Conflict ───────────────────────────────────────
+    with tab_conflict:
+        st.subheader("Resolve Agent Conflict")
+        agents_list = _agent_names()
+        col_a, col_b = st.columns(2)
+        with col_a:
+            conf_a = st.selectbox("Agent A", agents_list or ["(none)"], key="conf_a")
+            act_a  = st.text_area("Agent A wants to...", key="act_a")
+        with col_b:
+            conf_b = st.selectbox("Agent B", agents_list or ["(none)"], key="conf_b")
+            act_b  = st.text_area("Agent B wants to...", key="act_b")
+        if st.button("⚔️ Resolve Conflict", type="primary"):
+            if not act_a.strip() or not act_b.strip():
+                st.warning("Describe both actions.")
+            else:
+                with st.spinner("The Constitution deliberates..."):
+                    try:
+                        res = kernel.resolve_agent_conflict(conf_a, act_a.strip(), conf_b, act_b.strip())
+                        st.success(f"🏆 **Winner:** {res['winner']}")
+                        st.error(f"🚫 **Blocked:** {res['loser']} — _{res['losing_action'][:120]}_")
+                        st.info(f"**Reasoning:** {res['reasoning']}")
+                    except Exception as exc:
+                        st.error(f"Conflict resolution failed: {exc}")
+
+    # ── Tab 5: History ────────────────────────────────────────────────
+    with tab_history:
+        st.subheader("Evaluation History")
+        if st.button("🔄 Refresh"):
+            st.rerun()
+        history = kernel.constitution_history(limit=100)
+        if not history:
+            st.info("No evaluations yet.")
+        else:
+            import pandas as _pd_pc
+            df = _pd_pc.DataFrame(history)
+            st.dataframe(df[["agent_name", "outcome", "violated_rule", "reasoning"]].head(50), use_container_width=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 11. STATE CHECKPOINTING — Time-Travel Debugging
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "⏱️ Checkpointing":
+    st.header("⏱️ Time-Travel Debugging & State Checkpointing")
+    st.caption(
+        "Every pipeline step is saved as a checkpoint. Rewind to any prior step, "
+        "edit the task, and resume — no more restarting from Step 1 after a Step 10 failure."
+    )
+
+    tab_sessions, tab_rewind, tab_branch = st.tabs(["📂 Sessions", "⏪ Rewind", "🍴 Branch"])
+
+    # ── Tab 1: Sessions ───────────────────────────────────────────────
+    with tab_sessions:
+        st.subheader("Checkpoint Sessions")
+        if st.button("🆕 Start New Session"):
+            sid = kernel.new_checkpoint_session()
+            st.success(f"New session started: `{sid[:8]}…`")
+            st.rerun()
+
+        sessions = kernel.list_checkpoint_sessions()
+        if not sessions:
+            st.info("No checkpoint sessions yet. Run a pipeline to create one.")
+        else:
+            sel_session = st.selectbox("Select session", sessions, key="cp_sess_sel")
+            summary = kernel.checkpoint_session_summary(sel_session)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Steps", summary.get("steps", 0))
+            c2.metric("Latest Step", summary.get("latest_step") or "—")
+            c3.metric("Latest Agent", summary.get("latest_agent") or "—")
+
+            cps = kernel.list_checkpoints(sel_session)
+            if cps:
+                for cp in cps:
+                    with st.expander(f"Step {cp['step']} — {cp['agent_name']} — {cp['checkpoint_id'][:8]}…"):
+                        st.markdown(f"**Task:** {cp['task'][:300]}")
+                        st.markdown(f"**Result:** {cp['result'][:300]}")
+                        st.caption(f"ID: `{cp['checkpoint_id']}`")
+
+            if st.button(f"🗑️ Delete session {sel_session[:8]}…", type="secondary"):
+                n = kernel.delete_checkpoint_session(sel_session)
+                st.success(f"Deleted {n} checkpoint(s).")
+                st.rerun()
+
+    # ── Tab 2: Rewind ─────────────────────────────────────────────────
+    with tab_rewind:
+        st.subheader("Rewind to a Checkpoint")
+        rw_id = st.text_input("Checkpoint ID (full UUID)", key="rw_id")
+        rw_task = st.text_area("Revised task (leave empty to use original)", key="rw_task")
+        if st.button("⏪ Rewind", type="primary"):
+            if not rw_id.strip():
+                st.warning("Enter a checkpoint ID.")
+            else:
+                try:
+                    cp = kernel.rewind_to_checkpoint(
+                        rw_id.strip(),
+                        revised_task=rw_task.strip() or None,
+                    )
+                    st.success(f"Rewound to step {cp['step']} | agent: {cp['agent_name']}")
+                    st.markdown("**Restored task:**")
+                    st.code(cp["task"], language="text")
+                    st.info("Copy the task and run it via the Task Executor to resume from this point.")
+                except KeyError as exc:
+                    st.error(f"Checkpoint not found: {exc}")
+                except Exception as exc:
+                    st.error(f"Rewind failed: {exc}")
+
+    # ── Tab 3: Branch ─────────────────────────────────────────────────
+    with tab_branch:
+        st.subheader("Branch from a Checkpoint")
+        br_id = st.text_input("Checkpoint ID to branch from", key="br_id")
+        if st.button("🍴 Create Branch", type="primary"):
+            if not br_id.strip():
+                st.warning("Enter a checkpoint ID.")
+            else:
+                try:
+                    new_session = kernel.branch_from_checkpoint(br_id.strip())
+                    st.success(f"Branch created! New session: `{new_session[:8]}…`")
+                    st.info("Run your pipeline in the new session to explore an alternate path.")
+                except KeyError as exc:
+                    st.error(f"Checkpoint not found: {exc}")
+                except Exception as exc:
+                    st.error(f"Branch failed: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 12. SWARM INTELLIGENCE — P2P Agent Bus
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🐝 Swarm Bus":
+    st.header("🐝 Swarm Intelligence — P2P Agent Bus")
+    st.caption(
+        "Agents communicate directly with each other via the Swarm Bus, "
+        "reducing Master AI load. Broadcast needs, find volunteers, "
+        "and route tasks peer-to-peer."
+    )
+
+    tab_caps, tab_broadcast, tab_volunteer, tab_inbox, tab_status = st.tabs([
+        "🧩 Capabilities", "📢 Broadcast", "🙋 Request Help", "📬 Inbox", "📊 Stats"
+    ])
+
+    # ── Tab 1: Register Capabilities ─────────────────────────────────
+    with tab_caps:
+        st.subheader("Register Agent Capabilities")
+        sw_agent = st.selectbox("Agent", _agent_names() or ["(none)"], key="sw_agent")
+        sw_topics = st.text_input("Topics (comma-separated)", placeholder="code_review,debugging,testing", key="sw_topics")
+        sw_desc   = st.text_input("Description", placeholder="Senior code reviewer", key="sw_desc")
+        sw_prio   = st.slider("Priority (higher = preferred volunteer)", 1, 100, 50, key="sw_prio")
+        if st.button("✅ Register", type="primary"):
+            topics = [t.strip() for t in sw_topics.split(",") if t.strip()]
+            if not topics:
+                st.warning("Enter at least one topic.")
+            else:
+                kernel.swarm_register(sw_agent, topics, description=sw_desc, priority=sw_prio)
+                st.success(f"**{sw_agent}** registered for: {topics}")
+
+        st.divider()
+        st.subheader("Current Capabilities")
+        caps = kernel.swarm_capabilities()
+        if not caps:
+            st.info("No agent capabilities registered yet.")
+        else:
+            for agent, topics in caps.items():
+                st.markdown(f"**{agent}**: {', '.join(topics)}")
+
+    # ── Tab 2: Broadcast ──────────────────────────────────────────────
+    with tab_broadcast:
+        st.subheader("Broadcast to a Topic")
+        bc_topic   = st.text_input("Topic", placeholder="project_update", key="bc_topic")
+        bc_payload = st.text_area("Message payload", key="bc_payload")
+        bc_sender  = st.selectbox("Sender", _agent_names() or ["(none)"], key="bc_sender")
+        if st.button("📢 Broadcast", type="primary"):
+            if not bc_topic.strip() or not bc_payload.strip():
+                st.warning("Topic and payload required.")
+            else:
+                received = kernel.swarm_broadcast(bc_topic.strip(), bc_payload.strip(), bc_sender)
+                st.success(f"Message delivered to {len(received)} agent(s): {received}")
+
+    # ── Tab 3: Request Help (Volunteer) ──────────────────────────────
+    with tab_volunteer:
+        st.subheader("Request Help from a Volunteer")
+        vh_topic   = st.text_input("Capability topic needed", placeholder="code_review", key="vh_topic")
+        vh_payload = st.text_area("Task payload for the volunteer", key="vh_payload")
+        vh_sender  = st.selectbox("Requesting agent", _agent_names() or ["(none)"], key="vh_sender")
+        if st.button("🙋 Request Help", type="primary"):
+            if not vh_topic.strip() or not vh_payload.strip():
+                st.warning("Topic and payload required.")
+            else:
+                with st.spinner("Finding volunteer..."):
+                    result = kernel.swarm_request_help(vh_topic.strip(), vh_payload.strip(), vh_sender)
+                    if result["resolved"]:
+                        st.success(f"🙋 Volunteer found: **{result['volunteer']}**")
+                        st.info(f"Message delivered to {result['volunteer']}'s inbox.")
+                    else:
+                        st.warning(f"No volunteer available for topic **{vh_topic.strip()}**.")
+
+    # ── Tab 4: Read Inbox ─────────────────────────────────────────────
+    with tab_inbox:
+        st.subheader("Read Agent Inbox")
+        inbox_agent = st.selectbox("Agent", _agent_names() or ["(none)"], key="inbox_agent")
+        if st.button("📬 Read Messages", type="primary"):
+            msgs = kernel.swarm_get_messages(inbox_agent, unread_only=True)
+            if not msgs:
+                st.info(f"No unread messages for **{inbox_agent}**.")
+            else:
+                for m in msgs:
+                    with st.expander(f"[{m['topic']}] from {m['sender']} — {m['message_id'][:8]}…"):
+                        st.write(m["payload"])
+
+    # ── Tab 5: Stats ──────────────────────────────────────────────────
+    with tab_status:
+        st.subheader("Swarm Bus Statistics")
+        if st.button("🔄 Refresh"):
+            st.rerun()
+        stats = kernel.swarm_stats()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Registered Agents", stats.get("registered_agents", 0))
+        c2.metric("Topics", stats.get("topics", 0))
+        c3.metric("Total Messages", stats.get("total_messages", 0))
+        pending = stats.get("pending_inboxes", {})
+        if pending:
+            st.markdown("**Unread messages per agent:**")
+            for agent, count in pending.items():
+                st.markdown(f"- **{agent}**: {count} unread")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 13. TOOL SYNTHESIZER — JIT Tool Creation
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🔨 Tool Synthesizer":
+    st.header("🔨 Just-in-Time Tool Synthesis")
+    st.caption(
+        "Give the Master AI an API documentation snippet and it will write a Python "
+        "tool function, validate it for security, and register it live — "
+        "no deployment required."
+    )
+
+    tab_synth, tab_list, tab_source = st.tabs(["⚗️ Synthesize", "📋 Synthesized Tools", "🔍 View Source"])
+
+    # ── Tab 1: Synthesize ─────────────────────────────────────────────
+    with tab_synth:
+        st.subheader("Generate a New Tool")
+        ts_name = st.text_input(
+            "Tool name (snake_case)", placeholder="stripe_charge_tool", key="ts_name"
+        )
+        ts_desc = st.text_input(
+            "Description", placeholder="Create a Stripe payment charge", key="ts_desc"
+        )
+        ts_doc = st.text_area(
+            "API Documentation",
+            placeholder="Paste API docs, cURL examples, or OpenAPI YAML here…",
+            height=250,
+            key="ts_doc",
+        )
+        st.info(
+            "Security note: Generated code is AST-validated before execution. "
+            "Only stdlib imports allowed (json, urllib, re, datetime, base64)."
+        )
+        if st.button("⚗️ Synthesize Tool", type="primary"):
+            if not ts_name.strip() or not ts_doc.strip():
+                st.warning("Tool name and API documentation are required.")
+            else:
+                with st.spinner(f"Synthesizing **{ts_name.strip()}**…"):
+                    try:
+                        result = kernel.synthesize_tool(
+                            name=ts_name.strip(),
+                            api_doc=ts_doc.strip(),
+                            description=ts_desc.strip(),
+                        )
+                        st.success(
+                            f"✅ Tool **{result['name']}** synthesized and registered! "
+                            f"All agents can now use it."
+                        )
+                        st.json(result)
+                    except Exception as exc:
+                        st.error(f"Synthesis failed: {exc}")
+
+    # ── Tab 2: List Synthesized Tools ─────────────────────────────────
+    with tab_list:
+        st.subheader("All Synthesized Tools")
+        if st.button("🔄 Refresh"):
+            st.rerun()
+        tools = kernel.list_synthesized_tools()
+        if not tools:
+            st.info("No tools synthesized yet.")
+        else:
+            for t in tools:
+                with st.expander(f"🔧 **{t['name']}** — {t['description'][:80]}"):
+                    st.caption(f"API doc: {t['api_doc_snippet'][:200]}")
+                    if st.button(f"🗑️ Delete {t['name']}", key=f"del_tool_{t['name']}"):
+                        kernel.delete_synthesized_tool(t["name"])
+                        st.success(f"Deleted **{t['name']}**.")
+                        st.rerun()
+
+    # ── Tab 3: View Source ────────────────────────────────────────────
+    with tab_source:
+        st.subheader("View Synthesized Tool Source Code")
+        tools = kernel.list_synthesized_tools()
+        if not tools:
+            st.info("No synthesized tools to inspect.")
+        else:
+            src_sel = st.selectbox("Select tool", [t["name"] for t in tools], key="src_sel")
+            source  = kernel.get_synthesized_tool_source(src_sel)
+            if source:
+                st.code(source, language="python")
+            else:
+                st.warning("Source not found.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 14. COMPUTER USE — Multi-Modal GUI Navigation
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🖥️ Computer Use":
+    st.header("🖥️ Multi-Modal Computer Use")
+    st.caption(
+        "Give AetheerAI eyes and hands. It captures the screen, uses AI vision to "
+        "understand it, and controls the mouse/keyboard to achieve your goal — "
+        "integrating with any legacy app that has no API."
+    )
+
+    tab_nav, tab_screen, tab_config, tab_log = st.tabs([
+        "🎯 Navigate", "📸 Screenshot", "⚙️ Configuration", "📋 Action Log"
+    ])
+
+    # ── Tab 1: Navigate ───────────────────────────────────────────────
+    with tab_nav:
+        st.subheader("Autonomous Navigation")
+        cu_status = kernel.computer_status()
+        mode_badge = "🔵 DRY RUN" if cu_status.get("dry_run") else "🟢 LIVE"
+        st.markdown(f"**Mode:** {mode_badge}")
+
+        cu_goal  = st.text_area(
+            "Goal",
+            placeholder="Open Notepad and type 'Hello from AetheerAI'",
+            key="cu_goal",
+        )
+        cu_steps = st.slider("Max steps", 1, 30, 10, key="cu_steps")
+
+        if not cu_status.get("dry_run"):
+            st.warning(
+                "⚠️ **LIVE MODE**: AetheerAI will control your mouse and keyboard. "
+                "Make sure the correct app window is visible. "
+                "Press **ESC** in the terminal to abort pyautogui at any time."
+            )
+
+        if st.button("🎯 Start Navigation", type="primary"):
+            if not cu_goal.strip():
+                st.warning("Enter a goal.")
+            else:
+                with st.spinner(f"Navigating toward: _{cu_goal.strip()[:80]}_"):
+                    try:
+                        result = kernel.computer_navigate(cu_goal.strip(), max_steps=cu_steps)
+                        if result["achieved"]:
+                            st.success(
+                                f"✅ Goal achieved in **{result['steps_taken']}** step(s) "
+                                f"({result['elapsed_secs']:.1f}s)"
+                            )
+                        else:
+                            st.warning(
+                                f"Goal not achieved within {cu_steps} steps. "
+                                f"Last screen state: {result['final_result'][:200]}"
+                            )
+
+                        if "action_log" in st.session_state:
+                            st.session_state["cu_action_log"] = result["action_log"]
+                        else:
+                            st.session_state["cu_action_log"] = result["action_log"]
+
+                        with st.expander("Action Log"):
+                            for entry in result["action_log"]:
+                                icon = "✅" if entry.get("success") else "❌"
+                                st.markdown(
+                                    f"{icon} **Step {entry.get('step','')}** "
+                                    f"— {entry.get('action_type','')} "
+                                    f"— _{entry.get('reasoning','')}_"
+                                )
+                    except Exception as exc:
+                        st.error(f"Navigation failed: {exc}")
+
+    # ── Tab 2: Screenshot ─────────────────────────────────────────────
+    with tab_screen:
+        st.subheader("Live Screenshot & AI Description")
+        if st.button("📸 Capture Screen", type="primary"):
+            with st.spinner("Capturing..."):
+                img_b64 = kernel.computer_screenshot()
+                desc    = kernel.computer_describe_screen()
+            if img_b64:
+                import base64 as _b64_cu
+                st.image(
+                    f"data:image/png;base64,{img_b64}",
+                    caption="Current screen",
+                    use_container_width=True,
+                )
+            else:
+                st.info("Screen capture unavailable. Install `mss` or `Pillow` for live screenshots.")
+            st.markdown("**AI Description:**")
+            st.write(desc)
+
+    # ── Tab 3: Configuration ──────────────────────────────────────────
+    with tab_config:
+        st.subheader("Computer Use Configuration")
+        cu_s = kernel.computer_status()
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Screen", f"{cu_s.get('screen_width','?')} × {cu_s.get('screen_height','?')}")
+        c2.metric("pyautogui", "✅" if cu_s.get("pyautogui_ok") else "❌ not installed")
+        c3.metric("mss", "✅" if cu_s.get("mss_ok") else "❌ not installed")
+
+        new_dry    = st.toggle("Dry Run (plan only, no real input)", value=cu_s.get("dry_run", True), key="cu_dry")
+        new_steps  = st.slider("Default max steps", 1, 50, cu_s.get("max_steps", 15), key="cu_max_steps")
+        new_approv = st.toggle("Require approval before each action", value=cu_s.get("require_approval", False), key="cu_approv")
+
+        if st.button("💾 Apply Config", type="primary"):
+            updated = kernel.computer_configure(
+                dry_run=new_dry,
+                max_steps=new_steps,
+                require_approval=new_approv,
+            )
+            st.success("Configuration updated.")
+            st.json(updated)
+
+        if not cu_s.get("pyautogui_ok") or not cu_s.get("mss_ok"):
+            st.warning(
+                "Some optional dependencies are missing. "
+                "To enable live control:\n"
+                "```\npip install mss pyautogui Pillow\n```"
+            )
+
+    # ── Tab 4: Action Log ─────────────────────────────────────────────
+    with tab_log:
+        st.subheader("Last Navigation Action Log")
+        log = st.session_state.get("cu_action_log", [])
+        if not log:
+            st.info("Run a navigation task to see the action log here.")
+        else:
+            for entry in log:
+                icon = "✅" if entry.get("success") else "❌"
+                st.markdown(
+                    f"{icon} **Step {entry.get('step','')}** | "
+                    f"`{entry.get('action_type','')}` "
+                    f"at ({entry.get('x','?')}, {entry.get('y','?')}) "
+                    f"— _{entry.get('reasoning','')}_"
+                )

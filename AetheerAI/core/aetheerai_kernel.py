@@ -28,6 +28,11 @@ from core.template_registry import TemplateRegistry
 from core.self_improve import SelfImproveCoordinator
 from core.self_healer import SelfHealingDebugger
 from core.mcp_bridge import InteropBridge
+from core.priority_controller import PriorityController, ConstitutionRule, ActionOutcome
+from core.state_checkpoint import CheckpointManager, CheckpointStore
+from core.swarm_bus import SwarmBus
+from core.tool_synthesizer import ToolSynthesizer
+from core.computer_use import ComputerUseAgent
 from evals.benchmark_runner import BenchmarkRunner
 from tools.tool_manager import ToolManager
 from ai.ai_adapter import AIAdapter
@@ -95,6 +100,27 @@ class AetheerAiKernel:
             tool_manager=self.tool_manager,
             workflow_engine=self.workflow_engine,
             registry=self.registry,
+        )
+        # ── Feature 5: Global Priority Controller & Constitution ──────────
+        self.priority_controller = PriorityController(
+            ai_adapter=self.ai_adapter,
+            audit_logger=_audit,
+        )
+        self.workflow_engine.priority_controller = self.priority_controller
+        # ── Feature 6: State Checkpointing ───────────────────────────────
+        self.checkpoint_manager = CheckpointManager()
+        self.workflow_engine.checkpoint_manager = self.checkpoint_manager
+        # ── Feature 7: Swarm P2P Bus ──────────────────────────────────────
+        self.swarm_bus = SwarmBus()
+        # ── Feature 8: JIT Tool Synthesizer ──────────────────────────────
+        self.tool_synthesizer = ToolSynthesizer(
+            ai_adapter=self.ai_adapter,
+            tool_manager=self.tool_manager,
+        )
+        # ── Feature 9: Computer Use ───────────────────────────────────────
+        self.computer_use = ComputerUseAgent(
+            ai_adapter=self.ai_adapter,
+            audit_logger=_audit,
         )
         logger.info("AetheerAI — An AI Master!! kernel ready.")
 
@@ -326,6 +352,260 @@ class AetheerAiKernel:
     def reset_agent_call_count(self, agent_name: str) -> None:
         """Reset the per-task tool call counter for *agent_name*."""
         self.manifest_guard.reset_call_count(agent_name)
+
+    # ------------------------------------------------------------------
+    # Feature 5 — Global Priority Controller & Constitution
+    # ------------------------------------------------------------------
+
+    def add_constitution_rule(self, rule: "ConstitutionRule") -> None:
+        """Add a business rule to the active Constitution."""
+        self.priority_controller.add_rule(rule)
+
+    def remove_constitution_rule(self, name: str) -> bool:
+        """Remove a rule from the Constitution by name. Returns True if removed."""
+        return self.priority_controller.remove_rule(name)
+
+    def set_constitution_context(self, context: str) -> None:
+        """
+        Switch the operational context (e.g. 'product_launch', 'cost_saving').
+
+        Context-scoped rules only fire when the matching context is active.
+        """
+        self.priority_controller.set_context(context)
+
+    def evaluate_action(self, agent_name: str, action_summary: str) -> dict:
+        """
+        Evaluate a proposed agent action against the active Constitution.
+
+        Returns a dict with keys: outcome, reasoning, violated_rule.
+        """
+        decision = self.priority_controller.evaluate(agent_name, action_summary)
+        return decision.to_dict()
+
+    def resolve_agent_conflict(
+        self,
+        agent_a: str, action_a: str,
+        agent_b: str, action_b: str,
+    ) -> dict:
+        """
+        Ask the Priority Controller to resolve a conflict between two agents.
+
+        Returns a dict with keys: winner, loser, winning_action, reasoning.
+        """
+        res = self.priority_controller.resolve_conflict(agent_a, action_a, agent_b, action_b)
+        return {
+            "winner": res.winner, "loser": res.loser,
+            "winning_action": res.winning_action,
+            "losing_action": res.losing_action,
+            "reasoning": res.reasoning,
+        }
+
+    def constitution_rules(self) -> list[dict]:
+        """Return all active Constitution rules (sorted by priority)."""
+        return self.priority_controller.list_rules()
+
+    def constitution_stats(self) -> dict:
+        """Return evaluation statistics for the Priority Controller."""
+        return self.priority_controller.stats()
+
+    def constitution_history(self, limit: int = 50) -> list[dict]:
+        """Return the last *limit* evaluation decisions."""
+        return self.priority_controller.decision_history(limit=limit)
+
+    # ------------------------------------------------------------------
+    # Feature 6 — State Checkpointing / Time-Travel Debugging
+    # ------------------------------------------------------------------
+
+    def new_checkpoint_session(self) -> str:
+        """Start a new checkpoint session. Returns the session ID."""
+        return self.checkpoint_manager.new_session()
+
+    def list_checkpoint_sessions(self) -> list[str]:
+        """Return all saved session IDs."""
+        return self.checkpoint_manager.list_sessions()
+
+    def list_checkpoints(self, session_id: str | None = None) -> list[dict]:
+        """Return all checkpoints for a session as dicts."""
+        return [c.to_dict() for c in self.checkpoint_manager.list_checkpoints(session_id)]
+
+    def rewind_to_checkpoint(
+        self,
+        checkpoint_id: str,
+        revised_task: str | None = None,
+    ) -> dict:
+        """
+        Rewind to a prior pipeline step.
+
+        Returns the checkpoint state (with optionally revised task) as a dict.
+        To resume execution, call run_agent(agent_name, checkpoint["task"]).
+        """
+        cp = self.checkpoint_manager.rewind_to(checkpoint_id, revised_task=revised_task)
+        return cp.to_dict()
+
+    def branch_from_checkpoint(self, checkpoint_id: str) -> str:
+        """Create a new session branching from a specific checkpoint. Returns new session_id."""
+        return self.checkpoint_manager.branch(checkpoint_id)
+
+    def delete_checkpoint_session(self, session_id: str) -> int:
+        """Delete all checkpoints for a session. Returns number deleted."""
+        return self.checkpoint_manager.delete_session(session_id)
+
+    def checkpoint_session_summary(self, session_id: str | None = None) -> dict:
+        """Return a human-readable summary of a session's checkpoints."""
+        return self.checkpoint_manager.session_summary(session_id)
+
+    # ------------------------------------------------------------------
+    # Feature 7 — Swarm P2P Messaging Bus
+    # ------------------------------------------------------------------
+
+    def swarm_register(
+        self,
+        agent_name: str,
+        topics: list[str],
+        description: str = "",
+        priority: int = 50,
+    ) -> None:
+        """Register an agent's capabilities on the Swarm Bus."""
+        self.swarm_bus.register_capabilities(
+            agent_name, topics, description=description, priority=priority
+        )
+
+    def swarm_broadcast(self, topic: str, payload: str, sender: str) -> list[str]:
+        """Broadcast a message to all agents subscribed to *topic*."""
+        return self.swarm_bus.broadcast(topic=topic, payload=payload, sender=sender)
+
+    def swarm_request_help(
+        self,
+        topic: str,
+        payload: str,
+        sender: str,
+    ) -> dict:
+        """
+        Broadcast a capability need and return the best-matched volunteer.
+
+        Returns a dict with keys: topic, sender, volunteer (agent name or None),
+        resolved (bool).
+        """
+        req = self.swarm_bus.request_help(topic=topic, payload=payload, sender=sender)
+        return {
+            "topic": req.topic, "sender": req.sender,
+            "volunteer": req.volunteer, "resolved": req.resolved,
+        }
+
+    async def swarm_request_help_async(
+        self,
+        topic: str,
+        payload: str,
+        sender: str,
+    ) -> dict:
+        """Async version of swarm_request_help that actually runs the volunteer."""
+        req = await self.swarm_bus.request_help_async(
+            topic=topic, payload=payload, sender=sender,
+            workflow_engine=self.workflow_engine,
+        )
+        return {
+            "topic": req.topic, "sender": req.sender,
+            "volunteer": req.volunteer, "resolved": req.resolved,
+            "response": req.response,
+        }
+
+    def swarm_get_messages(self, agent_name: str, unread_only: bool = True) -> list[dict]:
+        """Drain unread messages from an agent's inbox."""
+        return [m.to_dict() for m in self.swarm_bus.get_messages(agent_name, unread_only=unread_only)]
+
+    def swarm_stats(self) -> dict:
+        """Return Swarm Bus statistics."""
+        return self.swarm_bus.stats()
+
+    def swarm_capabilities(self) -> dict:
+        """Return all registered agent capabilities."""
+        return self.swarm_bus.list_capabilities()
+
+    # ------------------------------------------------------------------
+    # Feature 8 — JIT Tool Synthesis
+    # ------------------------------------------------------------------
+
+    def synthesize_tool(
+        self,
+        name: str,
+        api_doc: str,
+        description: str = "",
+    ) -> dict:
+        """
+        Generate a Python tool from an API documentation snippet.
+
+        The tool is validated, registered in the ToolManager immediately,
+        and persisted to disk for future restarts.
+
+        Returns a summary dict with keys: name, description, created_at.
+        """
+        tool = self.tool_synthesizer.synthesize(name=name, api_doc=api_doc, description=description)
+        return {"name": tool.name, "description": tool.description, "created_at": tool.created_at}
+
+    def list_synthesized_tools(self) -> list[dict]:
+        """Return all JIT-synthesized tools."""
+        return self.tool_synthesizer.list_synthesized()
+
+    def get_synthesized_tool_source(self, name: str) -> str | None:
+        """Return the source code of a synthesized tool."""
+        return self.tool_synthesizer.get_source(name)
+
+    def delete_synthesized_tool(self, name: str) -> bool:
+        """Delete a synthesized tool from memory, disk, and ToolManager."""
+        return self.tool_synthesizer.delete(name)
+
+    # ------------------------------------------------------------------
+    # Feature 9 — Computer Use (GUI Navigation)
+    # ------------------------------------------------------------------
+
+    def computer_screenshot(self) -> str | None:
+        """Capture the current screen as a base64-encoded PNG. Returns None if unavailable."""
+        return self.computer_use.screenshot_b64()
+
+    def computer_describe_screen(self, goal: str = "") -> str:
+        """Ask the AI to describe the current screen state."""
+        return self.computer_use.describe_screen(goal=goal)
+
+    def computer_navigate(self, goal: str, max_steps: int = 15) -> dict:
+        """
+        Autonomously navigate the computer to achieve *goal*.
+
+        Returns a NavigationResult as a dict with keys:
+        goal, achieved, steps_taken, final_result, action_log, elapsed_secs.
+        """
+        result = self.computer_use.navigate_to_goal(goal=goal, max_steps=max_steps)
+        return {
+            "goal":         result.goal,
+            "achieved":     result.achieved,
+            "steps_taken":  result.steps_taken,
+            "final_result": result.final_result,
+            "action_log":   result.action_log,
+            "elapsed_secs": result.elapsed_secs,
+        }
+
+    def computer_configure(
+        self,
+        dry_run: bool | None = None,
+        max_steps: int | None = None,
+        require_approval: bool | None = None,
+    ) -> dict:
+        """
+        Reconfigure the ComputerUseAgent at runtime.
+
+        Pass only the parameters you want to change; others remain unchanged.
+        Returns the updated status dict.
+        """
+        if dry_run is not None:
+            self.computer_use.dry_run = dry_run
+        if max_steps is not None:
+            self.computer_use.max_steps = max_steps
+        if require_approval is not None:
+            self.computer_use.require_approval = require_approval
+        return self.computer_use.status()
+
+    def computer_status(self) -> dict:
+        """Return ComputerUseAgent capabilities and configuration."""
+        return self.computer_use.status()
 
     # ------------------------------------------------------------------
     # Agent management
