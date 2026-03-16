@@ -26,10 +26,15 @@ from core.exporter import ExporterService
 from core.compiler import CompilerService
 from core.template_registry import TemplateRegistry
 from core.self_improve import SelfImproveCoordinator
+from core.self_healer import SelfHealingDebugger
+from core.mcp_bridge import InteropBridge
 from evals.benchmark_runner import BenchmarkRunner
 from tools.tool_manager import ToolManager
 from ai.ai_adapter import AIAdapter
 from memory.memory_manager import MemoryManager
+from memory.tiered_memory import TieredMemoryManager
+from security.intent_manifest import ManifestGuard, IntentManifest, ManifestViolation
+from security.audit_logger import AuditLogger
 from utils.json_parser import extract_json, ParseError
 
 logging.basicConfig(level=logging.INFO, format="[AetheerAI] %(levelname)s: %(message)s")
@@ -47,7 +52,10 @@ class AetheerAiKernel:
         self.ai_adapter = AIAdapter(provider=ai_provider, model=model)
         self.memory = MemoryManager()
         self.registry = AgentRegistry()
-        self.tool_manager = ToolManager()
+        # ── Feature 4: Intent Manifest guard (wired into ToolManager) ───────
+        _audit = AuditLogger.default()
+        self.manifest_guard = ManifestGuard(audit_logger=_audit)
+        self.tool_manager = ToolManager(audit_logger=_audit, manifest_guard=self.manifest_guard)
         self.skill_engine = SkillEngine(registry=self.registry, ai_adapter=None)  # ai_adapter set below
         self.factory = AgentFactory(
             registry=self.registry,
@@ -60,6 +68,11 @@ class AetheerAiKernel:
             memory=self.memory,
             tool_manager=self.tool_manager,
         )
+        # ── Feature 1: Self-Healing Debugger (wired into WorkflowEngine) ──────
+        self.self_healer = SelfHealingDebugger(
+            ai_adapter=self.ai_adapter, memory=self.memory
+        )
+        self.workflow_engine.self_healer = self.self_healer
         # Inject engine into tools that need cross-agent comms (Pattern 2)
         self.tool_manager.inject_engine(self.workflow_engine)
         self.team_manager = TeamManager(registry=self.registry)
@@ -75,6 +88,14 @@ class AetheerAiKernel:
         self.self_improver = SelfImproveCoordinator(eval_runner=self.eval_runner)
         # Wire AI adapter into skill engine after creation
         self.skill_engine.ai_adapter = self.ai_adapter
+        # ── Feature 3: Three-Tier Memory ─────────────────────────────────
+        self.tiered_memory = TieredMemoryManager(archival_manager=self.memory)
+        # ── Feature 2: MCP & A2A Interoperability bridge ─────────────────
+        self.interop = InteropBridge(
+            tool_manager=self.tool_manager,
+            workflow_engine=self.workflow_engine,
+            registry=self.registry,
+        )
         logger.info("AetheerAI — An AI Master!! kernel ready.")
 
     @staticmethod
@@ -142,6 +163,169 @@ class AetheerAiKernel:
         self.workflow_engine.feedback_callback_async = async_callback
         state = "ENABLED" if enabled else "DISABLED"
         logger.info("HITL mode %s (callback=%s).", state, callback.__name__ if callback else "console")
+
+    # ------------------------------------------------------------------
+    # Feature 1 — Self-Healing Debugger
+    # ------------------------------------------------------------------
+
+    def set_self_healing(self, enabled: bool = True, max_cycles: int = 2) -> None:
+        """
+        Enable or disable the autonomous Self-Healing Debugger.
+
+        When enabled, failed sub-agents are silently diagnosed by the Master AI
+        and re-run with patched instructions — up to *max_cycles* times —
+        before surfacing the error to the user.
+
+        Parameters
+        ----------
+        enabled    : True to activate healing (default), False to disable.
+        max_cycles : Maximum healing attempts per failed task (default 2).
+        """
+        if enabled:
+            self.self_healer = SelfHealingDebugger(
+                ai_adapter=self.ai_adapter,
+                memory=self.memory,
+                max_healing_cycles=max_cycles,
+            )
+            self.workflow_engine.self_healer = self.self_healer
+            logger.info("SelfHealer: ENABLED (max_cycles=%d).", max_cycles)
+        else:
+            self.workflow_engine.self_healer = None
+            logger.info("SelfHealer: DISABLED.")
+
+    # ------------------------------------------------------------------
+    # Feature 2 — MCP & A2A Interoperability
+    # ------------------------------------------------------------------
+
+    def connect_mcp_server(self, server_url: str, namespace: str | None = None) -> int:
+        """
+        Connect to an external MCP tool server and import its tools.
+
+        Parameters
+        ----------
+        server_url : HTTP URL of the MCP JSON-RPC server.
+        namespace  : Optional prefix for imported tool names (e.g. "anthropic").
+
+        Returns the number of tools imported.
+        """
+        return self.interop.connect_mcp_server(server_url, namespace=namespace)
+
+    def start_mcp_server(self, host: str = "0.0.0.0", port: int = 8765) -> None:
+        """Expose AetheerAI's registered tools as an MCP server on *host:port*."""
+        self.interop.start_mcp_server(host=host, port=port)
+        logger.info("MCP server started on %s:%d.", host, port)
+
+    def connect_a2a_agent(self, agent_url: str):
+        """
+        Connect to an external A2A-compatible agent and return its client handle.
+        The client can be used to delegate tasks: client.send_task("...")
+        """
+        return self.interop.connect_a2a_agent(agent_url)
+
+    def delegate_to_agent(self, agent_url: str, task: str) -> str:
+        """
+        Delegate a task directly to an external A2A agent and return its response.
+        Auto-connects to the agent if not previously connected.
+        """
+        return self.interop.delegate_task(agent_url, task)
+
+    def start_a2a_server(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 8766,
+        agent_name: str = "AetheerAI",
+    ) -> None:
+        """Expose AetheerAI as an A2A-compatible agent endpoint on *host:port*."""
+        self.interop.start_a2a_server(host=host, port=port, agent_name=agent_name)
+        logger.info("A2A server started on %s:%d.", host, port)
+
+    def interop_status(self) -> dict:
+        """Return a status summary of all active interoperability connections."""
+        return self.interop.status()
+
+    # ------------------------------------------------------------------
+    # Feature 3 — Three-Tier Memory
+    # ------------------------------------------------------------------
+
+    def remember(self, key: str, value, tier: str = "recall") -> None:
+        """
+        Store a value in tiered memory.
+
+        Parameters
+        ----------
+        key   : Arbitrary string key.
+        value : Any JSON-serializable value.
+        tier  : "core" (RAM), "recall" (disk), or "archival" (ChromaDB).
+                Defaults to "recall" (persisted on disk, survives restarts).
+        """
+        self.tiered_memory.remember(key, value, tier=tier)
+
+    def retrieve(self, key: str, default=None):
+        """
+        Retrieve a value by checking Core → Recall → Archival in order.
+        Returns *default* if not found in any tier.
+        """
+        return self.tiered_memory.recall(key, default=default)
+
+    def memory_search(self, query: str, n_results: int = 5) -> list[dict]:
+        """Semantic search across Archival memory.  Returns list of {key, value, score}."""
+        return self.tiered_memory.search(query, n_results=n_results)
+
+    def consolidate_memory(self) -> dict:
+        """Flush Core → Recall, and Recall → Archival.  Returns count summary."""
+        return self.tiered_memory.consolidate()
+
+    def memory_summary(self) -> dict:
+        """Return current tier entry counts and configuration."""
+        return self.tiered_memory.tier_summary()
+
+    # ------------------------------------------------------------------
+    # Feature 4 — Intent Manifest & Kill-Switch Governance
+    # ------------------------------------------------------------------
+
+    def register_manifest(
+        self,
+        agent_name: str,
+        manifest: "IntentManifest",
+    ) -> None:
+        """
+        Assign an IntentManifest to an agent.
+
+        From this point any tool call by *agent_name* that violates the
+        manifest raises ManifestViolation and is logged to the audit trail.
+
+        Parameters
+        ----------
+        agent_name : Name of the agent to constrain.
+        manifest   : An IntentManifest instance (or use IntentManifest.read_only(),
+                     IntentManifest.no_network(), IntentManifest.admin() presets).
+
+        Example::
+
+            kernel.register_manifest(
+                "scraper_agent",
+                IntentManifest(
+                    allowed_tools={"web_search", "file_reader"},
+                    allowed_operations={"read", "network"},
+                    max_tool_calls=30,
+                ),
+            )
+        """
+        self.manifest_guard.register(agent_name, manifest)
+
+    def remove_manifest(self, agent_name: str) -> None:
+        """
+        Remove an agent's IntentManifest, reverting to RBAC-only enforcement.
+        """
+        self.manifest_guard.deregister(agent_name)
+
+    def list_manifests(self) -> dict:
+        """Return a summary of all currently active IntentManifests."""
+        return self.manifest_guard.list_manifests()
+
+    def reset_agent_call_count(self, agent_name: str) -> None:
+        """Reset the per-task tool call counter for *agent_name*."""
+        self.manifest_guard.reset_call_count(agent_name)
 
     # ------------------------------------------------------------------
     # Agent management

@@ -348,6 +348,10 @@ with st.sidebar:
         "👥 System Orchestrator",
         "🎓 Train AI",
         "⚙️ Settings & Export",
+        "🛡️ Governance",
+        "🔗 Interoperability",
+        "🧠 Memory OS",
+        "🔥 Self-Healer",
     ], label_visibility="collapsed")
 
     st.markdown("---")
@@ -1628,3 +1632,372 @@ elif page == "⚙️ Settings & Export":
                 st.error(f"Delete failed: {exc}")
     else:
         st.info("No agents to delete.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 6. GOVERNANCE — Intent Manifest & Kill-Switch
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🛡️ Governance":
+    st.header("🛡️ Intent Manifest & Kill-Switch Governance")
+    st.caption("Define per-agent security boundaries. Violations raise a ManifestViolation and halt execution immediately.")
+
+    from security.intent_manifest import IntentManifest, ManifestViolation
+
+    tab_reg, tab_active, tab_log = st.tabs(["📋 Register Manifest", "🗂️ Active Manifests", "🚨 Violation Log"])
+
+    # ── Tab 1: Register Manifest ──────────────────────────────────────
+    with tab_reg:
+        st.subheader("Register a Manifest for an Agent")
+
+        agent_names_gov = _agent_names()
+        if not agent_names_gov:
+            st.info("No agents found. Create an agent in the Agent Factory first.")
+        else:
+            gov_agent = st.selectbox("Select Agent", agent_names_gov, key="gov_agent_sel")
+
+            st.markdown("**Preset Policies**")
+            c1, c2, c3, c4 = st.columns(4)
+            preset_chosen = None
+            with c1:
+                if st.button("🔒 Read-Only", use_container_width=True):
+                    preset_chosen = IntentManifest.read_only()
+            with c2:
+                if st.button("🌐 No Network", use_container_width=True):
+                    preset_chosen = IntentManifest.no_network()
+            with c3:
+                if st.button("👑 Admin", use_container_width=True):
+                    preset_chosen = IntentManifest.admin()
+            with c4:
+                if st.button("💻 Sandboxed Coder", use_container_width=True):
+                    preset_chosen = IntentManifest.sandboxed_coder()
+
+            if preset_chosen is not None:
+                kernel.register_manifest(gov_agent, preset_chosen)
+                st.success(f"Manifest **{preset_chosen.description}** registered for **{gov_agent}**.")
+
+            st.markdown("---")
+            st.markdown("**Custom Policy**")
+
+            _all_tools = list(kernel.tool_manager._tools.keys()) if hasattr(kernel.tool_manager, "_tools") else []
+            allowed_tools = st.multiselect("Allowed Tools (empty = allow all)", _all_tools, key="gov_allowed_tools")
+            denied_tools  = st.multiselect("Denied Tools (always blocked)",  _all_tools, key="gov_denied_tools")
+            network_ok    = st.toggle("Allow network operations", value=True, key="gov_network")
+            max_calls     = st.slider("Max tool calls per task", 0, 200, 50, key="gov_max_calls")
+            desc          = st.text_input("Policy description", value="Custom policy", key="gov_desc")
+
+            if st.button("✅ Register Custom Manifest", type="primary"):
+                m = IntentManifest(
+                    allowed_tools=set(allowed_tools),
+                    denied_tools=set(denied_tools),
+                    network_allowed=network_ok,
+                    max_tool_calls=max_calls,
+                    description=desc,
+                )
+                kernel.register_manifest(gov_agent, m)
+                st.success(f"Custom manifest registered for **{gov_agent}**.")
+
+            if st.button("🗑️ Remove Manifest", type="secondary"):
+                kernel.remove_manifest(gov_agent)
+                st.success(f"Manifest removed for **{gov_agent}**.")
+
+    # ── Tab 2: Active Manifests ───────────────────────────────────────
+    with tab_active:
+        st.subheader("Active Agent Manifests")
+        manifests = kernel.list_manifests()
+        if not manifests:
+            st.info("No manifests registered yet.")
+        else:
+            for agent_name, m in manifests.items():
+                with st.expander(f"🤖 **{agent_name}** — {m.get('description', '')}"):
+                    st.json(m)
+
+    # ── Tab 3: Violation Log ──────────────────────────────────────────
+    with tab_log:
+        st.subheader("Manifest Violation Log")
+        import json as _json_gov
+        _audit_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "audit_log.jsonl")
+        if not os.path.exists(_audit_path):
+            st.info("No audit log found yet. Violations will be recorded here once they occur.")
+        else:
+            violations = []
+            with open(_audit_path, "r", encoding="utf-8") as _af:
+                for line in _af:
+                    try:
+                        entry = _json_gov.loads(line.strip())
+                        if "manifest" in entry.get("event", "").lower() or "violation" in entry.get("event", "").lower():
+                            violations.append(entry)
+                    except Exception:
+                        pass
+            if violations:
+                st.dataframe(violations, use_container_width=True)
+            else:
+                st.success("No manifest violations recorded.")
+
+        if st.button("🔄 Reset All Agent Call Counts"):
+            for an in _agent_names():
+                kernel.reset_agent_call_count(an)
+            st.success("All call counts reset.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7. INTEROPERABILITY — MCP & A2A
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🔗 Interoperability":
+    st.header("🔗 MCP & A2A Interoperability Hub")
+    st.caption("Connect AetheerAI to external MCP servers and Google A2A agents, or expose its capabilities to them.")
+
+    tab_mcp, tab_a2a, tab_servers, tab_status = st.tabs(
+        ["🔌 Connect MCP", "🤝 Connect A2A", "🖥️ Start Servers", "📊 Status"]
+    )
+
+    # ── Tab 1: Connect MCP ────────────────────────────────────────────
+    with tab_mcp:
+        st.subheader("Connect to External MCP Server")
+        mcp_url = st.text_input("MCP Server URL", placeholder="http://localhost:8765", key="iop_mcp_url")
+        mcp_ns  = st.text_input("Tool Namespace (optional prefix)", placeholder="external_", key="iop_mcp_ns")
+        if st.button("🔌 Connect MCP Server", type="primary"):
+            if not mcp_url:
+                st.warning("Please enter a server URL.")
+            else:
+                try:
+                    tools = kernel.connect_mcp_server(mcp_url, namespace=mcp_ns or "")
+                    st.success(f"Connected! Discovered **{len(tools)}** tools from {mcp_url}.")
+                    if tools:
+                        st.json(list(tools.keys()))
+                except Exception as exc:
+                    st.error(f"Connection failed: {exc}")
+
+    # ── Tab 2: Connect A2A ────────────────────────────────────────────
+    with tab_a2a:
+        st.subheader("Connect to A2A Agent")
+        a2a_url = st.text_input("Agent Base URL", placeholder="http://localhost:8766", key="iop_a2a_url")
+        if st.button("🤝 Fetch Agent Card", type="primary"):
+            if not a2a_url:
+                st.warning("Please enter an agent URL.")
+            else:
+                try:
+                    client = kernel.connect_a2a_agent(a2a_url)
+                    st.success(f"Agent card fetched from {a2a_url}.")
+                    if client and hasattr(client, "agent_card") and client.agent_card:
+                        st.json(client.agent_card)
+                except Exception as exc:
+                    st.error(f"Failed: {exc}")
+
+        st.markdown("---")
+        st.subheader("Delegate Task to A2A Agent")
+        delegate_url  = st.text_input("Agent URL", placeholder="http://localhost:8766", key="iop_delegate_url")
+        delegate_task = st.text_area("Task", placeholder="Summarise the quarterly report...", key="iop_delegate_task")
+        if st.button("🚀 Delegate Task", type="primary"):
+            if not delegate_url or not delegate_task:
+                st.warning("Enter both URL and task.")
+            else:
+                try:
+                    result = kernel.delegate_to_agent(delegate_url, delegate_task)
+                    st.success("Task delegated successfully.")
+                    st.write(result)
+                except Exception as exc:
+                    st.error(f"Delegation failed: {exc}")
+
+    # ── Tab 3: Start Servers ──────────────────────────────────────────
+    with tab_servers:
+        st.subheader("Expose AetheerAI as MCP Server")
+        mcs_host = st.text_input("Host", value="0.0.0.0", key="iop_mcs_host")
+        mcs_port = st.number_input("Port", value=8765, min_value=1024, max_value=65535, key="iop_mcs_port")
+        if st.button("▶️ Start MCP Server", type="primary"):
+            try:
+                kernel.start_mcp_server(host=mcs_host, port=int(mcs_port))
+                st.success(f"MCP server started on {mcs_host}:{mcs_port}")
+            except Exception as exc:
+                st.error(f"Failed: {exc}")
+
+        st.markdown("---")
+        st.subheader("Expose AetheerAI as A2A Server")
+        a2as_host  = st.text_input("Host", value="0.0.0.0", key="iop_a2as_host")
+        a2as_port  = st.number_input("Port", value=8766, min_value=1024, max_value=65535, key="iop_a2as_port")
+        a2as_agent = st.selectbox("Route tasks to agent", ["(first registered)"] + _agent_names(), key="iop_a2as_agent")
+        if st.button("▶️ Start A2A Server", type="primary"):
+            target = None if a2as_agent == "(first registered)" else a2as_agent
+            try:
+                kernel.start_a2a_server(host=a2as_host, port=int(a2as_port), agent_name=target)
+                st.success(f"A2A server started on {a2as_host}:{a2as_port}")
+            except Exception as exc:
+                st.error(f"Failed: {exc}")
+
+    # ── Tab 4: Status ─────────────────────────────────────────────────
+    with tab_status:
+        st.subheader("Interoperability Status")
+        if st.button("🔄 Refresh Status"):
+            st.rerun()
+        try:
+            status = kernel.interop_status()
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("MCP Connections", status.get("mcp_connections", 0))
+                st.metric("A2A Connections", status.get("a2a_connections", 0))
+            with col2:
+                st.metric("MCP Server Running", "✅" if status.get("mcp_server_running") else "❌")
+                st.metric("A2A Server Running", "✅" if status.get("a2a_server_running") else "❌")
+            with st.expander("Full Status JSON"):
+                st.json(status)
+        except Exception as exc:
+            st.error(f"Could not fetch status: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8. MEMORY OS — Three-Tier Memory Browser
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🧠 Memory OS":
+    st.header("🧠 Three-Tier Memory OS")
+    st.caption("Core (volatile) → Recall (LRU disk cache) → Archival (ChromaDB semantic store). Reads auto-promote hits to Core.")
+
+    tab_write, tab_read, tab_search, tab_consolidate, tab_summary = st.tabs(
+        ["✍️ Remember", "🔍 Recall", "🔎 Search", "♻️ Consolidate", "📊 Summary"]
+    )
+
+    # ── Tab 1: Remember ───────────────────────────────────────────────
+    with tab_write:
+        st.subheader("Store a Memory")
+        mem_key   = st.text_input("Key", placeholder="project:goals", key="mem_key")
+        mem_value = st.text_area("Value", placeholder="Build the best agentic OS...", key="mem_val")
+        mem_tier  = st.radio("Tier", ["core", "recall", "archival"], horizontal=True, key="mem_tier")
+        if st.button("💾 Remember", type="primary"):
+            if not mem_key or not mem_value:
+                st.warning("Key and value are required.")
+            else:
+                try:
+                    kernel.remember(mem_key, mem_value, tier=mem_tier)
+                    st.success(f"Stored **{mem_key}** in **{mem_tier}** tier.")
+                except Exception as exc:
+                    st.error(f"Failed: {exc}")
+
+    # ── Tab 2: Recall ─────────────────────────────────────────────────
+    with tab_read:
+        st.subheader("Retrieve a Memory")
+        recall_key = st.text_input("Key", placeholder="project:goals", key="recall_key")
+        if st.button("🔍 Retrieve", type="primary"):
+            if not recall_key:
+                st.warning("Enter a key.")
+            else:
+                try:
+                    val = kernel.retrieve(recall_key)
+                    if val is None:
+                        st.info(f"No memory found for key **{recall_key}**.")
+                    else:
+                        st.success("Found:")
+                        st.write(val)
+                except Exception as exc:
+                    st.error(f"Failed: {exc}")
+
+    # ── Tab 3: Search ─────────────────────────────────────────────────
+    with tab_search:
+        st.subheader("Semantic Memory Search")
+        search_query = st.text_input("Search query", placeholder="quarterly revenue goals", key="mem_search_q")
+        search_n     = st.slider("Max results", 1, 20, 5, key="mem_search_n")
+        if st.button("🔎 Search", type="primary"):
+            if not search_query:
+                st.warning("Enter a search query.")
+            else:
+                try:
+                    results = kernel.memory_search(search_query, n_results=search_n)
+                    if not results:
+                        st.info("No results found.")
+                    else:
+                        for i, r in enumerate(results, 1):
+                            with st.expander(f"Result {i}"):
+                                st.write(r)
+                except Exception as exc:
+                    st.error(f"Search failed: {exc}")
+
+    # ── Tab 4: Consolidate ────────────────────────────────────────────
+    with tab_consolidate:
+        st.subheader("Consolidate Memory Tiers")
+        st.info("Flushing Core → Recall persists hot in-memory keys to disk. Flushing Recall → Archival moves cached entries into ChromaDB for semantic search.")
+        flush_c2r = st.toggle("Flush Core → Recall", value=True, key="mem_c2r")
+        flush_r2a = st.toggle("Flush Recall → Archival", value=False, key="mem_r2a")
+        if st.button("♻️ Consolidate Now", type="primary"):
+            try:
+                kernel.consolidate_memory(flush_core_to_recall=flush_c2r, flush_recall_to_archival=flush_r2a)
+                st.success("Consolidation complete.")
+            except Exception as exc:
+                st.error(f"Consolidation failed: {exc}")
+
+    # ── Tab 5: Summary ────────────────────────────────────────────────
+    with tab_summary:
+        st.subheader("Memory Tier Summary")
+        if st.button("🔄 Refresh"):
+            st.rerun()
+        try:
+            summary = kernel.memory_summary()
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Core Entries",     summary.get("core_entries", 0))
+            c2.metric("Recall Entries",   summary.get("recall_entries", 0))
+            c3.metric("Recall Capacity",  summary.get("recall_capacity", 0))
+            c4.metric("Archival DB",      "✅" if summary.get("archival_available") else "❌")
+            with st.expander("Full JSON"):
+                st.json(summary)
+        except Exception as exc:
+            st.error(f"Could not fetch memory summary: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 9. SELF-HEALER — Autonomous Self-Healing Debugger
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🔥 Self-Healer":
+    st.header("🔥 Autonomous Self-Healing Debugger")
+    st.caption("When agents fail after all self-correction retries, the Self-Healer diagnoses the root cause via the Master AI and generates a patched task automatically.")
+
+    # ── Controls ──────────────────────────────────────────────────────
+    st.subheader("Controls")
+    healing_enabled = st.toggle(
+        "Enable Self-Healing",
+        value=(kernel.self_healer is not None),
+        key="sh_enabled",
+    )
+    max_cycles = st.slider("Max Healing Cycles", 1, 5, 2, key="sh_max_cycles")
+
+    if st.button("💾 Apply Settings", type="primary"):
+        kernel.set_self_healing(enabled=healing_enabled, max_cycles=max_cycles)
+        st.success(f"Self-healing {'enabled' if healing_enabled else 'disabled'} with max {max_cycles} cycle(s).")
+
+    # ── Status ────────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Current Status")
+    _sh = kernel.self_healer
+    if _sh is None:
+        st.warning("Self-Healer is **disabled**. Toggle above and apply settings to enable.")
+    else:
+        c1, c2 = st.columns(2)
+        c1.metric("Status", "✅ Active")
+        c2.metric("Max Cycles", _sh.max_healing_cycles)
+
+    # ── Healing Log ───────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Healing Log")
+    if st.button("🔄 Refresh Log"):
+        st.rerun()
+
+    _sh_active = kernel.self_healer
+    if _sh_active is not None and hasattr(_sh_active, "_history"):
+        history = _sh_active._history
+        if not history:
+            st.info("No healing sessions recorded yet.")
+        else:
+            total_healed = sum(1 for r in history.values() if r.healed)
+            total_failed = len(history) - total_healed
+            h1, h2, h3 = st.columns(3)
+            h1.metric("Total Sessions", len(history))
+            h2.metric("Healed", total_healed)
+            h3.metric("Failed", total_failed)
+
+            for task_id, record in list(history.items())[-20:]:
+                icon = "✅" if record.healed else "❌"
+                with st.expander(f"{icon} Task: {task_id[:60]}..."):
+                    st.markdown(f"**Agent:** {record.agent_name}")
+                    st.markdown(f"**Healed:** {record.healed} | **Cycles used:** {record.cycles_used}")
+                    for i, cycle in enumerate(record.cycles, 1):
+                        st.markdown(f"**Cycle {i}:**")
+                        st.markdown(f"- Root Cause: {cycle.get('root_cause', 'N/A')}")
+                        st.markdown(f"- Patch: {cycle.get('patch_instructions', 'N/A')}")
+                        st.markdown(f"- Outcome: {cycle.get('outcome', 'N/A')}")
+    else:
+        st.info("Enable Self-Healing and run some agents to see healing history here.")

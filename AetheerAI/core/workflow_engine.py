@@ -212,6 +212,7 @@ class WorkflowEngine:
             feedback_callback or _default_hitl_callback
         )
         self.feedback_callback_async = feedback_callback_async
+        self.self_healer = None   # SelfHealingDebugger | None (Feature 1)
 
     # ------------------------------------------------------------------
     # HITL gate helper (Fix 8)
@@ -420,6 +421,16 @@ class WorkflowEngine:
                 "WorkflowEngine: agent '%s' failed after %d self-correction attempts.",
                 agent.name, MAX_SELF_CORRECT_RETRIES,
             )
+            # ── Self-Healing Debugger (Feature 1) ─────────────────────
+            if self.self_healer is not None:
+                def _run_once(a, t):
+                    p = self._build_prompt(agent=a, task=t)
+                    return self.ai_adapter.chat(messages=[{"role": "user", "content": p}])
+                result = self.self_healer.heal(agent, task, _run_once, _looks_like_error)
+                if not _looks_like_error(result):
+                    agent.record_result(success=True)
+                    self.memory.save(key=f"workflow:{agent.name}:last", value=result)
+                    return self._hitl_gate(agent=agent, task=task, result=result)
             agent.record_result(success=False)
             self.memory.save(key=f"workflow:{agent.name}:last_error", value=result)
             return result
@@ -478,6 +489,17 @@ class WorkflowEngine:
             result = await self.ai_adapter.async_chat(messages=messages)
 
         success = not _looks_like_error(result)
+        # ── Self-Healing Debugger async (Feature 1) ─────────────────────
+        if not success and self.self_healer is not None:
+            async def _run_once_async(a, t):
+                p = self._build_prompt(agent=a, task=t)
+                return await self.ai_adapter.async_chat(
+                    messages=[{"role": "user", "content": p}]
+                )
+            result = await self.self_healer.heal_async(
+                agent, task, _run_once_async, _looks_like_error
+            )
+            success = not _looks_like_error(result)
         agent.record_result(success=success)
         key = f"workflow:{agent.name}:last" if success else f"workflow:{agent.name}:last_error"
         self.memory.save(key=key, value=result)

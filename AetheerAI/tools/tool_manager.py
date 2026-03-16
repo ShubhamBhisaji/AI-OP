@@ -112,11 +112,17 @@ class ToolManager:
     Destructive/high-risk tool calls go through the ApprovalGate (Fix 1).
     """
 
-    def __init__(self, policy_engine: PolicyEngine | None = None, audit_logger: AuditLogger | None = None):
+    def __init__(
+        self,
+        policy_engine: PolicyEngine | None = None,
+        audit_logger: AuditLogger | None = None,
+        manifest_guard=None,            # ManifestGuard | None (Feature 4)
+    ):
         self._tools: dict[str, Callable[..., Any]] = {}
         self._engine = None          # set later by inject_engine()
         self._policy = policy_engine or PolicyEngine()
         self._audit = audit_logger or AuditLogger.default()
+        self._manifest_guard = manifest_guard  # IntentManifest enforcement
         self._register_builtins()
 
     def inject_engine(self, engine) -> None:
@@ -162,6 +168,11 @@ class ToolManager:
         fn = self._tools.get(name)
         if fn is None:
             raise KeyError(f"Tool '{name}' is not registered.")
+
+        # ── Intent Manifest check (Feature 4) ────────────────────────
+        # Runs before RBAC so hard deny/allow-list kills calls instantly.
+        if self._manifest_guard is not None:
+            self._manifest_guard.check(agent_name, name)
 
         required = TOOL_PERMISSIONS.get(name, _DEFAULT_TOOL_PERMISSION)
         decision = self._policy.evaluate_tool_call(
