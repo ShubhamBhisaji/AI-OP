@@ -86,8 +86,9 @@ Commands:
   run_agent <name> <task...>       Run an agent on a task (inline)
   agent_info <name>                Show profile and performance of an agent
   build_application <app_name>     Build an application using a team of agents
-  run <agent> <app>                Launch a built app (Next.js/React/Python/HTML/.exe)
+  run <app_name>                   Launch a built app (Next.js/React/Python/HTML/.exe)
                                    Opens a new terminal window; auto-detects type
+                                   Looks in projects/<app_name> at workspace root
   chat <message...>                Chat directly with the AI
   switch_ai <provider> [model]     Switch AI provider (openai/claude/gemini/ollama/huggingface)
   add_api [provider] [key]         Add or update an AI provider API key
@@ -591,17 +592,20 @@ class CommandInterface:
         print(f"  Success  : {perf['success_rate'] * 100:.1f}%\n")
 
     def _cmd_run(self, args: list[str]) -> None:
-        if len(args) < 2:
-            print("Usage: run <agent_name> <app_name>")
-            print("  Looks in projects/<agent>/<app> for the built project.")
+        if len(args) < 1:
+            print("Usage: run <app_name>")
+            print("  Looks in projects/<app> for the built project.")
             return
-        agent_name = args[0]
-        app_name   = args[1]
+        # Support both 'run <app>' and legacy 'run <agent> <app>' forms
+        if len(args) >= 2:
+            app_name = args[1]
+        else:
+            app_name = args[0]
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        run_dir = os.path.join(project_root, "..", "projects", agent_name, app_name)
-        run_dir = os.path.normpath(run_dir)
+        workspace_root = os.path.dirname(project_root)
+        run_dir = os.path.normpath(os.path.join(workspace_root, "projects", app_name))
         if not os.path.isdir(run_dir):
-            print(f"  Error: No project '{app_name}' found for agent '{agent_name}'.")
+            print(f"  Error: No project '{app_name}' found.")
             print(f"  Expected: {run_dir}")
             return
         # Delegate to the shared launcher
@@ -631,7 +635,7 @@ class CommandInterface:
 
         # Re-run progress display after spinner clears
         files = result.get("files", [])
-        output_dir = result.get("output_dir", "agent_output/" + app_name)
+        output_dir = result.get("output_dir", "projects/" + app_name)
         total = len(files)
         w = len(str(total)) if total else 1
         for i, (rel_path, status) in enumerate(files, start=1):
