@@ -81,9 +81,15 @@ def email_tool(
         )
 
     smtp_host = os.environ.get("SMTP_HOST", _DEFAULT_SMTP_HOST)
-    smtp_port = int(os.environ.get("SMTP_PORT", _DEFAULT_SMTP_PORT))
+    try:
+        smtp_port = int(os.environ.get("SMTP_PORT", _DEFAULT_SMTP_PORT))
+    except (ValueError, TypeError):
+        smtp_port = _DEFAULT_SMTP_PORT
     imap_host = os.environ.get("IMAP_HOST", _DEFAULT_IMAP_HOST)
-    imap_port = int(os.environ.get("IMAP_PORT", _DEFAULT_IMAP_PORT))
+    try:
+        imap_port = int(os.environ.get("IMAP_PORT", _DEFAULT_IMAP_PORT))
+    except (ValueError, TypeError):
+        imap_port = _DEFAULT_IMAP_PORT
 
     action = (action or "").strip().lower()
     limit  = max(1, min(limit, _MAX_EMAILS))

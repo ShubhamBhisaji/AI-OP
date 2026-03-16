@@ -79,22 +79,23 @@ def ping_agent(
 
         response: str
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Already inside an async event loop (e.g., called from an async tool)
-                # — schedule the coroutine on the SAME loop from a thread-safe future.
-                import concurrent.futures
-                future = asyncio.run_coroutine_threadsafe(
-                    _engine.execute_async(target_agent, prompt), loop
-                )
-                response = future.result(timeout=120)
-            else:
-                response = loop.run_until_complete(
+            loop = asyncio.get_running_loop()
+            # Already inside a running event loop — schedule on the same loop
+            # from a thread-safe future to avoid nesting run_until_complete.
+            import concurrent.futures
+            future = asyncio.run_coroutine_threadsafe(
+                _engine.execute_async(target_agent, prompt), loop
+            )
+            response = future.result(timeout=120)
+        except RuntimeError:
+            # No running event loop — start one via asyncio.run(), or fall back
+            # to the synchronous executor if that also fails.
+            try:
+                response = asyncio.run(
                     _engine.execute_async(target_agent, prompt)
                 )
-        except RuntimeError:
-            # No event loop available — fall back to the synchronous executor
-            response = _engine.execute(target_agent, prompt)
+            except Exception:
+                response = _engine.execute(target_agent, prompt)
 
         return f"Response from {target_agent_name}:\n{response}"
 
