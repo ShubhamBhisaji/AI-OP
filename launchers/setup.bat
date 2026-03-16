@@ -68,23 +68,49 @@ echo.
 echo  ?? [Step 1 / 8]  Checking Python ??????????????????????????????????????
 echo.
 set "PY="
+set "PY_ARGS="
+set "PYVER="
 
-where python >nul 2>&1
-if %errorlevel%==0 (
-    for /f "tokens=2" %%V in ('python --version 2^>^&1') do (
-        set "PYVER=%%V"
-        set "PY=python"
-    )
+python --version >nul 2>&1
+if not errorlevel 1 (
+    for /f "tokens=2" %%V in ('python --version 2^>^&1') do set "PYVER=%%V"
+    set "PY=python"
+    set "PY_ARGS="
     goto :python_found
 )
 
-where py >nul 2>&1
-if %errorlevel%==0 (
-    for /f "tokens=2" %%V in ('py --version 2^>^&1') do (
-        set "PYVER=%%V"
+for %%L in (3.13 3.12 3.11 3.10 3) do (
+    py -%%L --version >nul 2>&1
+    if not errorlevel 1 (
+        for /f "tokens=2" %%V in ('py -%%L --version 2^>^&1') do set "PYVER=%%V"
         set "PY=py"
+        set "PY_ARGS=-%%L"
+        goto :python_found
     )
-    goto :python_found
+)
+
+for /d %%D in ("%LocalAppData%\Programs\Python\Python3*") do (
+    if exist "%%D\python.exe" (
+        "%%D\python.exe" --version >nul 2>&1
+        if not errorlevel 1 (
+            for /f "tokens=2" %%V in ('"%%D\python.exe" --version 2^>^&1') do set "PYVER=%%V"
+            set "PY=%%D\python.exe"
+            set "PY_ARGS="
+            goto :python_found
+        )
+    )
+)
+
+for /d %%D in ("%ProgramFiles%\Python3*" "%ProgramFiles(x86)%\Python3*") do (
+    if exist "%%D\python.exe" (
+        "%%D\python.exe" --version >nul 2>&1
+        if not errorlevel 1 (
+            for /f "tokens=2" %%V in ('"%%D\python.exe" --version 2^>^&1') do set "PYVER=%%V"
+            set "PY=%%D\python.exe"
+            set "PY_ARGS="
+            goto :python_found
+        )
+    )
 )
 
 color 0C
@@ -93,14 +119,15 @@ echo.
 echo    Install Python 3.10+ from:
 echo      https://www.python.org/downloads/
 echo.
-echo    IMPORTANT: During installation, tick "Add Python to PATH".
+echo    IMPORTANT: During installation, tick "Add Python to PATH"
+echo               and install the Python Launcher (py.exe).
 echo    Then re-run this setup.bat.
 echo.
 pause
 exit /b 1
 
 :python_found
-echo    Found:  Python !PYVER!  (using: !PY!)
+echo    Found:  Python !PYVER!  (using: !PY! !PY_ARGS!)
 
 :: Warn if below 3.10
 for /f "tokens=1,2 delims=." %%A in ("!PYVER!") do (
@@ -174,7 +201,11 @@ if exist "!VENV_PY!" (
     exit /b 0
 )
 
-!PY! -m venv "!INSTALL_DIR!\venv"
+if defined PY_ARGS (
+    !PY! !PY_ARGS! -m venv "!INSTALL_DIR!\venv"
+) else (
+    "!PY!" -m venv "!INSTALL_DIR!\venv"
+)
 if errorlevel 1 (
     echo    [ERROR]  Failed to create virtual environment.
     exit /b 1
