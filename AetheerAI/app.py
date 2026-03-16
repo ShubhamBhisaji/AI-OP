@@ -31,6 +31,9 @@ st.set_page_config(
 # ── Custom CSS — website-style design ────────────────────────────────────
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+* { font-family: 'Inter', sans-serif !important; }
+
 /* ── Hide Streamlit chrome ─────────────────────────────────────────── */
 #MainMenu, footer { visibility: hidden; }
 [data-testid="stHeader"], [data-testid="stToolbar"] { display: none !important; }
@@ -40,10 +43,12 @@ div[data-testid="stStatusWidget"] { display: none; }
 .top-navbar {
     position: fixed;
     top: 0; left: 0; right: 0;
-    height: 54px;
+    height: 56px;
     z-index: 9999;
-    background: #060d19;
-    border-bottom: 1px solid #1a2d47;
+    background: rgba(248,250,252,0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid #e2e8f0;
     display: flex;
     align-items: center;
     padding: 0 28px;
@@ -51,49 +56,62 @@ div[data-testid="stStatusWidget"] { display: none; }
 }
 .top-navbar-logo { font-size: 22px; line-height: 1; }
 .top-navbar-title {
-    font-size: 16px; font-weight: 700;
-    color: #eef2ff; letter-spacing: -0.3px;
+    font-size: 14px; font-weight: 700;
+    color: #0f172a; letter-spacing: -0.2px;
 }
 .top-navbar-sub {
-    font-size: 11px; color: #2d4a6a; font-weight: 500;
-    border-left: 1px solid #1a2d47; padding-left: 14px; margin-left: 4px;
+    font-size: 11px; color: #94a3b8; font-weight: 500;
+    border-left: 1px solid #e2e8f0; padding-left: 14px; margin-left: 4px;
 }
 .top-navbar-badge {
     margin-left: auto;
-    font-size: 11px; color: #22d3ee;
-    background: rgba(6,182,212,0.1);
-    border: 1px solid rgba(6,182,212,0.25);
-    padding: 3px 12px; border-radius: 20px; font-weight: 600;
+    font-size: 11px; color: #059669;
+    background: rgba(16,185,129,0.08);
+    border: 1px solid rgba(16,185,129,0.2);
+    padding: 4px 12px; border-radius: 20px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+}
+.top-navbar-badge::before {
+    content: '';
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 8px rgba(16,185,129,0.4);
+    animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
 }
 
 /* ── Push content below fixed header ─────────────────────────────── */
-[data-testid="stAppViewContainer"] { padding-top: 54px !important; background: #0c1525; }
-[data-testid="stMain"] { background: #0c1525; }
+[data-testid="stAppViewContainer"] { padding-top: 56px !important; background: #f8fafc; }
+[data-testid="stMain"] { background: #f8fafc; }
 [data-testid="stSidebar"] {
-    top: 54px !important;
-    height: calc(100vh - 54px) !important;
-    background: #07111e !important;
-    border-right: 1px solid #1a2d47 !important;
+    top: 56px !important;
+    height: calc(100vh - 56px) !important;
+    background: #ffffff !important;
+    border-right: 1px solid #e2e8f0 !important;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.02) !important;
 }
 [data-testid="stSidebarContent"] { padding: 0 !important; }
 
 /* ── Sidebar brand block ──────────────────────────────────────────── */
 .sidebar-brand {
-    padding: 18px 18px 14px;
-    border-bottom: 1px solid #1a2d47;
+    padding: 20px 18px 16px;
+    border-bottom: 1px solid #f1f5f9;
     margin-bottom: 4px;
 }
 .sidebar-brand-title {
-    font-size: 17px; font-weight: 700;
-    color: #eef2ff; line-height: 1.2; letter-spacing: -0.3px;
+    font-size: 14px; font-weight: 700;
+    color: #0f172a; line-height: 1.3;
 }
-.sidebar-brand-sub { font-size: 11px; color: #2d4a6a; font-weight: 500; margin-top: 2px; }
+.sidebar-brand-sub { font-size: 10px; color: #94a3b8; font-weight: 500; margin-top: 3px; }
 
 /* ── Sidebar section labels ───────────────────────────────────────── */
 .nav-section-label {
     font-size: 10px; font-weight: 700;
-    letter-spacing: 1.2px; color: #2d4a6a;
-    padding: 12px 18px 3px; text-transform: uppercase;
+    letter-spacing: 1.2px; color: #94a3b8;
+    padding: 14px 18px 4px; text-transform: uppercase;
 }
 
 /* ── Nav radio — styled as nav links ──────────────────────────────── */
@@ -101,36 +119,36 @@ div[data-testid="stStatusWidget"] { display: none; }
 [data-testid="stSidebar"] .stRadio > label { display: none !important; }
 [data-testid="stSidebar"] .stRadio > div {
     display: flex; flex-direction: column;
-    gap: 1px; padding: 2px 10px;
+    gap: 2px; padding: 2px 12px;
 }
 [data-testid="stSidebar"] .stRadio label {
     display: flex !important; align-items: center;
     padding: 9px 14px !important;
-    border-radius: 7px !important;
-    color: #6b88a3 !important;
+    border-radius: 8px !important;
+    color: #64748b !important;
     font-size: 13.5px !important; font-weight: 500 !important;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
-    border-left: 3px solid transparent !important;
+    border: 1px solid transparent !important;
     margin: 1px 0;
 }
 [data-testid="stSidebar"] .stRadio label:hover {
-    background: rgba(59,130,246,0.08) !important;
-    color: #93c5fd !important;
+    background: #f8fafc !important;
+    color: #0f172a !important;
 }
 [data-testid="stSidebar"] .stRadio label[data-selected="true"],
 [data-testid="stSidebar"] .stRadio label[aria-checked="true"] {
-    background: rgba(59,130,246,0.13) !important;
-    color: #60a5fa !important;
-    border-left-color: #3b82f6 !important;
+    background: #eff6ff !important;
+    color: #1d4ed8 !important;
+    font-weight: 600 !important;
 }
 
 /* ── Agent chip ───────────────────────────────────────────────────── */
 .agent-chip {
     display: flex; align-items: center; gap: 8px;
     padding: 7px 14px; border-radius: 6px;
-    background: #0a1828; border: 1px solid #1a2d47;
-    margin: 2px 0; font-size: 12px; color: #6b88a3;
+    background: #f8fafc; border: 1px solid #e2e8f0;
+    margin: 2px 0; font-size: 12px; color: #64748b;
 }
 
 /* ── Content area ─────────────────────────────────────────────────── */
@@ -141,57 +159,79 @@ div[data-testid="stStatusWidget"] { display: none; }
 }
 
 /* ── Typography ───────────────────────────────────────────────────── */
-h1 { font-size: 26px !important; font-weight: 700 !important; color: #eef2ff !important; margin-bottom: 4px !important; }
-h2 { color: #c7d8f0 !important; font-weight: 600 !important; }
-h3 { color: #8fa7c0 !important; }
-p, li { color: #7a95b0; }
+h1 { font-size: 26px !important; font-weight: 800 !important; color: #0f172a !important; margin-bottom: 4px !important; }
+h2 { color: #1e293b !important; font-weight: 700 !important; }
+h3 { color: #334155 !important; }
+p, li { color: #64748b; }
 
 /* ── Buttons ──────────────────────────────────────────────────────── */
 .stButton > button {
-    border-radius: 7px !important; font-weight: 600 !important;
+    border-radius: 8px !important; font-weight: 600 !important;
     font-size: 13px !important; transition: all 0.18s !important;
 }
 .stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #1d4ed8 0%, #4338ca 100%) !important;
+    background: #2563eb !important;
     border: none !important; color: #fff !important;
-    box-shadow: 0 2px 10px rgba(59,130,246,0.2) !important;
+    box-shadow: 0 2px 8px rgba(37,99,235,0.2) !important;
 }
 .stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%) !important;
-    box-shadow: 0 4px 20px rgba(59,130,246,0.35) !important;
+    background: #1d4ed8 !important;
+    box-shadow: 0 4px 16px rgba(37,99,235,0.3) !important;
     transform: translateY(-1px);
 }
 .stButton > button[kind="secondary"] {
-    background: #0d1b2e !important; border: 1px solid #1e3452 !important; color: #6b88a3 !important;
+    background: #f8fafc !important; border: 1px solid #e2e8f0 !important; color: #475569 !important;
 }
 .stButton > button[kind="secondary"]:hover {
-    border-color: #3b82f6 !important; color: #93c5fd !important; background: #0a1626 !important;
+    border-color: #3b82f6 !important; color: #2563eb !important; background: #eff6ff !important;
 }
 
 /* ── Inputs ───────────────────────────────────────────────────────── */
 .stTextInput > div > div > input,
 .stTextArea > div > div > textarea {
-    border-radius: 7px !important; background: #0a1626 !important;
-    border: 1px solid #1e3452 !important; color: #e2e8f0 !important; font-size: 14px !important;
+    border-radius: 10px !important; background: #ffffff !important;
+    border: 1px solid #e2e8f0 !important; color: #0f172a !important; font-size: 14px !important;
 }
 .stTextInput > div > div > input:focus,
 .stTextArea > div > div > textarea:focus {
-    border-color: #3b82f6 !important; box-shadow: 0 0 0 2px rgba(59,130,246,0.15) !important;
+    border-color: #3b82f6 !important; box-shadow: 0 0 0 2px rgba(59,130,246,0.12) !important;
 }
+.stTextInput > div > div > input::placeholder,
+.stTextArea > div > div > textarea::placeholder { color: #94a3b8 !important; }
 [data-testid="stSelectbox"] > div > div {
-    background: #0a1626 !important; border: 1px solid #1e3452 !important;
-    border-radius: 7px !important; color: #e2e8f0 !important;
+    background: #ffffff !important; border: 1px solid #e2e8f0 !important;
+    border-radius: 10px !important; color: #0f172a !important;
 }
 
 /* ── Expanders ────────────────────────────────────────────────────── */
 [data-testid="stExpander"] {
-    background: #09131f !important; border: 1px solid #1a2d47 !important; border-radius: 10px !important;
+    background: #ffffff !important; border: 1px solid #e2e8f0 !important; border-radius: 12px !important;
 }
 
 /* ── Chat ─────────────────────────────────────────────────────────── */
 .stChatMessage {
-    background: #09131f !important; border: 1px solid #1a2d47 !important; border-radius: 12px !important;
+    background: #ffffff !important; border: 1px solid #e2e8f0 !important; border-radius: 14px !important;
+    color: #0f172a !important;
 }
+[data-testid="stChatMessage"] p { color: #374151 !important; }
+[data-testid="stChatInputContainer"] > div {
+    background: #ffffff !important; border: 1px solid #e2e8f0 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.06) !important;
+}
+[data-testid="stChatInputContainer"] textarea {
+    background: transparent !important; color: #0f172a !important;
+}
+[data-testid="stChatInputContainer"] textarea::placeholder { color: #94a3b8 !important; }
+
+/* ── Suggestion cards ─────────────────────────────────────────────── */
+.suggestion-card {
+    background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 16px;
+    padding: 16px 18px; transition: all 0.2s; cursor: pointer;
+}
+.suggestion-card:hover { border-color: #3b82f6; box-shadow: 0 6px 20px rgba(0,0,0,0.07); }
+.suggestion-card h4 { font-size: 13px; font-weight: 600; color: #1e293b; margin: 0 0 4px; }
+.suggestion-card p  { font-size: 11.5px; color: #94a3b8; margin: 0; }
 
 /* ── Progress ─────────────────────────────────────────────────────── */
 .stProgress > div > div > div > div {
@@ -199,19 +239,23 @@ p, li { color: #7a95b0; }
 }
 
 /* ── Dividers ─────────────────────────────────────────────────────── */
-hr { border-color: #1a2d47 !important; }
+hr { border-color: #e2e8f0 !important; }
 
 /* ── Alert boxes ──────────────────────────────────────────────────── */
-[data-testid="stInfo"]    { background: rgba(59,130,246,0.07) !important; border: 1px solid rgba(59,130,246,0.18) !important; border-radius: 8px !important; }
-[data-testid="stSuccess"] { background: rgba(16,185,129,0.07) !important; border: 1px solid rgba(16,185,129,0.18) !important; border-radius: 8px !important; }
-[data-testid="stWarning"] { background: rgba(245,158,11,0.07)  !important; border: 1px solid rgba(245,158,11,0.18)  !important; border-radius: 8px !important; }
-[data-testid="stError"]   { background: rgba(239,68,68,0.07)   !important; border: 1px solid rgba(239,68,68,0.18)   !important; border-radius: 8px !important; }
+[data-testid="stInfo"]    { background: rgba(59,130,246,0.05)  !important; border: 1px solid rgba(59,130,246,0.15)  !important; border-radius: 8px !important; }
+[data-testid="stSuccess"] { background: rgba(16,185,129,0.05)  !important; border: 1px solid rgba(16,185,129,0.15)  !important; border-radius: 8px !important; }
+[data-testid="stWarning"] { background: rgba(245,158,11,0.05)  !important; border: 1px solid rgba(245,158,11,0.15)  !important; border-radius: 8px !important; }
+[data-testid="stError"]   { background: rgba(239,68,68,0.05)   !important; border: 1px solid rgba(239,68,68,0.15)   !important; border-radius: 8px !important; }
 
 /* ── Dataframe ────────────────────────────────────────────────────── */
-[data-testid="stDataFrame"] { border-radius: 10px !important; overflow: hidden; }
+[data-testid="stDataFrame"] { border-radius: 10px !important; overflow: hidden; border: 1px solid #e2e8f0 !important; }
+
+/* ── Tabs ─────────────────────────────────────────────────────────── */
+[data-testid="stTabs"] [role="tab"] { color: #64748b !important; font-weight: 500 !important; }
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] { color: #2563eb !important; border-bottom-color: #2563eb !important; }
 
 /* ── Code blocks ──────────────────────────────────────────────────── */
-.stCode, pre { background: #060e1b !important; border: 1px solid #1a2d47 !important; border-radius: 7px !important; }
+.stCode, pre { background: #f8fafc !important; border: 1px solid #e2e8f0 !important; border-radius: 8px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -264,11 +308,17 @@ if os.path.exists(_icon_path):
 # ── Fixed top navbar HTML ─────────────────────────────────────────────────
 st.markdown(f"""
 <div class="top-navbar">
-    {_NAV_SVG}
-    <span class="top-navbar-title">AetheerAI — An AI Master!!</span>
-    <span class="top-navbar-sub">Advanced AI Operating System</span>
-    <span class="top-navbar-badge">● ONLINE</span>
-    <span style="font-size:10px;color:#1e3a5f;font-weight:500;margin-left:8px;letter-spacing:0.3px;">Created&nbsp;by&nbsp;<span style="color:#3b82f6;font-weight:700;">Tecbunny</span></span>
+    <div style="width:30px;height:30px;border-radius:8px;
+                background:#2563eb;
+                display:flex;align-items:center;justify-content:center;
+                box-shadow:0 2px 8px rgba(37,99,235,0.3);flex-shrink:0;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+    </div>
+    <span class="top-navbar-title">AetheerAI</span>
+    <span class="top-navbar-sub">by <span style="color:#2563eb;font-weight:700;">Tecbunny</span></span>
+    <span class="top-navbar-badge">System Online</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -324,11 +374,18 @@ with st.sidebar:
     # ── Brand / Logo block ────────────────────────────────────────────
     st.markdown(f"""
     <div class="sidebar-brand">
-        <div style="display:flex;align-items:center;gap:10px;">
-            {_SB_SVG}
+        <div style="display:flex;align-items:center;gap:12px;">
+            <div style="width:34px;height:34px;border-radius:9px;
+                        background:#2563eb;
+                        display:flex;align-items:center;justify-content:center;
+                        flex-shrink:0;box-shadow:0 4px 12px rgba(37,99,235,0.25);">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+            </div>
             <div>
-                <div class="sidebar-brand-title">AetheerAI — An AI Master!!</div>
-                <div class="sidebar-brand-sub">by Tecbunny</div>
+                <div class="sidebar-brand-title">AetheerAI</div>
+                <div class="sidebar-brand-sub">Workspace · Tecbunny</div>
             </div>
         </div>
     </div>
@@ -357,9 +414,9 @@ with st.sidebar:
     # ── Provider info ─────────────────────────────────────────────────
     st.divider()
     st.markdown(
-        f'<div style="font-size:11px;color:#2d4a6a;padding:2px 4px 6px;">'
-        f'AI &nbsp;<span style="color:#60a5fa;font-weight:600;">{kernel.ai_adapter.provider}</span>'
-        f' &nbsp;/&nbsp; <span style="color:#a78bfa;font-weight:600;">{kernel.ai_adapter.model}</span></div>',
+        f'<div style="font-size:11px;color:#94a3b8;padding:2px 4px 6px;">'
+        f'AI &nbsp;<span style="color:#2563eb;font-weight:600;">{kernel.ai_adapter.provider}</span>'
+        f' &nbsp;/&nbsp; <span style="color:#7c3aed;font-weight:600;">{kernel.ai_adapter.model}</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -370,13 +427,16 @@ with st.sidebar:
         import time as _t; _t.sleep(1)
         import os as _os; _os._exit(0)
 
-    # ── Bottom credit ─────────────────────────────────────────────────
+    # ── Bottom user strip ─────────────────────────────────────────────
     st.markdown("""
-    <div style="text-align:center;padding:14px 0 6px;font-size:10px;
-                color:#1a2d47;font-weight:500;letter-spacing:0.4px;">
-        <span style="color:#3b82f6;font-weight:700;">AetheerAI</span>
-        &nbsp;—&nbsp;Created&nbsp;by&nbsp;
-        <span style="color:#a78bfa;font-weight:700;">Tecbunny</span>
+    <div style="display:flex;align-items:center;gap:10px;padding:14px 4px 6px;border-top:1px solid #f1f5f9;margin-top:4px;">
+        <div style="width:32px;height:32px;border-radius:50%;background:#e2e8f0;
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:11px;font-weight:700;color:#64748b;flex-shrink:0;">TB</div>
+        <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Tecbunny</div>
+            <div style="font-size:11px;color:#94a3b8;">Pro Plan</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -385,27 +445,75 @@ with st.sidebar:
 # 1. TASK EXECUTOR
 # ═══════════════════════════════════════════════════════════════════════════
 if page == "💬 Task Executor":
-    st.header("💬 Task Executor")
-    st.markdown("Chat with an agent — it handles your task and replies in real time.")
+    # ── Hero heading (only when chat is empty) ────────────────────────
+    history_key_check = f"chat_{_agent_names()[0] if _agent_names() else 'none'}"
+    _chat_is_empty = not bool(st.session_state.get(history_key_check))
+
+    if _chat_is_empty:
+        st.markdown("""
+        <div style="text-align:center;padding:32px 0 24px;">
+            <div style="display:inline-flex;align-items:center;justify-content:center;
+                        width:52px;height:52px;border-radius:16px;
+                        background:#ffffff;border:1px solid #e2e8f0;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.05);margin-bottom:16px;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>
+            </div>
+            <h1 style="font-size:30px;font-weight:800;color:#0f172a;margin:0 0 8px;letter-spacing:-0.5px;">How can I help you?</h1>
+            <p style="color:#64748b;font-size:15px;margin:0;">Assign tasks to your AI agents in real-time.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
     names = _agent_names()
     if not names:
         st.warning("No agents found. Go to **Agent Factory** to create one first.")
         st.stop()
 
-    selected_agent = st.selectbox("Agent", names, key="exec_agent_sel")
+    # ── Agent selector — centered pill style ──────────────────────────
+    _col_l, _col_c, _col_r = st.columns([1, 2, 1])
+    with _col_c:
+        selected_agent = st.selectbox("🤖 Agent", names, key="exec_agent_sel", label_visibility="collapsed")
 
     # Per-agent chat history stored in session state
     history_key = f"chat_{selected_agent}"
     if history_key not in st.session_state:
         st.session_state[history_key] = []
 
+    # ── Suggestion cards (empty state) ───────────────────────────────
+    if not st.session_state[history_key]:
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        _s1, _s2 = st.columns(2)
+        _suggestion_prompt = None
+        with _s1:
+            st.markdown('<div class="suggestion-card"><h4>Build a landing page</h4><p>For a new tech startup with a modern design...</p></div>', unsafe_allow_html=True)
+            if st.button("Try this →", key="sug1", use_container_width=True, type="secondary"):
+                _suggestion_prompt = "Build a landing page for my new tech startup"
+        with _s2:
+            st.markdown('<div class="suggestion-card"><h4>Analyze Q3 Data</h4><p>Focus on user retention and conversion metrics...</p></div>', unsafe_allow_html=True)
+            if st.button("Try this →", key="sug2", use_container_width=True, type="secondary"):
+                _suggestion_prompt = "Analyze the Q3 user retention data and highlight key trends"
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+        if _suggestion_prompt:
+            st.session_state[history_key].append({"role": "user", "content": _suggestion_prompt})
+            with st.spinner(f"⚡ {selected_agent} is working..."):
+                try:
+                    _a = kernel.registry.get(selected_agent)
+                    _res = _run_agent_sync(_a, _suggestion_prompt)
+                except Exception as _exc:
+                    _res = f"**Error:** {_exc}"
+            st.session_state[history_key].append({"role": "assistant", "content": str(_res)})
+            st.rerun()
+
     # Show previous messages
     for msg in st.session_state[history_key]:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input(f"Give {selected_agent} a task..."):
+    if prompt := st.chat_input(f"Message {selected_agent}..."):
         st.session_state[history_key].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
