@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 
-from core.env_loader import load_env
+from core.env_loader import load_env, check_env_file
 from core.aether_kernel import AetherKernel
 from core.workflow_engine import WorkflowFeedback, HITLAction
 
@@ -280,6 +280,7 @@ st.markdown(f"""
 # session gets its own independent AetherKernel.
 if "kernel" not in st.session_state:
     load_env()
+    check_env_file()
     _provider = os.environ.get("AI_PROVIDER", "github")
     _model    = os.environ.get("AI_MODEL", "gpt-4.1")
     _k = AetherKernel(ai_provider=_provider, model=_model)

@@ -41,7 +41,7 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 
 ; Output
-OutputDir=..\dist
+OutputDir=..\..\builds
 OutputBaseFilename=AetheerAI_Setup_v{#MyAppVersion}
 
 ; UI
