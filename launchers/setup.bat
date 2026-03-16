@@ -9,7 +9,7 @@ title AetheerAI -- An AI Master!! Setup
 ::
 ::  This installer:
 ::   [1] Verifies Python 3.10+ is available
-::   [2] Asks where to install  (default: %LOCALAPPDATA%\AetheerAI)
+::   [2] Asks where to install  (default: C:\Program Files\AetheerAi)
 ::   [3] Copies all source files (excludes caches / build artefacts)
 ::   [4] Creates a Python virtual environment in <install>\venv\
 ::   [5] Installs all dependencies listed in requirements.txt
@@ -65,7 +65,7 @@ exit /b 0
 :: ===========================================================================
 :step_python
 echo.
-echo  ── [Step 1 / 8]  Checking Python ──────────────────────────────────────
+echo  ?? [Step 1 / 8]  Checking Python ??????????????????????????????????????
 echo.
 set "PY="
 
@@ -122,23 +122,25 @@ exit /b 0
 :: ===========================================================================
 :step_dir
 echo.
-echo  ── [Step 2 / 8]  Installation Directory ───────────────────────────────
+echo  -- [Step 2 / 8]  Installation Directory ------------------------------------------
 echo.
-set "INSTALL_DIR=%LOCALAPPDATA%\AetheerAI"
-set /p "_D=   Directory [!INSTALL_DIR!]: "
-if not "!_D!"=="" set "INSTALL_DIR=!_D!"
+set "INSTALL_DIR=C:\Program Files\AetheerAi"
+echo    Press ENTER to use the default, or type a custom path.
+echo.
+set /p "INSTALL_DIR=   Install directory [!INSTALL_DIR!]: "
+
+:dir_confirm
 if "!INSTALL_DIR:~-1!"=="\" set "INSTALL_DIR=!INSTALL_DIR:~0,-1!"
 echo.
 echo    Installing to: !INSTALL_DIR!
 echo.
-choice /c YN /m "   Confirm this directory?"
+choice /c YN /m "   Confirm?"
 if errorlevel 2 goto :step_dir
 exit /b 0
-
 :: ===========================================================================
 :step_copy
 echo.
-echo  ── [Step 3 / 8]  Copying source files ─────────────────────────────────
+echo  ?? [Step 3 / 8]  Copying source files ?????????????????????????????????
 if not exist "!INSTALL_DIR!" (
     mkdir "!INSTALL_DIR!" 2>nul
     if errorlevel 1 (
@@ -163,7 +165,7 @@ exit /b 0
 :: ===========================================================================
 :step_venv
 echo.
-echo  ── [Step 4 / 8]  Creating virtual environment ─────────────────────────
+echo  ?? [Step 4 / 8]  Creating virtual environment ?????????????????????????
 set "VENV_PY=!INSTALL_DIR!\venv\Scripts\python.exe"
 set "VENV_PIP=!INSTALL_DIR!\venv\Scripts\pip.exe"
 
@@ -183,7 +185,7 @@ exit /b 0
 :: ===========================================================================
 :step_deps
 echo.
-echo  ── [Step 5 / 8]  Installing dependencies ──────────────────────────────
+echo  ?? [Step 5 / 8]  Installing dependencies ??????????????????????????????
 echo    This may take 2-5 minutes depending on your connection. Please wait...
 echo.
 "!VENV_PIP!" install --upgrade pip --quiet
@@ -201,7 +203,7 @@ exit /b 0
 :: ===========================================================================
 :step_env
 echo.
-echo  ── [Step 6 / 8]  Environment configuration ────────────────────────────
+echo  ?? [Step 6 / 8]  Environment configuration ????????????????????????????
 if not exist "!INSTALL_DIR!\.env" (
     if exist "!INSTALL_DIR!\.env.example" (
         copy /y "!INSTALL_DIR!\.env.example" "!INSTALL_DIR!\.env" >nul
@@ -242,7 +244,7 @@ exit /b 0
 :: ===========================================================================
 :step_shortcuts
 echo.
-echo  ── [Step 7 / 8]  Creating shortcuts ───────────────────────────────────
+echo  ?? [Step 7 / 8]  Creating shortcuts ???????????????????????????????????
 
 :: Write a temp PowerShell script that creates both shortcuts
 set "PS1=%TEMP%\ae_shortcuts_%RANDOM%.ps1"
@@ -279,7 +281,7 @@ exit /b 0
 :: ===========================================================================
 :step_registry
 echo.
-echo  ── [Step 8 / 8]  Registering with Windows ─────────────────────────────
+echo  ?? [Step 8 / 8]  Registering with Windows ?????????????????????????????
 set "UREG=HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\AetheerAI"
 reg add "!UREG!" /v "DisplayName"     /t REG_SZ    /d "AetheerAI -- An AI Master!!" /f >nul
 reg add "!UREG!" /v "Publisher"       /t REG_SZ    /d "Tecbunny"                    /f >nul

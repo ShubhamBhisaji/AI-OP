@@ -16,7 +16,8 @@ from security.approval_gate import require_approval
 logger = logging.getLogger(__name__)
 
 # All agent-generated files are written under this directory by default
-_OUTPUT_DIR = Path(__file__).parent.parent / "agent_output"
+# Goes 2 levels up from AetheerAI/tools/ -> root output/ folder
+_OUTPUT_DIR = Path(__file__).parent.parent.parent / "output" / "agent_output"
 # Absolute write sandbox — the resolved path of every write must start here (Bug 3 fix)
 _WRITE_SANDBOX = _OUTPUT_DIR.resolve()
 
@@ -30,7 +31,7 @@ def file_writer(filename: str, content: str, output_dir: str | None = None) -> s
         filename   : Name (or relative path) of the file to write.
         content    : The text content to write.
         output_dir : Optional override for the output directory.
-                     Defaults to `AetheerAI/agent_output/`.
+                     Defaults to `output/agent_output/` (root of project).
 
     Returns:
         A string confirming the file path that was written, or an error message.
