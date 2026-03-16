@@ -3,6 +3,17 @@ setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 title AetheerAI -- An AI Master!! Setup
 
+:: --- Require administrator privileges (needed for Program Files) ---
+net session >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo  Administrator privileges are required to install to Program Files.
+    echo  Re-launching with elevation -- please click Yes in the UAC prompt.
+    echo.
+    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
 :: ===========================================================================
 ::  AetheerAI -- An AI Master!!  |  Setup v1.0  |  Created by Tecbunny
 :: ===========================================================================
@@ -275,38 +286,44 @@ exit /b 0
 :: ===========================================================================
 :step_shortcuts
 echo.
-echo  ?? [Step 7 / 8]  Creating shortcuts ???????????????????????????????????
+echo  -- [Step 7 / 8]  Creating shortcuts -----------------------------------------
 
-:: Write a temp PowerShell script that creates both shortcuts
-set "PS1=%TEMP%\ae_shortcuts_%RANDOM%.ps1"
+:: Use Public Desktop + All-Users Start Menu so the shortcut is visible
+:: to the real user even when setup runs elevated (as Administrator).
+set "PUBLIC_DESK=C:\Users\Public\Desktop"
+set "SM_DIR=C:\ProgramData\Microsoft\Windows\Start Menu\Programs\AetheerAI"
+set "PS1_FILE=%TEMP%\ae_shortcuts.ps1"
+
 setlocal disabledelayedexpansion
 (
     echo $ws  = New-Object -ComObject WScript.Shell
-    echo $dst = "$env:USERPROFILE\Desktop\AetheerAI.lnk"
+    echo.
+    echo # Desktop shortcut
+    echo $dst = "C:\Users\Public\Desktop\AetheerAI.lnk"
     echo $s   = $ws.CreateShortcut($dst)
-    echo $s.TargetPath      = "%INSTALL_DIR%\Launch_AetheerAI.bat"
+    echo $s.TargetPath       = "%INSTALL_DIR%\Launch_AetheerAI.bat"
     echo $s.WorkingDirectory = "%INSTALL_DIR%"
     echo $s.Description      = "AetheerAI -- An AI Master!!"
     echo $s.Save()
-    echo $smDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\AetheerAI"
+    echo.
+    echo # All-Users Start Menu shortcut
+    echo $smDir = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\AetheerAI"
     echo if (-not (Test-Path $smDir)) { New-Item -ItemType Directory -Path $smDir | Out-Null }
     echo $s2 = $ws.CreateShortcut("$smDir\AetheerAI.lnk")
-    echo $s2.TargetPath      = "%INSTALL_DIR%\Launch_AetheerAI.bat"
+    echo $s2.TargetPath       = "%INSTALL_DIR%\Launch_AetheerAI.bat"
     echo $s2.WorkingDirectory = "%INSTALL_DIR%"
     echo $s2.Description      = "AetheerAI -- An AI Master!!"
     echo $s2.Save()
+    echo.
     echo Write-Host "  Shortcuts created."
-) > "%TEMP%\ae_shortcuts_%RANDOM%.ps1"
+) > "%TEMP%\ae_shortcuts.ps1"
 endlocal
 
-:: Re-capture PS1 path (endlocal clears local vars, use %TEMP% directly)
-for %%F in ("%TEMP%\ae_shortcuts_*.ps1") do (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%%F" 2>nul
-    del /f /q "%%F" >nul 2>&1
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\ae_shortcuts.ps1"
+del /f /q "%TEMP%\ae_shortcuts.ps1" >nul 2>&1
 
-echo    Desktop shortcut:   %USERPROFILE%\Desktop\AetheerAI.lnk
-echo    Start Menu entry:   Start ^> AetheerAI
+echo    Desktop shortcut:   C:\Users\Public\Desktop\AetheerAI.lnk
+echo    Start Menu entry:   Start ^> All Apps ^> AetheerAI
 exit /b 0
 
 :: ===========================================================================
@@ -344,8 +361,8 @@ setlocal disabledelayedexpansion
     echo if errorlevel 2 exit /b 0
     echo echo.
     echo echo  Removing shortcuts...
-    echo del /f /q "%%USERPROFILE%%\Desktop\AetheerAI.lnk"           2^>nul
-    echo rmdir /s /q "%%APPDATA%%\Microsoft\Windows\Start Menu\Programs\AetheerAI" 2^>nul
+    echo del /f /q "C:\Users\Public\Desktop\AetheerAI.lnk" 2^>nul
+    echo rmdir /s /q "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\AetheerAI" 2^>nul
     echo echo  Removing registry entry...
     echo reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\AetheerAI" /f 2^>nul
     echo echo  Scheduling removal of installation folder...
