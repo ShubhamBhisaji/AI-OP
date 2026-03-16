@@ -79,11 +79,17 @@ class AetherKernel:
 
     @staticmethod
     def _safe_fs_component(raw: str, fallback: str = "item") -> str:
-        """Return a filesystem-safe single path component from untrusted input."""
-        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", (raw or "").strip())
-        # Collapse any remaining dotdot sequences (e.g. a_.._.._b → a___b)
-        cleaned = re.sub(r"\.{2,}", "_", cleaned)
-        cleaned = cleaned.strip("._-")
+        """Return a filesystem-safe, kebab-case path component from untrusted input."""
+        # Lowercase and replace spaces/underscores with hyphens
+        lowered = (raw or "").strip().lower()
+        cleaned = re.sub(r"[\s_]+", "-", lowered)
+        # Remove any characters that are not alphanumeric or hyphen/dot
+        cleaned = re.sub(r"[^a-z0-9.-]+", "", cleaned)
+        # Collapse dotdot sequences
+        cleaned = re.sub(r"\.{2,}", ".", cleaned)
+        # Collapse multiple hyphens or dots
+        cleaned = re.sub(r"-{2,}", "-", cleaned)
+        cleaned = cleaned.strip("-_.")
         return cleaned or fallback
 
     @staticmethod
@@ -2558,7 +2564,8 @@ class AetherKernel:
         matches = pattern.findall(raw)
 
         safe_app = self._safe_fs_component(app_name, fallback="application")
-        output_dir = str(Path(__file__).parent.parent / "agent_output" / safe_app)
+        # Write to workspace-level projects/ folder (one level above aether-os/)
+        output_dir = str(Path(__file__).parent.parent.parent / "projects" / safe_app)
         files_written = []
 
         if matches:
