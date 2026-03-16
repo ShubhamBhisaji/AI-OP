@@ -24,7 +24,8 @@ echo  ============================================================
 echo.
 
 rem -- 0. Move to project root (same dir as this script) -------------------
-cd /d "%~dp0..\AetheerAI"
+ "OUTPUT_DIR=%~dp0..\output"
+echo  [0] Output dir:   %OUTPUT_DIR%
 echo  [0] Working in: %CD%
 echo.
 
@@ -59,7 +60,98 @@ echo.
 taskkill /F /IM AetheerAI_Master.exe >nul 2>&1
 timeout /t 2 /nobreak >nul 2>&1
 
-call build_main_exe.bat
+:: Ensure runtime folders exist before PyInstaller scans them
+if not exist "%OUTPUT_DIR%\agent_output" mkdir "%OUTPUT_DIR%\agent_output"
+
+:: Auto-detect Streamlit package location
+for /f "delims=" %%i in ('python -c "import streamlit, os; print(os.path.dirname(streamlit.__file__))"') do set STREAMLIT_DIR=%%i
+echo  Streamlit found at: %STREAMLIT_DIR%
+echo.
+
+pip install pyinstaller streamlit opentelemetry-instrumentation backoff --quiet
+
+pyinstaller ^
+    --onefile ^
+    --windowed ^
+
+    --distpath "%OUTPUT_DIR%\dist" ^
+    --workpath "%OUTPUT_DIR%\build" ^
+    --specpath "%OUTPUT_DIR%" ^
+    --add-data "%STREAMLIT_DIR%\static;streamlit\static" ^
+    --add-data "%STREAMLIT_DIR%\runtime;streamlit\runtime" ^
+    --add-data "%STREAMLIT_DIR%\components;streamlit\components" ^
+    --add-data "app.py;." ^
+    --add-data "agents;agents" ^
+    --add-data "ai;ai" ^
+    --add-data "cli;cli" ^
+    --add-data "core;core" ^
+    --add-data "evals;evals" ^
+    --add-data "factory;factory" ^
+    --add-data "memory;memory" ^
+    --add-data "registry;registry" ^
+    --add-data "security;security" ^
+    --add-data "skills;skills" ^
+    --add-data "templates;templates" ^
+    --add-data "tools;tools" ^
+    --add-data "utils;utils" ^
+    --add-data "workspace;workspace" ^
+    --add-data "%OUTPUT_DIR%\agent_output;agent_output" ^
+    --add-data "memory\memory_store.json;memory" ^
+    --add-data "registry\registry_store.json;registry" ^
+    --hidden-import streamlit ^
+    --hidden-import chromadb ^
+    --hidden-import chromadb.api ^
+    --hidden-import openai ^
+    --hidden-import anthropic ^
+    --hidden-import yaml ^
+    --hidden-import dotenv ^
+    --hidden-import tiktoken ^
+    --hidden-import tiktoken_ext ^
+    --hidden-import tiktoken_ext.openai_public ^
+    --hidden-import pydantic ^
+    --hidden-import uvicorn ^
+    --hidden-import requests ^
+    --hidden-import bs4 ^
+    --hidden-import pandas ^
+    --hidden-import PIL ^
+    --hidden-import cryptography ^
+    --hidden-import threading ^
+    --hidden-import concurrent.futures ^
+    --hidden-import litellm ^
+    --hidden-import litellm.main ^
+    --hidden-import litellm.utils ^
+    --hidden-import litellm.exceptions ^
+    --hidden-import imaplib ^
+    --hidden-import smtplib ^
+    --hidden-import email ^
+    --hidden-import email.mime.text ^
+    --hidden-import email.mime.multipart ^
+    --hidden-import email.mime.base ^
+    --hidden-import email.encoders ^
+    --hidden-import ssl ^
+    --hidden-import socket ^
+    --hidden-import ipaddress ^
+    --hidden-import csv ^
+    --hidden-import ast ^
+    --hidden-import hashlib ^
+    --hidden-import base64 ^
+    --hidden-import difflib ^
+    --hidden-import fnmatch ^
+    --hidden-import stat ^
+    --hidden-import sysconfig ^
+    --hidden-import textwrap ^
+    --hidden-import webbrowser ^
+    --hidden-import shlex ^
+    --hidden-import opentelemetry ^
+    --hidden-import opentelemetry.instrumentation ^
+    --hidden-import backoff ^
+    --collect-submodules chromadb ^
+    --collect-submodules tiktoken_ext ^
+    --collect-submodules streamlit ^
+    --collect-submodules litellm ^
+    --copy-metadata streamlit ^
+    launcher.py
+
 if errorlevel 1 (
     echo.
     echo  [ERROR] PyInstaller build FAILED.  Fix errors above and retry.
@@ -68,7 +160,7 @@ if errorlevel 1 (
 )
 
 rem Verify the EXE was produced
-if not exist "dist\AetheerAI_Master.exe" (
+if not exist "%OUTPUT_DIR%\dist\AetheerAI_Master.exe" (
     echo.
     echo  [ERROR] dist\AetheerAI_Master.exe was not produced.
     echo          Check build_main_exe.bat output for errors.
@@ -76,7 +168,7 @@ if not exist "dist\AetheerAI_Master.exe" (
     exit /b 1
 )
 
-for %%F in ("dist\AetheerAI_Master.exe") do set EXE_MB=%%~zF
+for %%F in ("%OUTPUT_DIR%\dist\AetheerAI_Master.exe") do set EXE_MB=%%~zF
 set /a EXE_MB_APPROX=%EXE_MB% / 1048576
 echo.
 echo  [OK] dist\AetheerAI_Master.exe  (%EXE_MB_APPROX% MB)
@@ -126,7 +218,7 @@ if errorlevel 1 (
 )
 
 rem -- 7. Report ------------------------------------------------------------
-set SETUP_FILE=dist\AetheerAI_Setup_v1.0.0.exe
+set SETUP_FILE=%OUTPUT_DIR%\dist\AetheerAI_Setup_v1.0.0.exe
 if exist "%SETUP_FILE%" (
     for %%F in ("%SETUP_FILE%") do set SETUP_MB=%%~zF
     set /a SETUP_MB_APPROX=%SETUP_MB% / 1048576

@@ -2564,7 +2564,7 @@ class AetheerAiKernel:
         matches = pattern.findall(raw)
 
         safe_app = self._safe_fs_component(app_name, fallback="application")
-        # Write to workspace-level projects/ folder (one level above AetheerAI/)
+        # Write to workspace-level projects/ folder (one level above AetheerAI/ root)
         output_dir = str(Path(__file__).parent.parent.parent / "projects" / safe_app)
         files_written = []
 
