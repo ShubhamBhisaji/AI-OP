@@ -1,6 +1,6 @@
-# Aether Architecture
+﻿# AETHEERAI Architecture
 
-Aether is an AI Operating System that manages agents like processes.
+AETHEERAI is an AI Operating System that manages agents like processes.
 
 ## Core Principles
 
@@ -14,7 +14,7 @@ Aether is an AI Operating System that manages agents like processes.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     AetherKernel                        │
+│                     AetheerAiKernel                        │
 │   (Central controller — orchestrates all components)    │
 └───────────┬────────────────────────┬────────────────────┘
             │                        │
@@ -51,7 +51,7 @@ Aether is an AI Operating System that manages agents like processes.
 User Input
     │
     ▼
-AetherKernel  ──►  AIAdapter  ──►  AI Model (OpenAI / Claude / Gemini / Local)
+AetheerAiKernel  ──►  AIAdapter  ──►  AI Model (OpenAI / Claude / Gemini / Local)
     │
     ▼
 WorkflowEngine  ──►  TaskExecutor
@@ -99,7 +99,7 @@ ToolManager.call(...)
 
 ### Build/Export Path
 
-`AetherKernel` is now a thin coordinator that delegates:
+`AetheerAiKernel` is now a thin coordinator that delegates:
 
 - `build_application(...)` -> `CompilerService` -> kernel build implementation
 - `export_agent(...)` / `export_system(...)` -> `ExporterService` -> kernel export implementation
