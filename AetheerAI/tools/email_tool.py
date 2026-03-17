@@ -94,6 +94,26 @@ def email_tool(
     action = (action or "").strip().lower()
     limit  = max(1, min(limit, _MAX_EMAILS))
 
+    if action in ("send", "reply"):
+        # Security: enforce recipient allowlist if EMAIL_ALLOWED_RECIPIENTS is set.
+        # Set the env var to a comma-separated list of permitted addresses, e.g.:
+        #   EMAIL_ALLOWED_RECIPIENTS=orders@company.com,crm@company.com
+        # When not set, all recipients are permitted (backwards-compatible).
+        allowlist_raw = os.environ.get("EMAIL_ALLOWED_RECIPIENTS", "").strip()
+        if allowlist_raw:
+            allowed = {a.strip().lower() for a in allowlist_raw.split(",") if a.strip()}
+            all_recipients = [r.strip().lower() for r in (to + "," + cc).split(",") if r.strip()]
+            blocked = [r for r in all_recipients if r not in allowed]
+            if blocked:
+                logger.error(
+                    "email_tool: recipient(s) not in EMAIL_ALLOWED_RECIPIENTS: %s",
+                    ", ".join(blocked),
+                )
+                return (
+                    f"❌ Security: recipient(s) not in allowed list: {', '.join(blocked)}.\n"
+                    "Add them to EMAIL_ALLOWED_RECIPIENTS in your .env file to permit this send."
+                )
+
     if action == "send":
         return _send_email(addr, password, smtp_host, smtp_port,
                            to, subject, body, html, cc, in_reply_to)

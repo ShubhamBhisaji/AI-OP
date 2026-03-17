@@ -1,6 +1,10 @@
 ﻿# AetheerAI Operating System  Python dependencies
 # Install with: pip install -r requirements.txt
 
+# --- FastAPI backend (AETHER OS REST API) ---
+fastapi>=0.111.0               # FastAPI framework
+uvicorn[standard]>=0.29.0      # ASGI server (use: uvicorn api.server:app --reload)
+
 # --- Core AI providers ---
 # litellm is the unified interface  it calls the provider SDKs listed below
 litellm>=1.67.0                # Unified LLM interface (replaces per-provider urllib logic)

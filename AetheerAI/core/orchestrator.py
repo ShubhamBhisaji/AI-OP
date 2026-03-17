@@ -84,7 +84,7 @@ class Orchestrator:
         task: str,
         *,
         sanitize_pipeline: bool = True,
-        validate_steps: bool = False,
+        validate_steps: bool = True,
     ) -> list[dict]:
         """
         Run agents in sequence.  Each agent's output becomes the next
@@ -98,6 +98,7 @@ class Orchestrator:
                             output before passing it to the next agent (BLOCKER-7).
         validate_steps    : Run an AI hallucination-check after each step;
                             abort the pipeline if VALID: NO is detected (BLOCKER-5).
+                            Defaults to True — disable only for trusted internal pipelines.
 
         Returns a list of step dicts:
             {"step": int, "agent": str, "input": str, "output": str, "success": bool}
@@ -154,7 +155,7 @@ class Orchestrator:
                     cleaned = self.ai_adapter.chat([{
                         "role": "user",
                         "content": _INJECTION_FENCE_PROMPT.format(
-                            content=output[:8000]
+                            content=output[:_MAX_PIPELINE_PASSTHROUGH_CHARS]
                         ),
                     }])
                     if "INJECTION ATTEMPT DETECTED" in cleaned:
@@ -585,7 +586,7 @@ class Orchestrator:
         # Execute
         base = {"mode": mode, "agents": chosen, "reason": reason, "plan": plan_text}
         if mode == "pipeline":
-            base["results"] = self.run_pipeline(chosen, task)
+            base["results"] = self.run_pipeline(chosen, task, validate_steps=True)
         elif mode == "vote":
             base.update(self.vote(chosen, task))
         elif mode == "best_of":

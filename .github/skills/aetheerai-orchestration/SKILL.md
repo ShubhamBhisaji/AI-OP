@@ -263,10 +263,10 @@ Before running the orchestration, confirm:
 
 ## References
 
-- Orchestrator modes + pipeline injection-fence: [core/orchestrator.py](../../AetheerAI/core/orchestrator.py)
-- Agent factory presets: [factory/agent_factory.py](../../AetheerAI/factory/agent_factory.py)
-- Team management: [core/team_manager.py](../../AetheerAI/core/team_manager.py)
-- Registry: [registry/agent_registry.py](../../AetheerAI/registry/agent_registry.py)
-- BaseAgent RBAC + profile: [agents/base_agent.py](../../AetheerAI/agents/base_agent.py)
-- Self-healing debugger: [core/self_healer.py](../../AetheerAI/core/self_healer.py)
-- Security audit: [security/audit_logger.py](../../AetheerAI/security/audit_logger.py)
+- Orchestrator modes + pipeline injection-fence: `AetheerAI/core/orchestrator.py`
+- Agent factory presets: `AetheerAI/factory/agent_factory.py`
+- Team management: `AetheerAI/core/team_manager.py`
+- Registry: `AetheerAI/registry/agent_registry.py`
+- BaseAgent RBAC + profile: `AetheerAI/agents/base_agent.py`
+- Self-healing debugger: `AetheerAI/core/self_healer.py`
+- Security audit: `AetheerAI/security/audit_logger.py`
