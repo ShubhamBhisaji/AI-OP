@@ -3,6 +3,7 @@
 This project includes modular wrappers for:
 
 - Supabase (PostgreSQL, auth, realtime)
+- Upstash Redis (queue backend for async jobs)
 - Infobip (WhatsApp, email, notifications)
 - PayU Money (checkout, verification, payment links)
 - Meta Graph API (Facebook Pages, Instagram Business, Messenger)
@@ -21,6 +22,29 @@ The wrappers are implemented under `AetheerAI/integrations/` and can be used dir
 - `SUPABASE_SERVICE_ROLE_KEY` (required for admin writes)
 - `SUPABASE_SCHEMA` (default: `public`)
 - `SUPABASE_TIMEOUT_SECONDS` (default: `20`)
+- `SUPABASE_JOBS_TABLE` (default: `ai_jobs`)
+- `SUPABASE_JOBS_ID_COLUMN` (default: `id`)
+
+### Upstash Redis (Async Queue)
+
+- `UPSTASH_REDIS_URL` (required, use Redis `rediss://...` URL)
+- `UPSTASH_REDIS_QUEUE_NAME` (default: `job_queue`)
+- `UPSTASH_REDIS_POP_TIMEOUT_SECONDS` (default: `30`)
+- `UPSTASH_REDIS_SOCKET_TIMEOUT_SECONDS` (default: `90`)
+- `AETHEER_DISABLE_VERCEL_DIRECT_GOALS` (default: `1`, blocks direct long-running `/api/goals` calls when `VERCEL=1`)
+
+### Async Job Table Schema (Supabase)
+
+Expected columns for `ai_jobs`:
+
+- `id` text/uuid primary key
+- `status` text (`queued`, `running`, `completed`, `failed`)
+- `task_type` text
+- `task_payload` json/jsonb
+- `result` json/jsonb nullable
+- `error` text nullable
+- `metadata` json/jsonb nullable
+- `created_at`, `updated_at`, `started_at`, `completed_at` timestamptz
 
 ### Infobip
 
@@ -90,7 +114,46 @@ set RUN_LIVE_EXAMPLES=1
 python examples/external_services_demo.py
 ```
 
-## 3. Sample Code
+6. Run the persistent queue worker (for long-running jobs):
+
+```bash
+cd AetheerAI
+python start_worker.py
+```
+
+Optional one-shot smoke test:
+
+```bash
+python workers/upstash_job_worker.py --once
+```
+
+## 3. Async Queue API (Vercel)
+
+- `POST /api/queue/jobs`
+: Creates a Supabase job row, pushes `{ jobId, taskType, task }` into Redis list `job_queue`, and returns immediately.
+
+- `GET /api/queue/jobs/{job_id}`
+: Polls Supabase for the latest status (`queued`, `running`, `completed`, `failed`) and result/error payload.
+
+Example create payload:
+
+```json
+{
+    "task_type": "goal",
+    "task_data": {
+        "goal": "Research competitors and draft a launch strategy",
+        "context": {"region": "US"},
+        "parallel": true,
+        "collaboration_mode": true
+    },
+    "metadata": {
+        "source": "vercel-api",
+        "requested_by": "user_123"
+    }
+}
+```
+
+## 4. Sample Code
 
 ### Direct Clients
 
@@ -143,12 +206,17 @@ factory = IntegrationFactory(overrides={
 clients = factory.create()
 ```
 
-## 4. Implementation Map
+## 5. Implementation Map
 
 - `AetheerAI/integrations/base_client.py`
 - `AetheerAI/integrations/http.py`
 - `AetheerAI/integrations/errors.py`
 - `AetheerAI/integrations/supabase_client.py`
+- `AetheerAI/integrations/upstash_redis_queue.py`
+- `AetheerAI/integrations/config/upstash_redis_config.py`
+- `AetheerAI/api/async_jobs.py`
+- `AetheerAI/api/queue_router.py`
+- `AetheerAI/workers/upstash_job_worker.py`
 - `AetheerAI/integrations/infobip_client.py`
 - `AetheerAI/integrations/payu_client.py`
 - `AetheerAI/integrations/meta_api_client.py`
@@ -156,7 +224,7 @@ clients = factory.create()
 - `AetheerAI/integrations/service_factory.py`
 - `AetheerAI/examples/external_services_demo.py`
 
-## 5. Production Best Practices
+## 6. Production Best Practices
 
 - Keep all secrets in runtime env vars only. Do not commit `.env`.
 - Rotate any key immediately if exposed in chat, logs, screenshots, or commits.

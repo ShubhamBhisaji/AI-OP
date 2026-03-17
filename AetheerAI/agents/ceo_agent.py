@@ -19,6 +19,13 @@ from security.policy_engine import PermissionLevel
 
 logger = logging.getLogger(__name__)
 
+_PRIORITY_ORDER: dict[str, int] = {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+}
+
 
 VALID_AGENT_TYPES: frozenset[str] = frozenset(
     {
@@ -102,6 +109,7 @@ class TaskRecord:
     result: str = ""
     error: str = ""
     attempts: int = 0
+    assigned_agent: str = ""
 
 
 @dataclass
@@ -208,7 +216,12 @@ class CEOAgent:
             if not runnable:
                 break
 
-            mode = "parallel" if parallel and not offline_local_enabled and len(runnable) > 1 else "sequential"
+            mode, workers = self._select_execution_strategy(
+                runnable_count=len(runnable),
+                parallel=parallel,
+                offline_local_enabled=offline_local_enabled,
+                governance_ctx=governance_ctx,
+            )
             batch = [
                 ExecutionTask(
                     title=task.title,
@@ -238,7 +251,7 @@ class CEOAgent:
             records = self.execution_engine.execute_batch(
                 batch,
                 mode=mode,
-                max_workers=min(6, len(batch)),
+                max_workers=workers,
             )
 
             self._apply_batch_records(tasks=tasks, records=records)
@@ -292,6 +305,14 @@ class CEOAgent:
             final_status = "failed"
         else:
             final_status = "completed"
+
+        self._record_project_reflection(
+            goal=goal,
+            tasks=tasks,
+            final_status=final_status,
+            elapsed_seconds=round(time.monotonic() - started_at, 3),
+            spent_usd=governance_ctx.spent_usd,
+        )
 
         result = ProjectResult(
             goal=goal,
@@ -464,6 +485,10 @@ class CEOAgent:
         fast_mode: bool,
         fast_mode_collaboration: bool,
     ) -> str:
+        started_at = time.monotonic()
+        agent_name = ""
+        lifecycle_recorded = False
+
         governance.check_limits(governance_ctx)
 
         agent = self._get_or_create_agent(
@@ -475,80 +500,181 @@ class CEOAgent:
         if agent is None:
             raise RuntimeError(f"No agent available for type '{task.agent_type}'.")
 
+        task.assigned_agent = agent.name
+        agent_name = agent.name
+
         prompt = self._build_task_prompt(task=task, goal=goal, context=context, fast_mode=fast_mode)
         prompt = self._apply_pre_execute_hitl(task=task, agent=agent, prompt=prompt, hitl_callback=hitl_callback)
 
-        if governance.is_risky_task(task.require_approval, prompt):
-            governance.require_risky_approval(
-                agent_name=agent.name,
-                summary=f"{task.title}: {task.description[:240]}",
-            )
-
-        if collaboration_mode and self._should_trigger_collaboration(
-            task,
-            fast_mode=fast_mode,
-            fast_mode_collaboration=fast_mode_collaboration,
-        ):
-            collab_context = self._run_internal_collaboration(
-                goal=goal,
-                task=task,
-                primary_agent_name=agent.name,
-                fast_mode=fast_mode,
-            )
-            if collab_context:
-                prompt = (
-                    f"{prompt}\n\n"
-                    "INTERNAL COLLABORATION BRIEF (pre-task):\n"
-                    f"{collab_context[:2200]}"
+        try:
+            if governance.is_risky_task(task.require_approval, prompt):
+                governance.require_risky_approval(
+                    agent_name=agent.name,
+                    summary=f"{task.title}: {task.description[:240]}",
                 )
 
-        token_before = int(getattr(self.ai, "total_tokens", 0) or 0)
-        if fast_mode:
-            plan = {
-                "task": prompt,
-                "strategy": "Fast local mode: direct execution without extra planning pass.",
-            }
-            fast_system = (
-                f"You are {agent.role} named {agent.name}. "
-                "Produce concise, practical output under 220 words. "
-                "If uncertain, state assumptions briefly and continue."
-            )
-            result = self.ai.chat(
-                [
-                    {"role": "system", "content": fast_system},
-                    {"role": "user", "content": prompt[:2200]},
-                ],
-                timeout=70,
-                max_tokens=380,
-            )
-        else:
-            try:
-                plan = agent.plan_task(task=prompt, context={"goal": goal, **(context or {})})
-            except Exception as exc:
-                logger.warning("[CEO] plan_task failed for '%s'; using direct execution fallback: %s", task.title, exc)
+            if collaboration_mode and self._should_trigger_collaboration(
+                task,
+                fast_mode=fast_mode,
+                fast_mode_collaboration=fast_mode_collaboration,
+            ):
+                collab_context = self._run_internal_collaboration(
+                    goal=goal,
+                    task=task,
+                    primary_agent_name=agent.name,
+                    fast_mode=fast_mode,
+                )
+                if collab_context:
+                    prompt = (
+                        f"{prompt}\n\n"
+                        "INTERNAL COLLABORATION BRIEF (pre-task):\n"
+                        f"{collab_context[:2200]}"
+                    )
+
+            token_before = int(getattr(self.ai, "total_tokens", 0) or 0)
+            if fast_mode:
                 plan = {
                     "task": prompt,
-                    "strategy": "Direct execution fallback (planning unavailable).",
+                    "strategy": "Fast local mode: direct execution without extra planning pass.",
                 }
-            result = agent.execute_task(task=plan.get("task", prompt), context={"plan": plan.get("strategy", "")})
-        token_after = int(getattr(self.ai, "total_tokens", 0) or 0)
+                fast_system = (
+                    f"You are {agent.role} named {agent.name}. "
+                    "Produce concise, practical output under 220 words. "
+                    "If uncertain, state assumptions briefly and continue."
+                )
+                result = self.ai.chat(
+                    [
+                        {"role": "system", "content": fast_system},
+                        {"role": "user", "content": prompt[:2200]},
+                    ],
+                    timeout=70,
+                    max_tokens=380,
+                )
+            else:
+                try:
+                    plan = agent.plan_task(task=prompt, context={"goal": goal, **(context or {})})
+                except Exception as exc:
+                    logger.warning("[CEO] plan_task failed for '%s'; using direct execution fallback: %s", task.title, exc)
+                    plan = {
+                        "task": prompt,
+                        "strategy": "Direct execution fallback (planning unavailable).",
+                    }
+                result = agent.execute_task(task=plan.get("task", prompt), context={"plan": plan.get("strategy", "")})
+            token_after = int(getattr(self.ai, "total_tokens", 0) or 0)
 
-        delta_tokens = max(0, token_after - token_before)
-        governance.add_spend(governance_ctx, self._estimate_cost_usd(delta_tokens))
+            delta_tokens = max(0, token_after - token_before)
+            governance.add_spend(governance_ctx, self._estimate_cost_usd(delta_tokens))
 
-        result_text = str(result)
-        success = not result_text.strip().lower().startswith(("error", "[error]", "beyond_scope"))
-        self._persist_task_memory(
-            agent_name=agent.name,
-            task=task,
-            result=result_text,
-            success=success,
-            extra={"plan": plan.get("strategy", "")},
-        )
-        if not success:
-            raise RuntimeError(result_text)
+            result_text = str(result)
+            success = not result_text.strip().lower().startswith(("error", "[error]", "beyond_scope"))
+            self._persist_task_memory(
+                agent_name=agent.name,
+                task=task,
+                result=result_text,
+                success=success,
+                extra={"plan": plan.get("strategy", "")},
+            )
+            self._record_lifecycle_performance(
+                agent_name=agent.name,
+                task=task,
+                success=success,
+                duration_sec=time.monotonic() - started_at,
+                notes=result_text[:180],
+            )
+            lifecycle_recorded = True
 
-        return result_text
+            if not success:
+                raise RuntimeError(result_text)
+
+            return result_text
+        except Exception as exc:
+            if agent_name and not lifecycle_recorded:
+                self._record_lifecycle_performance(
+                    agent_name=agent_name,
+                    task=task,
+                    success=False,
+                    duration_sec=time.monotonic() - started_at,
+                    notes=str(exc)[:180],
+                )
+            raise
+
+    def _record_lifecycle_performance(
+        self,
+        *,
+        agent_name: str,
+        task: TaskRecord,
+        success: bool,
+        duration_sec: float,
+        notes: str = "",
+    ) -> None:
+        """Feed execution outcomes into lifecycle tracking for auto-specialization."""
+        lifecycle = getattr(self.kernel, "lifecycle", None)
+        if lifecycle is None:
+            return
+
+        try:
+            lifecycle.activate(agent_name)
+            lifecycle.record_performance(
+                agent_name,
+                task_type=task.agent_type,
+                success=success,
+                duration_sec=max(0.0, float(duration_sec)),
+                notes=notes,
+            )
+        except Exception as exc:
+            logger.debug("[CEO] lifecycle feedback skipped for '%s': %s", agent_name, exc)
+
+    def _record_project_reflection(
+        self,
+        *,
+        goal: str,
+        tasks: list[TaskRecord],
+        final_status: str,
+        elapsed_seconds: float,
+        spent_usd: float,
+    ) -> None:
+        """Persist a lightweight retrospective to support autonomous improvement loops."""
+        total = len(tasks)
+        completed = len([task for task in tasks if task.status == "completed"])
+        failed = len([task for task in tasks if task.status == "failed"])
+        completion_rate = (completed / total) if total else 0.0
+
+        top_failures: dict[str, int] = {}
+        for item in tasks:
+            if item.status != "failed":
+                continue
+            label = (item.error or "unknown_failure").strip().split(":", 1)[0][:80] or "unknown_failure"
+            top_failures[label] = top_failures.get(label, 0) + 1
+
+        recommendations: list[str] = []
+        if completion_rate < 0.8:
+            recommendations.append("Increase decomposition granularity for failed phases before rerun.")
+        if failed > 0:
+            recommendations.append("Review top failure clusters and tighten role/task matching.")
+        if spent_usd > 0 and failed > completed:
+            recommendations.append("Reduce parallelism or simplify prompts to conserve budget on retries.")
+        if not recommendations:
+            recommendations.append("Maintain current strategy; focus next run on higher-impact objectives.")
+
+        reflection = {
+            "goal": goal,
+            "status": final_status,
+            "elapsed_seconds": round(elapsed_seconds, 3),
+            "spent_usd": round(float(spent_usd), 6),
+            "total_tasks": total,
+            "completed_tasks": completed,
+            "failed_tasks": failed,
+            "completion_rate": round(completion_rate, 3),
+            "top_failure_clusters": top_failures,
+            "recommendations": recommendations,
+            "timestamp": time.time(),
+        }
+
+        try:
+            self.memory.save("autonomy:last_reflection", reflection, namespace="global")
+            self.memory.append("autonomy:reflections", reflection, namespace="global")
+        except Exception as exc:
+            logger.debug("[CEO] project reflection persist skipped: %s", exc)
 
     def _apply_batch_records(self, tasks: list[TaskRecord], records) -> None:
         by_id = {task.task_id: task for task in tasks}
@@ -567,11 +693,55 @@ class CEOAgent:
 
     def _runnable_tasks(self, tasks: list[TaskRecord]) -> list[TaskRecord]:
         completed = {task.index for task in tasks if task.status == "completed"}
-        return [
+        ready = [
             task
             for task in tasks
             if task.status == "pending" and all(dep in completed for dep in task.depends_on)
         ]
+        ready.sort(
+            key=lambda item: (
+                _PRIORITY_ORDER.get(item.priority, _PRIORITY_ORDER["medium"]),
+                len(item.depends_on),
+                item.index,
+            )
+        )
+        return ready
+
+    def _select_execution_strategy(
+        self,
+        *,
+        runnable_count: int,
+        parallel: bool,
+        offline_local_enabled: bool,
+        governance_ctx: GovernanceContext,
+    ) -> tuple[str, int]:
+        """Choose sequential/parallel mode and worker cap from remaining resources."""
+        if runnable_count <= 1 or not parallel or offline_local_enabled:
+            return "sequential", 1
+
+        workers = min(6, runnable_count)
+
+        if governance_ctx.max_budget_usd > 0:
+            remaining_budget = max(0.0, governance_ctx.max_budget_usd - governance_ctx.spent_usd)
+            if remaining_budget < 0.25:
+                workers = 1
+            elif remaining_budget < 0.75:
+                workers = min(workers, 2)
+            elif remaining_budget < 1.50:
+                workers = min(workers, 3)
+
+        if governance_ctx.max_runtime_seconds > 0:
+            remaining_runtime = max(
+                0.0,
+                governance_ctx.max_runtime_seconds - governance_ctx.elapsed_seconds(),
+            )
+            if remaining_runtime < 30:
+                workers = 1
+            elif remaining_runtime < 120:
+                workers = min(workers, 2)
+
+        mode = "parallel" if workers > 1 else "sequential"
+        return mode, workers
 
     def _replan(
         self,

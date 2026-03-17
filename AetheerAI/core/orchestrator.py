@@ -8,6 +8,7 @@ broadcast  : All agents process the same task independently.
 vote       : All agents answer; AI synthesizes a consensus.
 best_of    : All agents attempt; AI picks the single best response.
 debate     : Two agents exchange arguments on a topic (N rounds each).
+collaborate: Round-based multi-agent collaboration with peer delegation.
 orchestrate: AI auto-selects agents + mode, then executes.
 """
 
@@ -69,10 +70,21 @@ REASON: <one sentence>"""
 class Orchestrator:
     """Multi-agent coordination engine."""
 
-    def __init__(self, registry, ai_adapter, workflow_engine) -> None:
+    def __init__(
+        self,
+        registry,
+        ai_adapter,
+        workflow_engine,
+        collaboration_runner=None,
+    ) -> None:
         self.registry = registry
         self.ai_adapter = ai_adapter
         self.workflow_engine = workflow_engine
+        self._collaboration_runner = collaboration_runner
+
+    def set_collaboration_runner(self, runner) -> None:
+        """Inject a callable(goal=..., agent_names=..., rounds=...) -> dict."""
+        self._collaboration_runner = runner
 
     # ------------------------------------------------------------------
     # Pipeline  —  sequential, each output feeds next
@@ -522,7 +534,8 @@ class Orchestrator:
     def orchestrate(self, task: str) -> dict:
         """
         Let the AI decide which registered agents to use and in which
-        coordination mode (pipeline/broadcast/vote/best_of), then execute.
+        coordination mode (pipeline/broadcast/vote/best_of/collaborate),
+        then execute.
 
         Returns:
             {
@@ -551,9 +564,10 @@ class Orchestrator:
             f"  pipeline  — sequential chain where each output feeds the next\n"
             f"  broadcast — all agents work independently on the same task\n"
             f"  vote      — agents answer, then AI synthesizes consensus\n"
-            f"  best_of   — agents all try, AI picks the best answer\n\n"
+            f"  best_of   — agents all try, AI picks the best answer\n"
+            f"  collaborate — multi-round teamwork with peer handoffs\n\n"
             f"Reply in EXACTLY this format (no extra text):\n"
-            f"MODE: <pipeline|broadcast|vote|best_of>\n"
+            f"MODE: <pipeline|broadcast|vote|best_of|collaborate>\n"
             f"AGENTS: <agent1,agent2,...>\n"
             f"REASON: <one sentence>"
         )
@@ -579,7 +593,7 @@ class Orchestrator:
         chosen = [a for a in chosen if self.registry.get(a) is not None] or list(all_names)
 
         # Validate mode
-        valid_modes = {"pipeline", "broadcast", "vote", "best_of"}
+        valid_modes = {"pipeline", "broadcast", "vote", "best_of", "collaborate"}
         if mode not in valid_modes:
             mode = "broadcast"
 
@@ -591,6 +605,31 @@ class Orchestrator:
             base.update(self.vote(chosen, task))
         elif mode == "best_of":
             base.update(self.best_of(chosen, task))
+        elif mode == "collaborate":
+            if self._collaboration_runner is None:
+                logger.warning(
+                    "Orchestrator: collaboration mode selected but runner missing; falling back to broadcast."
+                )
+                base["mode"] = "broadcast"
+                base["reason"] = reason + " (fallback: collaboration runner unavailable)"
+                base["results"] = self.broadcast(chosen, task)
+            else:
+                try:
+                    payload = self._collaboration_runner(
+                        goal=task,
+                        agent_names=chosen,
+                        rounds=2,
+                    )
+                    base["session"] = payload
+                    base["summary"] = payload.get("final_synthesis", "")
+                except Exception as exc:
+                    logger.error(
+                        "Orchestrator: collaboration execution failed (%s); falling back to vote.",
+                        exc,
+                    )
+                    base["mode"] = "vote"
+                    base["reason"] = reason + " (fallback: collaboration execution error)"
+                    base.update(self.vote(chosen, task))
         else:   # broadcast
             base["results"] = self.broadcast(chosen, task)
 

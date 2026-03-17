@@ -26,12 +26,13 @@ Fix 6 — Memory Isolation (Namespacing):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import sys
 import threading
-from contextlib import contextmanager
+import time
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,32 @@ def _data_dir() -> Path:
     return Path(__file__).parent
 
 _MEMORY_FILE = _data_dir() / "memory_store.json"
+_SCHEMA_VERSION = 2
+
+_ENV_REQUIRE_VECTOR = "AETHEERAI_REQUIRE_VECTOR_MEMORY"
+_ENV_RETENTION_DAYS = "AETHEERAI_MEMORY_RETENTION_DAYS"
+_ENV_CLEANUP_INTERVAL_SEC = "AETHEERAI_MEMORY_CLEANUP_INTERVAL_SEC"
+_ENV_BACKUP_INTERVAL_SEC = "AETHEERAI_MEMORY_BACKUP_INTERVAL_SEC"
+_ENV_BACKUP_KEEP = "AETHEERAI_MEMORY_BACKUP_KEEP"
+
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("MemoryManager: invalid int for %s='%s', using %d", name, raw, default)
+        return default
+    return max(minimum, value)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
 
 # ── ChromaDB SQLite3 compatibility fix (🔴 Fix 5) ─────────────────────────────
 # ChromaDB requires sqlite3 >= 3.35.0. Many Windows Python installs ship with
@@ -79,8 +106,21 @@ class MemoryManager:
 
     def __init__(self, persist: bool = True, enable_vector: bool = True):
         self._store: dict[str, Any] = {}
+        self._meta: dict[str, dict[str, Any]] = {}
         self._persist = persist
         self._vector_collection = None
+
+        data_dir = _data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
+        self._backup_dir = data_dir / "memory_backups"
+
+        self._retention_days = _env_int(_ENV_RETENTION_DAYS, default=30, minimum=0)
+        self._cleanup_interval_sec = _env_int(_ENV_CLEANUP_INTERVAL_SEC, default=120, minimum=0)
+        self._backup_interval_sec = _env_int(_ENV_BACKUP_INTERVAL_SEC, default=3600, minimum=0)
+        self._backup_keep = _env_int(_ENV_BACKUP_KEEP, default=24, minimum=1)
+        self._require_vector_memory = _env_bool(_ENV_REQUIRE_VECTOR, default=False)
+        self._last_cleanup_ts: float = 0.0
+        self._last_backup_ts: float = 0.0
 
         # BLOCKER-6: Isolation mode — when enabled, only registered namespaces
         # are allowed, preventing agents from accidentally cross-reading memory.
@@ -101,7 +141,7 @@ class MemoryManager:
             try:
                 # Bug 2 fix: use _data_dir() so chroma persists next to the .exe,
                 # never inside _MEIPASS (which PyInstaller deletes on shutdown).
-                chroma_dir = str(_data_dir() / "chroma_store")
+                chroma_dir = str(data_dir / "chroma_store")
                 client = chromadb.PersistentClient(
                     path=chroma_dir,
                     settings=_CSettings(anonymized_telemetry=False),
@@ -122,6 +162,16 @@ class MemoryManager:
                 "MemoryManager: chromadb not installed — vector search unavailable. "
                 "Install with: pip install chromadb"
             )
+
+        if self._require_vector_memory and self._vector_collection is None:
+            raise RuntimeError(
+                "MemoryManager: semantic memory is required but ChromaDB is unavailable. "
+                "Install chromadb or unset AETHEERAI_REQUIRE_VECTOR_MEMORY."
+            )
+
+        self._repair_metadata()
+        self.cleanup(force=True)
+        self._repair_vector_index()
 
     # ------------------------------------------------------------------
     # Namespace helpers (Fix 6)
@@ -174,20 +224,43 @@ class MemoryManager:
     # Core operations
     # ------------------------------------------------------------------
 
-    def save(self, key: str, value: Any, namespace: str = "global") -> None:
+    def save(
+        self,
+        key: str,
+        value: Any,
+        namespace: str = "global",
+        ttl_seconds: int | None = None,
+    ) -> None:
         """Store or overwrite a value by key inside *namespace*."""
         self._assert_namespace(namespace)  # BLOCKER-6
         ns_key = self._ns_key(key, namespace)
         self._store[ns_key] = value
+        self._touch_meta(ns_key, value=value, namespace=namespace, ttl_seconds=ttl_seconds)
         self._schedule_flush()  # OPT-3: debounced instead of immediate
         self._vector_index(ns_key, value, namespace=namespace)
+        self._maybe_run_cleanup()
 
     def load(self, key: str, default: Any = None, namespace: str = "global") -> Any:
         """Retrieve a value by key from *namespace*, returning *default* if absent."""
         self._assert_namespace(namespace)  # BLOCKER-6
-        return self._store.get(self._ns_key(key, namespace), default)
+        ns_key = self._ns_key(key, namespace)
+        marker = object()
+        value = self._store.get(ns_key, marker)
+        if value is marker:
+            return default
+        if self._is_expired(ns_key):
+            self.delete(key, namespace=namespace)
+            return default
+        self._maybe_run_cleanup()
+        return value
 
-    def append(self, key: str, value: Any, namespace: str = "global") -> None:
+    def append(
+        self,
+        key: str,
+        value: Any,
+        namespace: str = "global",
+        ttl_seconds: int | None = None,
+    ) -> None:
         """Append a value to a list stored at *key* in *namespace*."""
         self._assert_namespace(namespace)  # BLOCKER-6
         ns_key = self._ns_key(key, namespace)
@@ -196,7 +269,10 @@ class MemoryManager:
             existing = [existing]
         existing.append(value)
         self._store[ns_key] = existing
+        self._touch_meta(ns_key, value=existing, namespace=namespace, ttl_seconds=ttl_seconds)
         self._schedule_flush()  # OPT-3
+        self._vector_index(ns_key, existing, namespace=namespace)
+        self._maybe_run_cleanup()
 
     def delete(self, key: str, namespace: str = "global") -> bool:
         """Remove a key from *namespace*. Returns True if it existed."""
@@ -204,6 +280,8 @@ class MemoryManager:
         ns_key = self._ns_key(key, namespace)
         if ns_key in self._store:
             del self._store[ns_key]
+            self._meta.pop(ns_key, None)
+            self._vector_delete(ns_key)
             self._schedule_flush()  # OPT-3
             return True
         return False
@@ -211,6 +289,7 @@ class MemoryManager:
     def clear(self) -> None:
         """Wipe all memory (in-memory, persisted file, and vector store)."""
         self._store.clear()
+        self._meta.clear()
         self._flush()
         if self._vector_collection is not None:
             try:
@@ -223,11 +302,85 @@ class MemoryManager:
         logger.info("MemoryManager: all memory cleared.")
 
     def keys(self) -> list[str]:
+        self._maybe_run_cleanup()
         return list(self._store.keys())
 
     def snapshot(self) -> dict[str, Any]:
         """Return a shallow copy of the entire memory store."""
+        self._maybe_run_cleanup()
         return dict(self._store)
+
+    def semantic_status(self) -> dict[str, Any]:
+        """Return semantic-memory backend and policy status for observability."""
+        vector_docs = 0
+        if self._vector_collection is not None:
+            try:
+                vector_docs = int(self._vector_collection.count())
+            except Exception:
+                vector_docs = -1
+        return {
+            "backend": "chromadb" if self._vector_collection is not None else "keyword_fallback",
+            "vector_available": self._vector_collection is not None,
+            "vector_required": self._require_vector_memory,
+            "vector_docs": vector_docs,
+            "retention_days": self._retention_days,
+            "cleanup_interval_sec": self._cleanup_interval_sec,
+            "backup_interval_sec": self._backup_interval_sec,
+            "backup_keep": self._backup_keep,
+        }
+
+    def cleanup(self, force: bool = False) -> dict[str, int]:
+        """Prune expired keys, stale metadata, and orphaned vector entries."""
+        now = time.time()
+        if (
+            not force
+            and self._cleanup_interval_sec > 0
+            and (now - self._last_cleanup_ts) < self._cleanup_interval_sec
+        ):
+            return {"expired_removed": 0, "stale_meta_removed": 0, "stale_vector_removed": 0}
+
+        expired_removed = 0
+        stale_meta_removed = 0
+
+        for ns_key in list(self._store.keys()):
+            if self._is_expired(ns_key, now=now):
+                self._store.pop(ns_key, None)
+                self._meta.pop(ns_key, None)
+                self._vector_delete(ns_key)
+                expired_removed += 1
+
+        for ns_key in list(self._meta.keys()):
+            if ns_key not in self._store:
+                self._meta.pop(ns_key, None)
+                stale_meta_removed += 1
+
+        stale_vector_removed = self._prune_stale_vector_docs()
+
+        if expired_removed or stale_meta_removed:
+            self._schedule_flush()
+
+        self._last_cleanup_ts = now
+
+        if expired_removed or stale_meta_removed or stale_vector_removed:
+            logger.info(
+                "MemoryManager.cleanup: expired=%d stale_meta=%d stale_vector=%d",
+                expired_removed,
+                stale_meta_removed,
+                stale_vector_removed,
+            )
+
+        return {
+            "expired_removed": expired_removed,
+            "stale_meta_removed": stale_meta_removed,
+            "stale_vector_removed": stale_vector_removed,
+        }
+
+    def create_backup(self, reason: str = "manual") -> Path | None:
+        """Force-create a memory backup snapshot and prune old backup files."""
+        if not self._persist:
+            return None
+        self._flush(backup=False)
+        return self._maybe_backup(force=True, reason=reason)
 
     def all(self, namespace: str = "global") -> dict[str, Any]:
         """Return all key/value pairs visible in a namespace.
@@ -236,6 +389,7 @@ class MemoryManager:
         can work with bare logical keys.
         """
         self._assert_namespace(namespace)
+        self._maybe_run_cleanup()
         if namespace == "global":
             return dict(self._store)
 
@@ -249,6 +403,7 @@ class MemoryManager:
     def recent(self, namespace: str = "global", limit: int = 20) -> list[dict[str, Any]]:
         """Return up to *limit* most recent task-history entries for a namespace."""
         self._assert_namespace(namespace)
+        self._maybe_run_cleanup()
         history = self.load("task_history", default=[], namespace=namespace)
         if not isinstance(history, list):
             return []
@@ -320,6 +475,7 @@ class MemoryManager:
         List of dicts: [{"key": ..., "value": ..., "distance": ...}, ...]
         """
         # ── Build the effective metadata filter (Fix 6) ───────────────
+        self._maybe_run_cleanup()
         effective_where: dict | None = None
         if namespace and namespace != "global":
             effective_where = {"namespace": {"$eq": namespace}}
@@ -375,15 +531,23 @@ class MemoryManager:
     # Persistence
     # ------------------------------------------------------------------
 
-    def _flush(self) -> None:
+    def _flush(self, backup: bool = True) -> None:
         if not self._persist:
             return
         # Atomic write: write to .tmp then rename so an interrupted write never
         # leaves the store file blank or partially written (Bug 2 fix)
         tmp = Path(str(_MEMORY_FILE) + ".tmp")
+        payload = {
+            "schema_version": _SCHEMA_VERSION,
+            "saved_at": time.time(),
+            "store": self._store,
+            "meta": self._meta,
+        }
         try:
-            tmp.write_text(json.dumps(self._store, indent=2, default=str))
+            tmp.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
             os.replace(tmp, _MEMORY_FILE)
+            if backup:
+                self._maybe_backup()
         except OSError as exc:
             logger.error("MemoryManager: failed to persist memory: %s", exc)
             if tmp.exists():
@@ -415,10 +579,23 @@ class MemoryManager:
 
     def _load(self) -> None:
         try:
-            self._store = json.loads(_MEMORY_FILE.read_text())
+            raw = json.loads(_MEMORY_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("store"), dict):
+                self._store = dict(raw["store"])
+                raw_meta = raw.get("meta", {})
+                self._meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+            elif isinstance(raw, dict):
+                # Backward compatibility with pre-schema flat files.
+                self._store = dict(raw)
+                self._meta = {}
+            else:
+                self._store = {}
+                self._meta = {}
             logger.info("MemoryManager: loaded %d key(s) from store.", len(self._store))
         except (OSError, json.JSONDecodeError) as exc:
             logger.error("MemoryManager: failed to load memory: %s", exc)
+            self._store = {}
+            self._meta = {}
 
     def _vector_index(self, key: str, value: Any, namespace: str = "global") -> None:
         """Index a key-value pair in the vector store with namespace metadata (Fix 6)."""
@@ -436,6 +613,190 @@ class MemoryManager:
             )
         except Exception as exc:
             logger.debug("MemoryManager: vector index failed for key '%s': %s", key, exc)
+
+    def _vector_delete(self, key: str) -> None:
+        if self._vector_collection is None:
+            return
+        try:
+            self._vector_collection.delete(ids=[key])
+        except Exception as exc:
+            logger.debug("MemoryManager: vector delete failed for key '%s': %s", key, exc)
+
+    def _prune_stale_vector_docs(self) -> int:
+        if self._vector_collection is None:
+            return 0
+        try:
+            all_ids = self._vector_collection.get().get("ids", [])
+            stale_ids = [doc_id for doc_id in all_ids if doc_id not in self._store]
+            if stale_ids:
+                self._vector_collection.delete(ids=stale_ids)
+            return len(stale_ids)
+        except Exception as exc:
+            logger.debug("MemoryManager: stale vector prune failed: %s", exc)
+            return 0
+
+    def _repair_vector_index(self) -> dict[str, int]:
+        if self._vector_collection is None:
+            return {"indexed": 0, "stale_removed": 0}
+
+        indexed = 0
+        for key, value in self._store.items():
+            namespace = self._meta.get(key, {}).get("namespace")
+            if not isinstance(namespace, str) or not namespace:
+                namespace = key.split(":", 1)[0] if ":" in key else "global"
+            self._vector_index(key, value, namespace=namespace)
+            indexed += 1
+
+        stale_removed = self._prune_stale_vector_docs()
+        if indexed or stale_removed:
+            logger.info(
+                "MemoryManager: vector consistency repair indexed=%d stale_removed=%d",
+                indexed,
+                stale_removed,
+            )
+        return {"indexed": indexed, "stale_removed": stale_removed}
+
+    def _repair_metadata(self) -> None:
+        now = time.time()
+        repaired = 0
+        for key, value in list(self._store.items()):
+            existing = self._meta.get(key, {})
+            if not isinstance(existing, dict):
+                existing = {}
+
+            namespace = existing.get("namespace")
+            if not isinstance(namespace, str) or not namespace:
+                namespace = key.split(":", 1)[0] if ":" in key else "global"
+                repaired += 1
+
+            updated_at = existing.get("updated_at")
+            if not isinstance(updated_at, (int, float)):
+                updated_at = now
+                repaired += 1
+
+            checksum = existing.get("checksum")
+            expected_checksum = self._value_checksum(value)
+            if checksum != expected_checksum:
+                checksum = expected_checksum
+                repaired += 1
+
+            expires_at = existing.get("expires_at")
+            if expires_at is not None and not isinstance(expires_at, (int, float)):
+                expires_at = None
+                repaired += 1
+
+            self._meta[key] = {
+                "namespace": namespace,
+                "updated_at": updated_at,
+                "checksum": checksum,
+                "expires_at": expires_at,
+            }
+
+        for key in list(self._meta.keys()):
+            if key not in self._store:
+                self._meta.pop(key, None)
+                repaired += 1
+
+        if repaired:
+            logger.info("MemoryManager: repaired metadata for %d key(s).", repaired)
+
+    def _touch_meta(
+        self,
+        ns_key: str,
+        *,
+        value: Any,
+        namespace: str,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        now = time.time()
+        expires_at: float | None = None
+        if ttl_seconds is not None and ttl_seconds > 0:
+            expires_at = now + float(ttl_seconds)
+        elif ns_key in self._meta:
+            existing_expiry = self._meta[ns_key].get("expires_at")
+            if isinstance(existing_expiry, (int, float)):
+                expires_at = float(existing_expiry)
+
+        self._meta[ns_key] = {
+            "namespace": namespace,
+            "updated_at": now,
+            "checksum": self._value_checksum(value),
+            "expires_at": expires_at,
+        }
+
+    def _is_expired(self, ns_key: str, now: float | None = None) -> bool:
+        now_ts = now if now is not None else time.time()
+        meta = self._meta.get(ns_key, {})
+        if not isinstance(meta, dict):
+            return False
+
+        expires_at = meta.get("expires_at")
+        if isinstance(expires_at, (int, float)) and float(expires_at) <= now_ts:
+            return True
+
+        if self._retention_days <= 0:
+            return False
+
+        updated_at = meta.get("updated_at")
+        if not isinstance(updated_at, (int, float)):
+            return False
+
+        retention_window = self._retention_days * 24 * 60 * 60
+        return (now_ts - float(updated_at)) > retention_window
+
+    @staticmethod
+    def _value_checksum(value: Any) -> str:
+        try:
+            text = json.dumps(value, sort_keys=True, default=str)
+        except Exception:
+            text = str(value)
+        return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+    def _maybe_run_cleanup(self) -> None:
+        if self._cleanup_interval_sec <= 0:
+            return
+        now = time.time()
+        if (now - self._last_cleanup_ts) >= self._cleanup_interval_sec:
+            self.cleanup(force=True)
+
+    def _maybe_backup(self, force: bool = False, reason: str = "scheduled") -> Path | None:
+        if not self._persist:
+            return None
+        if not _MEMORY_FILE.exists():
+            return None
+        if self._backup_interval_sec <= 0 and not force:
+            return None
+
+        now = time.time()
+        if (
+            not force
+            and self._last_backup_ts > 0
+            and (now - self._last_backup_ts) < self._backup_interval_sec
+        ):
+            return None
+
+        self._backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = self._backup_dir / f"memory_store-{int(now * 1000)}.json"
+        try:
+            backup_path.write_text(_MEMORY_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+            self._last_backup_ts = now
+            logger.debug("MemoryManager: backup created (%s, reason=%s)", backup_path.name, reason)
+        except OSError as exc:
+            logger.warning("MemoryManager: backup creation failed: %s", exc)
+            return None
+
+        backups = sorted(
+            self._backup_dir.glob("memory_store-*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for stale in backups[self._backup_keep:]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+
+        return backup_path
 
 
 # ---------------------------------------------------------------------------
@@ -465,14 +826,14 @@ class ScopedMemory:
     def namespace(self) -> str:
         return self._ns
 
-    def save(self, key: str, value: Any) -> None:
-        self._m.save(key, value, namespace=self._ns)
+    def save(self, key: str, value: Any, ttl_seconds: int | None = None) -> None:
+        self._m.save(key, value, namespace=self._ns, ttl_seconds=ttl_seconds)
 
     def load(self, key: str, default: Any = None) -> Any:
         return self._m.load(key, default, namespace=self._ns)
 
-    def append(self, key: str, value: Any) -> None:
-        self._m.append(key, value, namespace=self._ns)
+    def append(self, key: str, value: Any, ttl_seconds: int | None = None) -> None:
+        self._m.append(key, value, namespace=self._ns, ttl_seconds=ttl_seconds)
 
     def delete(self, key: str) -> bool:
         return self._m.delete(key, namespace=self._ns)

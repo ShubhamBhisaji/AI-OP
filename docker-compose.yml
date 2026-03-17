@@ -28,7 +28,6 @@ services:
       - AETHER_PORT=8000
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - DATABASE_URL=${DATABASE_URL:-sqlite:////app/memory/aetheer.db}
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:8000}
     volumes:
       # Persist database, uploads, and logs between container restarts

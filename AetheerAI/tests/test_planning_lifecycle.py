@@ -52,6 +52,13 @@ class DummyWorkflowEngine:
         return f"ok:{role}:{task[:40]}"
 
 
+class FailingWorkflowEngine(DummyWorkflowEngine):
+    def execute(self, agent, task: str) -> str:
+        if "Primary" in task:
+            return "error: simulated failure"
+        return super().execute(agent, task)
+
+
 class DummyGovernance:
     def check_limits(self, _ctx) -> None:
         return None
@@ -215,8 +222,59 @@ class TestPlanningEngine(unittest.TestCase):
             result = engine.execute_plan(graph, max_steps=10, max_workers=2)
 
         self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["completed"], 2)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(result["failed_tasks"], [])
         self.assertEqual(result["stats"].get("completed"), 2)
         self.assertTrue(graph.is_complete())
+
+    def test_execute_plan_skips_tasks_blocked_by_failed_or_skipped_dependencies(self):
+        ai = MagicMock()
+        ai.chat.return_value = "{}"
+        engine = PlanningEngine(
+            workflow_engine=FailingWorkflowEngine(),
+            registry=self.registry,
+            ai_adapter=ai,
+            governance=DummyGovernance(),
+            self_healer=None,
+            memory_manager=None,
+        )
+        graph = TaskGraph(plan_id="exec2", title="Fail chain", summary="")
+        graph.add_task(TaskNode(
+            id="t1",
+            title="Primary",
+            description="Fail here",
+            agent_type="research_agent",
+            depends_on=[],
+            critical=False,
+            max_retries=0,
+        ))
+        graph.add_task(TaskNode(
+            id="t2",
+            title="Secondary",
+            description="Depends on t1",
+            agent_type="developer_agent",
+            depends_on=["t1"],
+            critical=False,
+        ))
+        graph.add_task(TaskNode(
+            id="t3",
+            title="Tertiary",
+            description="Depends on skipped t2",
+            agent_type="developer_agent",
+            depends_on=["t2"],
+            critical=False,
+        ))
+
+        with patch.object(TaskGraph, "save", autospec=True, return_value=self.tmpdir / "plan_exec2.json"):
+            result = engine.execute_plan(graph, max_steps=10, max_workers=2)
+
+        statuses = {task["id"]: task["status"] for task in result["tasks"]}
+        self.assertEqual(statuses["t1"], "failed")
+        self.assertEqual(statuses["t2"], "skipped")
+        self.assertEqual(statuses["t3"], "skipped")
+        self.assertIn("t1", result["failed_tasks"])
 
     def test_build_graph_rejects_missing_tasks(self):
         engine = self._engine_with_ai_response("{}")

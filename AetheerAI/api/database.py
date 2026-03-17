@@ -75,6 +75,9 @@ class User(Base):
     predictions = relationship("Prediction",   back_populates="user", cascade="all, delete-orphan")
     uploads     = relationship("UploadedFile", back_populates="user", cascade="all, delete-orphan")
     logs        = relationship("ActivityLog",  back_populates="user", cascade="all, delete-orphan")
+    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
+    invoices      = relationship("BillingInvoice", back_populates="user", cascade="all, delete-orphan")
+    usage_events  = relationship("UsageEvent", back_populates="user", cascade="all, delete-orphan")
 
     def to_dict(self, *, include_private: bool = False) -> dict:
         d = {
@@ -174,6 +177,141 @@ class ActivityLog(Base):
             "action":     self.action,
             "detail":     self.detail,
             "ip_address": self.ip_address,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class BillingPlan(Base):
+    __tablename__ = "billing_plans"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    code        = Column(String(64), unique=True, nullable=False, index=True)
+    name        = Column(String(128), nullable=False)
+    interval    = Column(String(16), nullable=False, default="monthly")  # monthly | yearly
+    price_usd   = Column(Float, nullable=False, default=0.0)
+    token_quota = Column(Integer, nullable=True)
+    features    = Column(JSON, nullable=True)
+    is_active   = Column(Boolean, default=True, nullable=False, index=True)
+    created_at  = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at  = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+    subscriptions = relationship("Subscription", back_populates="plan")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "code": self.code,
+            "name": self.name,
+            "interval": self.interval,
+            "price_usd": self.price_usd,
+            "token_quota": self.token_quota,
+            "features": self.features or {},
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id                    = Column(Integer, primary_key=True, index=True)
+    user_id               = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id               = Column(Integer, ForeignKey("billing_plans.id", ondelete="SET NULL"), nullable=True, index=True)
+    status                = Column(String(24), nullable=False, default="active", index=True)  # active | cancelled | past_due
+    current_period_start  = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    current_period_end    = Column(DateTime, nullable=False)
+    cancel_at_period_end  = Column(Boolean, default=False, nullable=False)
+    created_at            = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at            = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+    user   = relationship("User", back_populates="subscriptions")
+    plan   = relationship("BillingPlan", back_populates="subscriptions")
+    invoices = relationship("BillingInvoice", back_populates="subscription")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "plan_id": self.plan_id,
+            "status": self.status,
+            "current_period_start": self.current_period_start.isoformat() if self.current_period_start else None,
+            "current_period_end": self.current_period_end.isoformat() if self.current_period_end else None,
+            "cancel_at_period_end": self.cancel_at_period_end,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class BillingInvoice(Base):
+    __tablename__ = "billing_invoices"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    subscription_id  = Column(Integer, ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id          = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount_usd       = Column(Float, nullable=False, default=0.0)
+    currency         = Column(String(8), nullable=False, default="USD")
+    status           = Column(String(24), nullable=False, default="open", index=True)  # open | paid | void
+    period_start     = Column(DateTime, nullable=False)
+    period_end       = Column(DateTime, nullable=False)
+    due_at           = Column(DateTime, nullable=True)
+    paid_at          = Column(DateTime, nullable=True)
+    meta             = Column(JSON, nullable=True)
+    created_at       = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    subscription = relationship("Subscription", back_populates="invoices")
+    user         = relationship("User", back_populates="invoices")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "subscription_id": self.subscription_id,
+            "user_id": self.user_id,
+            "amount_usd": self.amount_usd,
+            "currency": self.currency,
+            "status": self.status,
+            "period_start": self.period_start.isoformat() if self.period_start else None,
+            "period_end": self.period_end.isoformat() if self.period_end else None,
+            "due_at": self.due_at.isoformat() if self.due_at else None,
+            "paid_at": self.paid_at.isoformat() if self.paid_at else None,
+            "meta": self.meta or {},
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class UsageEvent(Base):
+    __tablename__ = "usage_events"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    event_type  = Column(String(64), nullable=False, index=True)
+    metric_name = Column(String(64), nullable=False, index=True)
+    quantity    = Column(Float, nullable=False, default=1.0)
+    unit        = Column(String(32), nullable=False, default="count")
+    meta        = Column(JSON, nullable=True)
+    created_at  = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+
+    user = relationship("User", back_populates="usage_events")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "event_type": self.event_type,
+            "metric_name": self.metric_name,
+            "quantity": self.quantity,
+            "unit": self.unit,
+            "meta": self.meta or {},
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

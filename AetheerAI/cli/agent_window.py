@@ -366,7 +366,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
                 (r'\b(remove skill|delete skill)\b',                'remove_skill',  ''),
                 # switch ai
                 (r'\b(switch ai|change ai|change model|switch model|'
-                 r'use (openai|github|gemini|claude|huggingface))\b','switch_ai',    ''),
+                 r'use (openai|github|gemini|claude|ollama))\b','switch_ai',    ''),
                 # add api
                 (r'\b(add api|api key|set key|configure api)\b',    'add_api',       ''),
                 # create file
@@ -1268,7 +1268,7 @@ def run_agent_window(agent_name: str, provider: str, model: str | None) -> None:
         elif cmd == "help":
             print(f"""
   add_api [provider] [key]         — Add or update an AI provider API key
-       Providers: openai, claude, gemini, huggingface, github
+       Providers: openai, claude, gemini, github
        Example: add_api gemini       (interactive)
                 add_api list         (show status)
   switch_ai <provider> [model]     — Switch AI provider live

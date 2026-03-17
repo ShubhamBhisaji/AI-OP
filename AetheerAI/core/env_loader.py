@@ -65,7 +65,6 @@ _PROVIDER_ENV_KEYS = {
     "openai":      "OPENAI_API_KEY",
     "claude":      "ANTHROPIC_API_KEY",
     "gemini":      "GEMINI_API_KEY",
-    "huggingface": "HF_API_KEY",
 }
 
 _PLACEHOLDER_VALUES = {
@@ -73,7 +72,6 @@ _PLACEHOLDER_VALUES = {
     "your_openai_key_here",
     "your_anthropic_key_here",
     "your_gemini_key_here",
-    "your_huggingface_token_here",
     "",
 }
 

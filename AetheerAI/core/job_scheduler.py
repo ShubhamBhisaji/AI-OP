@@ -3,7 +3,7 @@ JobScheduler — Persistent, priority-based job queue for AetheerAI.
 
 Closes the gaps:
   ❌ Parallel task orchestration   → thread-pool execution of independent jobs
-  ❌ Distributed execution          → job state stored in JSON, resumable after restart
+    ❌ Distributed execution          → pluggable executor transport (local or remote)
   ❌ Persistent job queues          → jobs survive process restarts
   ❌ Scheduling                     → run-at, interval, and immediate scheduling
 
@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +153,7 @@ class JobScheduler:
         executor_fn: Callable[[str, str], Any],
         max_workers: int = _MAX_WORKERS,
         store_path: Path | str | None = None,
+        executor_name: str | None = None,
     ) -> None:
         """
         Parameters
@@ -163,6 +164,11 @@ class JobScheduler:
         store_path  : Override default persistence path.
         """
         self._executor_fn = executor_fn
+        self._executor_name = (
+            executor_name
+            or getattr(executor_fn, "__qualname__", None)
+            or type(executor_fn).__name__
+        )
         self._store_path = Path(store_path) if store_path else _JOB_STORE
         self._store_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -305,6 +311,7 @@ class JobScheduler:
             "total": len(self._jobs),
             "by_status": counts,
             "running": len(self._active),
+            "executor": self._executor_name,
         }
 
     # ── Lifecycle ─────────────────────────────────────────────────────────

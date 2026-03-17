@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import math
+import re
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 from integrations.base_client import BaseServiceClient
 from integrations.config import PayUConfig
@@ -15,6 +19,8 @@ class PayUClient(BaseServiceClient):
     """High-level helper around PayU checkout and transaction APIs."""
 
     service_name = "payu"
+    _TXN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{5,63}$")
+    _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
     def __init__(
         self,
@@ -29,7 +35,8 @@ class PayUClient(BaseServiceClient):
         )
 
     def generate_transaction_id(self, prefix: str = "TXN") -> str:
-        return f"{prefix}{uuid.uuid4().hex[:20]}"
+        safe_prefix = re.sub(r"[^A-Za-z0-9]", "", prefix or "TXN")[:12] or "TXN"
+        return f"{safe_prefix}{uuid.uuid4().hex[:20]}"
 
     def build_checkout_payload(
         self,
@@ -48,6 +55,16 @@ class PayUClient(BaseServiceClient):
         udf4: str = "",
         udf5: str = "",
     ) -> dict[str, Any]:
+        self._validate_checkout_fields(
+            amount=amount,
+            product_info=product_info,
+            first_name=first_name,
+            email=email,
+            transaction_id=transaction_id,
+        )
+        self._validate_redirect_url(success_url or self.config.success_url, field_name="success_url")
+        self._validate_redirect_url(failure_url or self.config.failure_url, field_name="failure_url")
+
         txnid = transaction_id or self.generate_transaction_id()
         amount_str = f"{amount:.2f}"
 
@@ -90,6 +107,8 @@ class PayUClient(BaseServiceClient):
         }
 
     def verify_transaction(self, *, transaction_id: str) -> Any:
+        self._validate_transaction_id(transaction_id)
+
         command = "verify_payment"
         hash_value = self._command_hash(command=command, var1=transaction_id)
 
@@ -126,6 +145,16 @@ class PayUClient(BaseServiceClient):
         This follows PayU's command-based API style and can be adapted
         if your account uses a different command endpoint.
         """
+        self._validate_checkout_fields(
+            amount=amount,
+            product_info=product_info,
+            first_name=first_name,
+            email=email,
+            transaction_id=transaction_id,
+        )
+        self._validate_redirect_url(self.config.success_url, field_name="success_url")
+        self._validate_redirect_url(self.config.failure_url, field_name="failure_url")
+
         txnid = transaction_id or self.generate_transaction_id(prefix="LNK")
         request_payload = {
             "txnid": txnid,
@@ -163,7 +192,66 @@ class PayUClient(BaseServiceClient):
         expected = hashlib.sha512(
             f"{body}|{self.config.merchant_salt}".encode("utf-8")
         ).hexdigest()
-        return expected == (received_signature or "").strip()
+        received = (received_signature or "").strip().lower()
+        return bool(received) and hmac.compare_digest(expected, received)
+
+    def verify_payment_response_hash(
+        self,
+        *,
+        status: str,
+        txnid: str,
+        amount: float,
+        product_info: str,
+        first_name: str,
+        email: str,
+        received_hash: str,
+        udf1: str = "",
+        udf2: str = "",
+        udf3: str = "",
+        udf4: str = "",
+        udf5: str = "",
+        additional_charges: str = "",
+    ) -> bool:
+        """
+        Verify the hash returned by PayU success/failure callbacks.
+
+        This helps detect tampered response payloads before marking a payment as final.
+        """
+        self._validate_checkout_fields(
+            amount=amount,
+            product_info=product_info,
+            first_name=first_name,
+            email=email,
+            transaction_id=txnid,
+        )
+
+        amount_str = f"{amount:.2f}"
+        sequence = [
+            self.config.merchant_salt,
+            status,
+            "",
+            "",
+            "",
+            "",
+            "",
+            udf5,
+            udf4,
+            udf3,
+            udf2,
+            udf1,
+            email,
+            first_name,
+            product_info,
+            amount_str,
+            txnid,
+            self.config.merchant_key,
+        ]
+        if additional_charges:
+            sequence.insert(0, str(additional_charges))
+
+        expected = hashlib.sha512("|".join(sequence).encode("utf-8")).hexdigest()
+        received = (received_hash or "").strip().lower()
+        return bool(received) and hmac.compare_digest(expected, received)
 
     def _payment_hash(
         self,
@@ -205,6 +293,44 @@ class PayUClient(BaseServiceClient):
             f"{self.config.merchant_key}|{command}|{var1}|{self.config.merchant_salt}"
         )
         return hashlib.sha512(hash_input.encode("utf-8")).hexdigest()
+
+    def _validate_checkout_fields(
+        self,
+        *,
+        amount: float,
+        product_info: str,
+        first_name: str,
+        email: str,
+        transaction_id: str | None,
+    ) -> None:
+        if not isinstance(amount, (int, float)) or not math.isfinite(float(amount)):
+            raise ValueError("amount must be a finite numeric value")
+        if float(amount) <= 0:
+            raise ValueError("amount must be greater than zero")
+
+        if not product_info or len(product_info.strip()) > 255:
+            raise ValueError("product_info is required and must be <= 255 characters")
+        if not first_name or len(first_name.strip()) > 60:
+            raise ValueError("first_name is required and must be <= 60 characters")
+        if not self._EMAIL_RE.match((email or "").strip()):
+            raise ValueError("email must be a valid email address")
+
+        if transaction_id:
+            self._validate_transaction_id(transaction_id)
+
+    def _validate_transaction_id(self, transaction_id: str) -> None:
+        value = (transaction_id or "").strip()
+        if not self._TXN_ID_RE.match(value):
+            raise ValueError(
+                "transaction_id must be 6-64 chars and contain only letters, digits, '_' or '-'"
+            )
+
+    def _validate_redirect_url(self, url: str, *, field_name: str) -> None:
+        parsed = urlparse(url or "")
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError(f"{field_name} must be an absolute http/https URL")
+        if not parsed.netloc:
+            raise ValueError(f"{field_name} must include a network host")
 
     def _url(self, path: str) -> str:
         return f"{self.config.base_url.rstrip('/')}/{path.lstrip('/')}"

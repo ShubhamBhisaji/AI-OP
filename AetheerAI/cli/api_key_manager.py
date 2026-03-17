@@ -31,12 +31,6 @@ PROVIDERS: dict[str, tuple[str, str, str, str]] = {
         "https://aistudio.google.com/apikey",
         "gemini-2.5-flash-lite",
     ),
-    "huggingface": (
-        "HF_API_KEY",
-        "HuggingFace",
-        "https://huggingface.co/settings/tokens",
-        "mistralai/Mistral-7B-Instruct-v0.2",
-    ),
     "github": (
         "GITHUB_TOKEN",
         "GitHub Models (Copilot Pro)",

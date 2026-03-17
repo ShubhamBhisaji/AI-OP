@@ -6,7 +6,7 @@ Not all tasks need a $20/month brain. Some just need a 5-cent brain.
 The router evaluates each incoming task's complexity and selects the
 cheapest model that can reliably execute it:
 
-  SIMPLE   → local / on-device model (Ollama / HuggingFace)
+    SIMPLE   → local / on-device model (Ollama)
   MODERATE → lightweight cloud model  (gpt-4o-mini, gemini-2.5-flash-lite)
   COMPLEX  → high-reasoning cloud model (gpt-4.1, claude-sonnet, gemini-pro)
 
@@ -67,7 +67,6 @@ _ROUTING_TABLE: dict[str, list[tuple[str, str]]] = {
         ("ollama", "llama3.2:1b"),              # offline-first default (commonly preinstalled)
         ("ollama", "llama3.2:3b"),              # ultra-fast, minimal hardware
         ("ollama", "qwen2.5-coder:7b"),          # local code tasks
-        ("huggingface", "mistralai/Mistral-7B-Instruct-v0.2"),
         ("gemini", "gemini-2.5-flash-lite"),     # cheapest cloud fallback
         ("github", "gpt-4o-mini"),               # GitHub free tier
         ("openai", "gpt-4o-mini"),
@@ -399,7 +398,6 @@ class ModelRouter:
             "claude": "ANTHROPIC_API_KEY",
             "gemini": "GEMINI_API_KEY",
             "github": "GITHUB_TOKEN",
-            "huggingface": "HF_API_KEY",
             "ollama": None,  # local — always available
         }
         key = key_map.get(provider)
@@ -424,7 +422,7 @@ class ModelRouter:
 
     @staticmethod
     def _cost_tier(provider: str, model: str) -> str:
-        if provider == "ollama" or provider == "huggingface":
+        if provider == "ollama":
             return "free-local"
         if "mini" in model or "flash" in model or "lite" in model:
             return "cheap-cloud"

@@ -13,8 +13,16 @@ DELETE /api/auth/users/{id}  deactivate a user (admin only)
 
 from __future__ import annotations
 
+import base64
 import datetime
+import hashlib
+import hmac
+import json
+import logging
 import os
+import secrets
+import threading
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -24,7 +32,9 @@ from sqlalchemy.orm import Session
 
 from api.database import ActivityLog, User, get_db
 
-# ── JWT backend: python-jose (preferred) → fallback unsigned token ─────────
+logger = logging.getLogger("aetheer.api.auth")
+
+# ── JWT backend: python-jose (preferred) → stdlib HMAC fallback ────────────
 try:
     from jose import JWTError, jwt as _jwt
     _HAS_JOSE = True
@@ -32,7 +42,7 @@ except ImportError:  # pragma: no cover
     _HAS_JOSE = False
 
 
-# ── Password hashing: bcrypt (direct) → sha-256 fallback ──────────────────
+# ── Password hashing: bcrypt (direct) → PBKDF2 fallback ───────────────────
 # Use bcrypt directly to avoid passlib/bcrypt 4.x version-detection bugs.
 class _pwd_ctx:
     @staticmethod
@@ -41,8 +51,10 @@ class _pwd_ctx:
             import bcrypt  # type: ignore
             return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         except Exception:
-            import hashlib
-            return hashlib.sha256(pw.encode()).hexdigest()
+            iterations = 210_000
+            salt = os.urandom(16)
+            digest = hashlib.pbkdf2_hmac("sha256", pw.encode("utf-8"), salt, iterations)
+            return f"pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}"
 
     @staticmethod
     def verify(pw: str, hashed: str) -> bool:
@@ -50,14 +62,44 @@ class _pwd_ctx:
             import bcrypt  # type: ignore
             return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
         except Exception:
-            import hashlib
-            return hashlib.sha256(pw.encode()).hexdigest() == hashed
+            if hashed.startswith("pbkdf2_sha256$"):
+                try:
+                    _, iters, salt_hex, digest_hex = hashed.split("$", 3)
+                    salt = bytes.fromhex(salt_hex)
+                    expected = bytes.fromhex(digest_hex)
+                    derived = hashlib.pbkdf2_hmac("sha256", pw.encode("utf-8"), salt, int(iters))
+                    return hmac.compare_digest(derived, expected)
+                except Exception:
+                    return False
+
+            # Legacy fallback compatibility for previously stored hashes.
+            legacy = hashlib.sha256(pw.encode()).hexdigest()
+            return hmac.compare_digest(legacy, hashed)
 
 
 # ── Config ─────────────────────────────────────────────────────────────────
-_SECRET   = os.getenv("JWT_SECRET", "change-me-in-production-aetheer-secret-key")
+_SECRET = (os.getenv("JWT_SECRET") or "").strip()
+if not _SECRET:
+    # Avoid a static default secret; generate a process-local key if unset.
+    _SECRET = secrets.token_urlsafe(48)
+    logger.warning("JWT_SECRET not set; generated ephemeral signing key for this process.")
+
 _ALG      = "HS256"
-_EXPIRE_H = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
+try:
+    _EXPIRE_H = max(1, int((os.getenv("JWT_EXPIRE_HOURS") or "24").strip()))
+except ValueError:
+    _EXPIRE_H = 24
+
+try:
+    _LOGIN_WINDOW_SECONDS = max(60, int((os.getenv("AUTH_LOGIN_WINDOW_SECONDS") or "900").strip()))
+except ValueError:
+    _LOGIN_WINDOW_SECONDS = 900
+try:
+    _LOGIN_MAX_ATTEMPTS = max(1, int((os.getenv("AUTH_LOGIN_MAX_ATTEMPTS") or "8").strip()))
+except ValueError:
+    _LOGIN_MAX_ATTEMPTS = 8
+_login_attempts_lock = threading.Lock()
+_login_attempts: dict[str, tuple[int, float]] = {}
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 _bearer = HTTPBearer(auto_error=False)
@@ -67,7 +109,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 class RegisterRequest(BaseModel):
     username: str  = Field(..., min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$")
-    email:    str  = Field(..., min_length=5, max_length=200)
+    email:    EmailStr
     password: str  = Field(..., min_length=8, max_length=128)
 
 
@@ -77,7 +119,7 @@ class LoginRequest(BaseModel):
 
 
 class UpdateMeRequest(BaseModel):
-    email:        str | None = Field(None, min_length=5, max_length=200)
+    email:        EmailStr | None = None
     new_password: str | None = Field(None, min_length=8, max_length=128)
     old_password: str | None = None
 
@@ -91,12 +133,21 @@ class TokenResponse(BaseModel):
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _make_token(user_id: int, username: str, is_admin: bool) -> str:
-    if not _HAS_JOSE:
-        # Minimal unsigned token for environments without python-jose
-        import base64, json as _json
-        payload = {"sub": str(user_id), "un": username, "adm": is_admin}
-        return base64.urlsafe_b64encode(_json.dumps(payload).encode()).decode()
     exp = datetime.datetime.utcnow() + datetime.timedelta(hours=_EXPIRE_H)
+    if not _HAS_JOSE:
+        payload = {
+            "sub": str(user_id),
+            "un": username,
+            "adm": is_admin,
+            "exp": int(exp.timestamp()),
+        }
+        payload_part = base64.urlsafe_b64encode(
+            json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        ).decode("utf-8").rstrip("=")
+        signature = hmac.new(_SECRET.encode("utf-8"), payload_part.encode("utf-8"), hashlib.sha256).digest()
+        sig_part = base64.urlsafe_b64encode(signature).decode("utf-8").rstrip("=")
+        return f"{payload_part}.{sig_part}"
+
     return _jwt.encode(
         {"sub": str(user_id), "un": username, "adm": is_admin, "exp": exp},
         _SECRET,
@@ -106,11 +157,33 @@ def _make_token(user_id: int, username: str, is_admin: bool) -> str:
 
 def _decode_token(token: str) -> dict:
     if not _HAS_JOSE:
-        import base64, json as _json
         try:
-            return _json.loads(base64.urlsafe_b64decode(token + "=="))
+            payload_part, sig_part = token.split(".", 1)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail="Invalid token") from exc
+
+        expected_sig = hmac.new(
+            _SECRET.encode("utf-8"), payload_part.encode("utf-8"), hashlib.sha256
+        ).digest()
+        expected_sig_part = base64.urlsafe_b64encode(expected_sig).decode("utf-8").rstrip("=")
+        if not hmac.compare_digest(sig_part, expected_sig_part):
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        try:
+            padded = payload_part + "=" * (-len(payload_part) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8"))
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid token")
+
+        try:
+            exp = float(payload.get("exp", 0))
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail="Invalid token") from exc
+        if exp <= time.time():
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        return payload
+
     try:
         return _jwt.decode(token, _SECRET, algorithms=[_ALG])
     except JWTError as exc:
@@ -127,6 +200,33 @@ def _ip(request: Request) -> str | None:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else None
+
+
+def _login_attempt_key(username: str, ip_addr: str | None) -> str:
+    return f"{(username or '').strip().lower()}|{ip_addr or 'unknown'}"
+
+
+def _consume_login_attempt(username: str, ip_addr: str | None) -> tuple[bool, int]:
+    now = time.time()
+    key = _login_attempt_key(username, ip_addr)
+
+    with _login_attempts_lock:
+        attempts, started = _login_attempts.get(key, (0, now))
+        if now - started >= _LOGIN_WINDOW_SECONDS:
+            attempts, started = 0, now
+
+        if attempts >= _LOGIN_MAX_ATTEMPTS:
+            retry_after = int(max(1, _LOGIN_WINDOW_SECONDS - (now - started)))
+            return False, retry_after
+
+        _login_attempts[key] = (attempts + 1, started)
+        return True, 0
+
+
+def _reset_login_attempts(username: str, ip_addr: str | None) -> None:
+    key = _login_attempt_key(username, ip_addr)
+    with _login_attempts_lock:
+        _login_attempts.pop(key, None)
 
 
 # ── Auth dependency ────────────────────────────────────────────────────────
@@ -193,12 +293,21 @@ def register(req: RegisterRequest, request: Request, db: Session = Depends(get_d
 
 @router.post("/login", response_model=TokenResponse)
 def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    ip_addr = _ip(request)
+    allowed, retry_after = _consume_login_attempt(req.username, ip_addr)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many login attempts. Retry in {retry_after} seconds.",
+        )
+
     user = db.query(User).filter(User.username == req.username, User.is_active == True).first()
     if not user or not _pwd_ctx.verify(req.password, user.hashed_pw):
-        _log(db, None, "login_failed", {"username": req.username}, _ip(request))
+        _log(db, None, "login_failed", {"username": req.username}, ip_addr)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    _log(db, user.id, "login", {"username": user.username}, _ip(request))
+    _reset_login_attempts(req.username, ip_addr)
+    _log(db, user.id, "login", {"username": user.username}, ip_addr)
     token = _make_token(user.id, user.username, user.is_admin)
     return TokenResponse(access_token=token, user=user.to_dict())
 

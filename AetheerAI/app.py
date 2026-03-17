@@ -927,7 +927,6 @@ elif page == "⚙️ Settings & Export":
         "claude":       "ANTHROPIC_API_KEY",
         "gemini":       "GEMINI_API_KEY",
         "ollama":       None,
-        "huggingface":  "HF_API_KEY",
     }
     _KEY_LABEL = {
         "github":      "GitHub Personal Access Token",
@@ -935,7 +934,6 @@ elif page == "⚙️ Settings & Export":
         "claude":      "Anthropic API Key",
         "gemini":      "Google Gemini API Key",
         "ollama":      None,
-        "huggingface": "HuggingFace API Token (optional)",
     }
     _KEY_HELP = {
         "github":      "Get a free token at https://github.com/settings/tokens — no special scopes needed.",
@@ -943,7 +941,6 @@ elif page == "⚙️ Settings & Export":
         "claude":      "Get your key at https://console.anthropic.com/",
         "gemini":      "Get a free key at https://aistudio.google.com/apikey",
         "ollama":      "",
-        "huggingface": "Get your token at https://huggingface.co/settings/tokens",
     }
     _STATIC_MODELS = {
         "github":      ["gpt-4.1", "gpt-5-mini", "gpt-4o", "gpt-4o-mini", "gpt-4.1-mini"],
@@ -953,14 +950,11 @@ elif page == "⚙️ Settings & Export":
         "gemini":      ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"],
         "ollama":      ["llama3.2", "llama3.1", "mistral", "gemma3", "phi4",
                         "deepseek-r1", "codellama", "qwen2.5"],
-        "huggingface": ["mistralai/Mistral-7B-Instruct-v0.3",
-                        "meta-llama/Meta-Llama-3-8B-Instruct", "HuggingFaceH4/zephyr-7b-beta"],
     }
     _DEFAULT_ENDPOINTS = {
         "github":      "https://models.inference.ai.azure.com",
         "openai":      "https://api.openai.com/v1",
         "ollama":      "http://localhost:11434",
-        "huggingface": "https://api-inference.huggingface.co",
         "claude":      "https://api.anthropic.com",
         "gemini":      "https://generativelanguage.googleapis.com",
     }
@@ -1124,11 +1118,10 @@ elif page == "⚙️ Settings & Export":
                 return True, f"✅ Connected — model replied: *{reply[:80]}*"
 
             else:
-                # GitHub / OpenAI / HuggingFace — OpenAI-compatible REST
+                # GitHub / OpenAI — OpenAI-compatible REST
                 _ep_map = {
                     "github":      (endpoint or "https://models.inference.ai.azure.com").rstrip("/") + "/chat/completions",
                     "openai":      "https://api.openai.com/v1/chat/completions",
-                    "huggingface": f"https://api-inference.huggingface.co/models/{model}/v1/chat/completions",
                 }
                 _ep = _ep_map.get(provider, endpoint.rstrip("/") + "/chat/completions")
                 payload = _json.dumps({"model": model, "messages": _msg, "max_tokens": 10}).encode()
@@ -1217,7 +1210,7 @@ elif page == "⚙️ Settings & Export":
                         "curl command, or config snippet and extract all relevant settings.\n\n"
                         "Return ONLY a raw JSON object — no markdown fences, no explanation, just JSON:\n"
                         "{\n"
-                        '  "provider": "one of: github, openai, claude, gemini, ollama, huggingface, or custom",\n'
+                        '  "provider": "one of: github, openai, claude, gemini, ollama, or custom",\n'
                         '  "endpoint": "base API URL, strip model name and method suffix (e.g. https://aiplatform.googleapis.com for Vertex, https://generativelanguage.googleapis.com for AI Studio)",\n'
                         '  "model": "model ID extracted from URL or docs",\n'
                         '  "auth_type": "one of: api_key_param (?key=), bearer (Authorization: Bearer), x-api-key, none",\n'
@@ -1290,7 +1283,7 @@ elif page == "⚙️ Settings & Export":
     # ── AI Provider Configuration UI ──────────────────────────────────
     st.subheader("🔌 AI Provider Configuration")
 
-    providers = ["github", "openai", "claude", "gemini", "ollama", "huggingface"]
+    providers = ["github", "openai", "claude", "gemini", "ollama"]
     _cur_idx = providers.index(kernel.ai_adapter.provider) if kernel.ai_adapter.provider in providers else 0
     new_provider = st.selectbox("Provider", providers, index=_cur_idx, key="cfg_provider")
 

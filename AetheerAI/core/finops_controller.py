@@ -23,7 +23,6 @@ openai/gpt-4o-mini          $0.15     $0.60
 claude/claude-sonnet-4.6    $3.00     $15.00
 gemini/gemini-2.5-flash-lite $0.075   $0.30
 ollama/*                    $0.00     $0.00    (local = free)
-huggingface/*               $0.00     $0.00    (free inference API)
 
 Usage
 -----
@@ -78,7 +77,6 @@ _COST_TABLE: dict[str, tuple[float, float]] = {
     "ollama/llama3.2:3b":        (0.0,   0.0),
     "ollama/qwen2.5-coder:7b":   (0.0,   0.0),
     "ollama/llama3.3:70b":       (0.0,   0.0),
-    "huggingface/mistralai/Mistral-7B-Instruct-v0.2": (0.0, 0.0),
 }
 
 # Cheap substitutes for expensive models — used by cost-optimiser

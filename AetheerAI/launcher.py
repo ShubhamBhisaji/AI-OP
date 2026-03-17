@@ -34,7 +34,7 @@ multiprocessing.freeze_support()
 _PLACEHOLDER_VALUES = {
     "your_github_token_here", "your_openai_key_here",
     "your_anthropic_key_here", "your_gemini_key_here",
-    "your_huggingface_token_here", "",
+    "",
 }
 
 _PROVIDER_CHOICES = [
@@ -42,7 +42,6 @@ _PROVIDER_CHOICES = [
     ("OpenAI",           "OPENAI_API_KEY"),
     ("Anthropic Claude", "ANTHROPIC_API_KEY"),
     ("Google Gemini",    "GEMINI_API_KEY"),
-    ("HuggingFace",      "HF_API_KEY"),
 ]
 
 

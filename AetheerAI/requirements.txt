@@ -13,7 +13,6 @@ openai>=1.30.0                 # OpenAI GPT-4o, GPT-4, etc. (also used by litell
 anthropic>=0.25.0              # Anthropic Claude 3.x
 google-generativeai>=0.5.0     # Google Gemini
 ollama>=0.1.8                  # Ollama (local LLMs)
-huggingface-hub>=0.22.0        # HuggingFace Inference API
 
 # --- Optional LLM frameworks ---
 # langchain>=0.2.0
@@ -25,6 +24,7 @@ huggingface-hub>=0.22.0        # HuggingFace Inference API
 python-dotenv>=1.0.0           # Load .env files for API keys
 pyyaml>=6.0.1                  # Parse YAML agent configs
 requests>=2.31.0               # HTTP calls (web_search, http_client, scrapers)
+redis>=5.0.0                   # Upstash Redis queue client (LPUSH/BRPOP worker)
 beautifulsoup4>=4.12.0         # HTML parsing (web_search, web_scraper_pro)
 websocket-client>=1.8.0        # Supabase realtime websocket subscriptions
 

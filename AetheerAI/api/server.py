@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -20,17 +22,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from agents.ceo_agent import CEOAgent, ProjectResult
+from api.auth import router as auth_router
 from api.database import GoalRun, SessionLocal, SystemLog, Task, init_db
 from api.db_router import router as db_router
+from api.predict import router as predict_router
+from api.product_router import router as product_router
+from api.queue_router import router as queue_router
+from api.reports import router as reports_router
 from core.aetheerai_kernel import AetheerAiKernel
 from core.env_loader import load_env
+from core.production_runtime import ProductionRuntime, RuntimeConfig, TTLResponseCache
 from use_cases import registry as use_case_registry
 
 
@@ -50,6 +59,56 @@ _ceo: CEOAgent | None = None
 _ml_engine = None
 _local_predictor = None
 _sqlite_log_handler: logging.Handler | None = None
+
+_API_ROLE_ORDER = {"reader": 1, "writer": 2, "admin": 3}
+_api_keys_cache_raw: str | None = None
+_api_keys_cache: dict[str, str] = {}
+
+
+def _env_int(name: str, default: int, minimum: int | None = None) -> int:
+    raw = os.getenv(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        value = default
+    if minimum is not None:
+        return max(minimum, value)
+    return value
+
+
+def _env_float(name: str, default: float, minimum: float | None = None) -> float:
+    raw = os.getenv(name, "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        value = default
+    if minimum is not None:
+        return max(minimum, value)
+    return value
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+_runtime = ProductionRuntime(RuntimeConfig.from_env())
+_request_slots = asyncio.Semaphore(_runtime.config.max_concurrent_requests)
+_response_cache = TTLResponseCache(max_entries=64)
+_instance_id = (
+    os.getenv("AETHEER_INSTANCE_ID", "").strip()
+    or f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+)
+_health_cache_ttl = _env_float("AETHEER_HEALTH_CACHE_TTL_SECONDS", 2.0, minimum=0.05)
+_status_cache_ttl = _env_float("AETHEER_STATUS_CACHE_TTL_SECONDS", 1.0, minimum=0.05)
+_non_throttled_paths = {
+    "/api/health",
+    "/api/ready",
+    "/api/metrics",
+    "/status",
+}
 
 
 class _SQLiteLogHandler(logging.Handler):
@@ -136,6 +195,55 @@ def _get_local_predictor():
         from core.local_predictor import LocalPredictor
         _local_predictor = LocalPredictor()
     return _local_predictor
+
+
+def _cached_payload(cache_key: str, ttl_seconds: float, builder) -> dict[str, Any]:
+    cached = _response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    payload = builder()
+    _response_cache.set(cache_key, payload, ttl_seconds)
+    return payload
+
+
+def _runtime_active_provider_model() -> tuple[str, str]:
+    if _kernel is not None:
+        return _kernel.ai_adapter.provider, _kernel.ai_adapter.model
+    return _resolve_ai_runtime()
+
+
+def _attempt_runtime_failover(error: Exception | str) -> None:
+    reason = str(error)
+    should_activate = _runtime.record_ai_failure(reason)
+    if not should_activate:
+        return
+    if not _runtime.failover_enabled:
+        return
+
+    kernel = _get_kernel()
+    target_provider = _runtime.config.failover_provider
+    target_model = _runtime.config.failover_model or kernel.ai_adapter.model
+    current = (kernel.ai_adapter.provider, kernel.ai_adapter.model)
+    if current == (target_provider, target_model):
+        _runtime.mark_failover_activated("failover target already active")
+        return
+
+    try:
+        kernel.ai_adapter.switch(target_provider, target_model)
+        _runtime.mark_failover_activated(reason)
+        logger.warning(
+            "Automatic failover activated: %s/%s (reason=%s)",
+            target_provider,
+            target_model,
+            reason,
+        )
+    except Exception as exc:
+        _runtime.mark_failover_activation_failed(str(exc))
+        logger.error("Automatic failover activation failed: %s", exc)
+
+
+def _record_runtime_ai_success() -> None:
+    _runtime.record_ai_success()
 
 
 def _run_nlp(action: str, text: str, labels=None, question: str = "", max_length: int = 150, target_lang: str = "en") -> str:
@@ -316,25 +424,253 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(auth_router)
 app.include_router(db_router)
+app.include_router(predict_router)
+app.include_router(reports_router)
+app.include_router(product_router)
+app.include_router(queue_router)
 
 # Serve built-in Web UI static files
 _UI_DIR = Path(__file__).resolve().parents[1] / "ui"
 if _UI_DIR.is_dir():
     app.mount("/ui", StaticFiles(directory=str(_UI_DIR)), name="ui")
 
-origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
+origins = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
+    if o.strip()
+]
+allow_all_origins = "*" in origins
+if allow_all_origins:
+    logger.warning(
+        "CORS_ORIGINS includes '*'; credentials are disabled until explicit origins are configured."
+    )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=origins if origins else ["http://localhost:3000", "http://localhost:8000"],
+    allow_credentials=not allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=_env_int("AETHEER_GZIP_MIN_BYTES", 1024, minimum=256),
 )
 
 # ── v2 routers: planning, scheduling, risk, lifecycle ─────────────────────────
 from api.routes_v2 import router as _v2_router  # noqa: E402
 app.include_router(_v2_router)
+
+
+def _parse_api_keys(raw: str) -> dict[str, str]:
+    """
+    Parse API keys from env.
+
+    Accepted formats:
+      - key1,key2                            (defaults to admin role)
+      - reader:key_r,writer:key_w,admin:key_a
+    """
+    out: dict[str, str] = {}
+    for chunk in (raw or "").split(","):
+        entry = chunk.strip()
+        if not entry:
+            continue
+
+        role = "admin"
+        key = entry
+        if ":" in entry:
+            left, right = entry.split(":", 1)
+            maybe_role = left.strip().lower()
+            if maybe_role in _API_ROLE_ORDER:
+                role = maybe_role
+                key = right.strip()
+
+        if key:
+            out[key] = role
+    return out
+
+
+def _configured_api_keys() -> dict[str, str]:
+    global _api_keys_cache_raw, _api_keys_cache
+
+    raw = (os.getenv("AETHER_API_KEYS") or "").strip()
+    if raw == _api_keys_cache_raw:
+        return _api_keys_cache
+
+    _api_keys_cache_raw = raw
+    _api_keys_cache = _parse_api_keys(raw)
+    return _api_keys_cache
+
+
+def _is_public_path(path: str) -> bool:
+    if path in {"/", "/docs", "/redoc", "/openapi.json", "/api/health", "/api/ready", "/api/metrics", "/status"}:
+        return True
+    if path.startswith("/ui"):
+        return True
+    if path.startswith("/api/auth"):
+        return True
+    return False
+
+
+def _required_role_for(path: str, method: str) -> str:
+    upper_method = (method or "").upper()
+
+    if upper_method == "DELETE":
+        return "admin"
+
+    if path.startswith("/api/logs") or path.startswith("/api/db/logs"):
+        return "admin"
+
+    if upper_method in {"POST", "PUT", "PATCH"}:
+        return "writer"
+
+    return "reader"
+
+
+def _role_allows(role: str, required_role: str) -> bool:
+    current = _API_ROLE_ORDER.get(role, 0)
+    required = _API_ROLE_ORDER.get(required_role, 99)
+    return current >= required
+
+
+def _resolve_api_role(presented_key: str | None, configured: dict[str, str]) -> str | None:
+    key = (presented_key or "").strip()
+    if not key:
+        return None
+
+    for expected, role in configured.items():
+        if hmac.compare_digest(key, expected):
+            return role
+    return None
+
+
+def _client_rate_limit_id(request: Request) -> str:
+    key = (request.headers.get("X-API-Key") or "").strip()
+    if key:
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+        return f"key:{digest}"
+
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        ip = forwarded.split(",")[0].strip()
+    else:
+        ip = request.client.host if request.client else "unknown"
+    return f"ip:{ip}"
+
+
+def _allow_request_under_rate_limit(client_id: str) -> tuple[bool, int]:
+    return _runtime.allow_request(client_id)
+
+
+async def _authorize_websocket(websocket: WebSocket, required_role: str = "reader") -> bool:
+    configured = _configured_api_keys()
+    if not configured:
+        websocket.state.api_role = "admin"
+        return True
+
+    presented = websocket.headers.get("X-API-Key") or websocket.query_params.get("api_key")
+    role = _resolve_api_role(presented, configured)
+    if role is None or not _role_allows(role, required_role):
+        await websocket.accept()
+        await websocket.close(code=1008, reason="Unauthorized websocket")
+        return False
+
+    websocket.state.api_role = role
+    return True
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    path = request.url.path
+    method = request.method.upper()
+    client_id = _client_rate_limit_id(request)
+    request_id = (request.headers.get("X-Request-ID") or "").strip() or uuid.uuid4().hex
+    request.state.request_id = request_id
+
+    def _build_rejection(status_code: int, error: str, retry_after: int = 0) -> JSONResponse:
+        elapsed_ms = round((time.perf_counter() - start_perf) * 1000.0, 3)
+        _runtime.record_rejected_request(
+            method=method,
+            path=path,
+            status_code=status_code,
+            latency_ms=elapsed_ms,
+            request_id=request_id,
+            client_id=client_id,
+            error=error,
+        )
+        payload: dict[str, Any] = {"success": False, "error": error}
+        headers = {
+            "X-Request-ID": request_id,
+            "X-Instance-ID": _instance_id,
+        }
+        if retry_after > 0:
+            headers["Retry-After"] = str(retry_after)
+        return JSONResponse(status_code=status_code, content=payload, headers=headers)
+
+    start_perf = time.perf_counter()
+
+    if _is_public_path(path):
+        request.state.api_role = "public"
+    else:
+        configured = _configured_api_keys()
+        if configured:
+            role = _resolve_api_role(request.headers.get("X-API-Key"), configured)
+            if role is None:
+                return _build_rejection(401, "Unauthorized")
+
+            required_role = _required_role_for(path, request.method)
+            if not _role_allows(role, required_role):
+                return _build_rejection(403, f"{required_role} API key required")
+            request.state.api_role = role
+        else:
+            request.state.api_role = "admin"
+
+    should_throttle = path not in _non_throttled_paths
+    acquired_slot = False
+    if should_throttle:
+        allowed, retry_after = _allow_request_under_rate_limit(client_id)
+        if not allowed:
+            return _build_rejection(429, "Rate limit exceeded", retry_after=retry_after or 60)
+
+        try:
+            await asyncio.wait_for(
+                _request_slots.acquire(),
+                timeout=_runtime.config.request_queue_timeout_seconds,
+            )
+            acquired_slot = True
+        except TimeoutError:
+            return _build_rejection(503, "Server busy: request queue timeout")
+
+    _runtime.begin_request()
+    status_code = 500
+    failure_text: str | None = None
+    response = None
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+    except Exception as exc:
+        failure_text = str(exc)
+        _attempt_runtime_failover(exc)
+        raise
+    finally:
+        elapsed_ms = round((time.perf_counter() - start_perf) * 1000.0, 3)
+        _runtime.end_request(
+            method=method,
+            path=path,
+            status_code=status_code,
+            latency_ms=elapsed_ms,
+            request_id=request_id,
+            client_id=client_id,
+            error=failure_text,
+        )
+        if acquired_slot:
+            _request_slots.release()
+
+    if response is not None:
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Instance-ID"] = _instance_id
+    return response
 
 
 def custom_openapi() -> dict[str, Any]:
@@ -377,7 +713,16 @@ def serve_ui():
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled API error: %s", exc, exc_info=True)
-    return JSONResponse(status_code=500, content={"success": False, "error": "Internal server error"})
+    _attempt_runtime_failover(exc)
+    request_id = getattr(request.state, "request_id", "") or "unknown"
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": "Internal server error"},
+        headers={
+            "X-Request-ID": request_id,
+            "X-Instance-ID": _instance_id,
+        },
+    )
 
 
 
@@ -766,6 +1111,25 @@ def _find_task(task_id: str) -> dict[str, Any] | None:
 
 
 async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> APIResponse:
+    if _env_bool("VERCEL", False) and _env_bool("AETHEER_DISABLE_VERCEL_DIRECT_GOALS", True):
+        raise HTTPException(
+            status_code=503,
+            detail="Direct goal execution is disabled on Vercel. Submit via POST /api/queue/jobs.",
+        )
+
+    try:
+        max_active = max(1, int((os.getenv("AETHER_MAX_CONCURRENT_GOALS") or "8").strip()))
+    except ValueError:
+        max_active = 8
+
+    with _projects_lock:
+        active_count = sum(1 for p in _projects.values() if p.get("status") in {"pending", "running"})
+    if active_count >= max_active:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many active goals ({active_count}/{max_active}). Try again shortly.",
+        )
+
     project_id = str(uuid.uuid4())
     with _projects_lock:
         _projects[project_id] = {
@@ -821,6 +1185,7 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
                 offline_local_mode=req.offline_local_mode,
                 fast_mode_collaboration=req.fast_mode_collaboration,
             )
+            _record_runtime_ai_success()
             payload = _serialize_project_result(project_id, req.name, result)
             payload["started_at"] = _projects[project_id].get("started_at")
             with _projects_lock:
@@ -834,6 +1199,7 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
                 logger.warning("Goal %s persisted in-memory but DB write failed: %s", project_id, db_exc)
         except Exception as exc:
             logger.error("Goal %s failed: %s", project_id, exc, exc_info=True)
+            _attempt_runtime_failover(exc)
             with _projects_lock:
                 _projects[project_id]["status"] = "failed"
                 _projects[project_id]["error"] = str(exc)
@@ -867,11 +1233,13 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
          description="Lightweight liveness probe. Always returns `200 OK` with the active "
                      "provider and model. **No API key required.**")
 def health_check():
-    provider, model = _resolve_ai_runtime()
-    return APIResponse(
-        data={
+    def _payload() -> dict[str, Any]:
+        provider, model = _runtime_active_provider_model()
+        metrics = _runtime.metrics_snapshot()
+        return {
             "status": "ok",
-            "version": "2.0.0",
+            "version": "2.1.0",
+            "instance_id": _instance_id,
             "provider": provider,
             "model": model,
             "offline_local_mode_default": os.getenv("AETHEER_OFFLINE_LOCAL_MODE", "false").strip().lower()
@@ -882,8 +1250,76 @@ def health_check():
             in {"1", "true", "yes", "on"},
             "offline_provider": os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama"),
             "offline_model": os.getenv("AETHEER_OFFLINE_MODEL", "llama3.2:1b"),
+            "load": {
+                "in_flight": metrics["in_flight"],
+                "max_concurrent_requests": metrics["max_concurrent_requests"],
+                "avg_latency_ms": metrics["avg_latency_ms"],
+                "rejected_total": metrics["rejected_total"],
+            },
         }
+
+    return APIResponse(data=_cached_payload("health", _health_cache_ttl, _payload))
+
+
+@app.get("/api/ready", tags=["System"], response_model=APIResponse,
+         summary="Readiness probe",
+         description="Deep readiness probe for load balancers and orchestrators. Returns 503 when degraded.")
+def readiness_check():
+    ready = True
+    checks: dict[str, Any] = {}
+
+    db = None
+    try:
+        db = SessionLocal()
+        db.connection().exec_driver_sql("SELECT 1")
+        checks["database"] = "ok"
+    except Exception as exc:
+        ready = False
+        checks["database"] = f"error: {exc}"
+    finally:
+        if db is not None:
+            db.close()
+
+    try:
+        _get_kernel()
+        checks["kernel"] = "ok"
+    except Exception as exc:
+        ready = False
+        checks["kernel"] = f"error: {exc}"
+
+    metrics = _runtime.metrics_snapshot()
+    saturation = metrics["in_flight"] / max(1, metrics["max_concurrent_requests"])
+    checks["load_saturation"] = round(saturation, 3)
+    if saturation >= 0.95:
+        ready = False
+        checks["load"] = "saturated"
+
+    provider, model = _runtime_active_provider_model()
+    payload = {
+        "status": "ready" if ready else "degraded",
+        "instance_id": _instance_id,
+        "checks": checks,
+        "load": metrics,
+        "failover": _runtime.failover_state(provider, model),
+    }
+
+    response = APIResponse(
+        success=ready,
+        data=payload,
+        error=None if ready else "Service is not ready",
     )
+    if ready:
+        return response
+    return JSONResponse(status_code=503, content=response.model_dump())
+
+
+@app.get("/api/metrics", tags=["System"], include_in_schema=False)
+def metrics_prometheus():
+    payload = _runtime.prometheus_text(
+        instance_id=_instance_id,
+        uptime_seconds=time.time() - _boot_time,
+    )
+    return PlainTextResponse(payload, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 @app.get("/api/system/status", tags=["System"], response_model=APIResponse,
@@ -891,38 +1327,60 @@ def health_check():
          description="Returns live counters for projects, agents, tools, and memory keys. "
                      "Use this as a rich dashboard data source.")
 def system_status():
-    kernel = _get_kernel()
-    provider, model = _resolve_ai_runtime()
-    with _projects_lock:
-        projects = list(_projects.values())
+    def _payload() -> dict[str, Any]:
+        kernel = _get_kernel()
+        provider, model = _runtime_active_provider_model()
+        with _projects_lock:
+            projects = list(_projects.values())
 
-    data = {
-        "status": "ok",
-        "uptime_seconds": round(time.time() - _boot_time, 3),
-        "provider": provider,
-        "model": model,
-        "offline_local_mode_default": os.getenv("AETHEER_OFFLINE_LOCAL_MODE", "false").strip().lower()
-        in {"1", "true", "yes", "on"},
-        "fast_mode_collaboration_default": os.getenv("AETHEER_FAST_MODE_COLLABORATION", "false")
-        .strip()
-        .lower()
-        in {"1", "true", "yes", "on"},
-        "offline_provider": os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama"),
-        "offline_model": os.getenv("AETHEER_OFFLINE_MODEL", "llama3.2:1b"),
-        "projects": {
-            "total": len(projects),
-            "running": len([p for p in projects if p.get("status") == "running"]),
-            "completed": len([p for p in projects if p.get("status") == "completed"]),
-            "partial": len([p for p in projects if p.get("status") == "partial"]),
-            "failed": len([p for p in projects if p.get("status") == "failed"]),
-            "cancelled": len([p for p in projects if p.get("status") == "cancelled"]),
-        },
-        "agents_registered": len(kernel.registry.list_names()),
-        "tools_registered": len(kernel.tool_manager.list_tools()),
-        "memory_keys": len(kernel.memory.keys()),
-        "collaboration_sessions": len(kernel.collaboration_sessions(limit=1000)),
-    }
-    return APIResponse(data=data)
+        runtime_metrics = _runtime.metrics_snapshot()
+        return {
+            "status": "ok",
+            "instance_id": _instance_id,
+            "uptime_seconds": round(time.time() - _boot_time, 3),
+            "provider": provider,
+            "model": model,
+            "offline_local_mode_default": os.getenv("AETHEER_OFFLINE_LOCAL_MODE", "false").strip().lower()
+            in {"1", "true", "yes", "on"},
+            "fast_mode_collaboration_default": os.getenv("AETHEER_FAST_MODE_COLLABORATION", "false")
+            .strip()
+            .lower()
+            in {"1", "true", "yes", "on"},
+            "offline_provider": os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama"),
+            "offline_model": os.getenv("AETHEER_OFFLINE_MODEL", "llama3.2:1b"),
+            "projects": {
+                "total": len(projects),
+                "running": len([p for p in projects if p.get("status") == "running"]),
+                "completed": len([p for p in projects if p.get("status") == "completed"]),
+                "partial": len([p for p in projects if p.get("status") == "partial"]),
+                "failed": len([p for p in projects if p.get("status") == "failed"]),
+                "cancelled": len([p for p in projects if p.get("status") == "cancelled"]),
+            },
+            "agents_registered": len(kernel.registry.list_names()),
+            "tools_registered": len(kernel.tool_manager.list_tools()),
+            "memory_keys": len(kernel.memory.keys()),
+            "collaboration_sessions": len(kernel.collaboration_sessions(limit=1000)),
+            "runtime_metrics": runtime_metrics,
+            "failover": _runtime.failover_state(provider, model),
+        }
+
+    return APIResponse(data=_cached_payload("system_status", _status_cache_ttl, _payload))
+
+
+@app.get("/api/system/traces", tags=["System"], response_model=APIResponse,
+         summary="Recent request traces",
+         description="Returns the most recent HTTP request traces captured by middleware instrumentation.")
+def system_traces(limit: int = 100):
+    safe_limit = max(1, min(limit, 500))
+    return APIResponse(data={"instance_id": _instance_id, "traces": _runtime.recent_traces(safe_limit)})
+
+
+@app.get("/api/system/failover", tags=["System"], response_model=APIResponse,
+         summary="Failover state",
+         description="Returns automatic failover configuration and current activation state.")
+def system_failover_state():
+    provider, model = _runtime_active_provider_model()
+    return APIResponse(data=_runtime.failover_state(provider, model))
 
 
 @app.get("/api/logs", tags=["System"], response_model=APIResponse,
@@ -930,6 +1388,7 @@ def system_status():
          description="Returns the last `limit` entries from the append-only JSONL audit log "
                      "(`memory/audit_log.jsonl`). Every tool call and agent action is recorded here.")
 def list_logs(limit: int = 200):
+    limit = max(1, min(limit, 1000))
     return APIResponse(data=_read_audit_logs(limit=limit))
 
 
@@ -1052,9 +1511,11 @@ def run_collaboration(req: CollaborationRequest):
             agent_names=req.agent_names or None,
             rounds=req.rounds,
         )
+        _record_runtime_ai_success()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
+        _attempt_runtime_failover(exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
     return APIResponse(data=payload)
@@ -1172,6 +1633,7 @@ def design_agent(req: AgentDesignRequest):
             context=req.context,
             permission_level=req.permission_level,
         )
+        _record_runtime_ai_success()
         if hasattr(agent, "attach_runtime"):
             agent.attach_runtime(
                 ai_adapter=kernel.ai_adapter,
@@ -1182,6 +1644,7 @@ def design_agent(req: AgentDesignRequest):
             agent.attach_memory(kernel.memory)
         return APIResponse(data=agent.to_dict(), message=f"Agent '{req.name}' designed and created.")
     except Exception as exc:
+        _attempt_runtime_failover(exc)
         raise HTTPException(status_code=400, detail=str(exc))
 
 
@@ -1239,8 +1702,10 @@ def run_agent_task(agent_name: str, req: AgentRunRequest):
             agent.attach_memory(kernel.memory)
 
         result = agent.execute_task(req.task)
+        _record_runtime_ai_success()
         return APIResponse(data={"agent": agent_name, "result": result})
     except Exception as exc:
+        _attempt_runtime_failover(exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -1263,8 +1728,10 @@ def chat(req: ChatRequest):
 
     try:
         reply = kernel.ai_adapter.chat(messages)
+        _record_runtime_ai_success()
         return APIResponse(data={"reply": reply})
     except Exception as exc:
+        _attempt_runtime_failover(exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -1349,6 +1816,9 @@ async def stream_goal_sse(goal_id: str, request: Request):
 @app.websocket("/ws/goals/{goal_id}")
 async def ws_goal_stream(websocket: WebSocket, goal_id: str):
     """WebSocket — pushes goal progress diffs until the goal reaches a terminal state."""
+    if not await _authorize_websocket(websocket, required_role="reader"):
+        return
+
     await websocket.accept()
     try:
         last_sig: str | None = None
@@ -1625,6 +2095,7 @@ def predict(req: PredictRequest, background_tasks: BackgroundTasks):
             extra["temperature"] = req.temperature
 
         reply = kernel.ai_adapter.chat(messages, **extra) if extra else kernel.ai_adapter.chat(messages)
+        _record_runtime_ai_success()
 
         return APIResponse(
             data={
@@ -1637,6 +2108,7 @@ def predict(req: PredictRequest, background_tasks: BackgroundTasks):
         )
     except Exception as exc:
         # Keep /predict always usable, even without external AI credentials.
+        _attempt_runtime_failover(exc)
         logger.warning("/predict cloud inference failed; returning local fallback: %s", exc)
         return APIResponse(
             data={
@@ -1767,22 +2239,24 @@ def vision_infer(req: VisionRequest):
 def status():
     """Top-level service status — lightweight health + live counters."""
     try:
-        kernel = _get_kernel()
-        with _projects_lock:
-            projects = list(_projects.values())
+        def _payload() -> dict[str, Any]:
+            kernel = _get_kernel()
+            with _projects_lock:
+                projects = list(_projects.values())
 
-        running  = [p for p in projects if p.get("status") == "running"]
-        pending  = [p for p in projects if p.get("status") == "pending"]
-        done     = [p for p in projects if p.get("status") == "completed"]
-        failed   = [p for p in projects if p.get("status") in {"failed", "cancelled"}]
+            running = [p for p in projects if p.get("status") == "running"]
+            pending = [p for p in projects if p.get("status") == "pending"]
+            done = [p for p in projects if p.get("status") == "completed"]
+            failed = [p for p in projects if p.get("status") in {"failed", "cancelled"}]
+            provider, model = _runtime_active_provider_model()
 
-        return APIResponse(
-            data={
+            return {
                 "status": "ok",
-                "version": "2.0.0",
+                "version": "2.1.0",
+                "instance_id": _instance_id,
                 "uptime_seconds": round(time.time() - _boot_time, 3),
-                "provider": kernel.ai_adapter.provider,
-                "model": kernel.ai_adapter.model,
+                "provider": provider,
+                "model": model,
                 "local_predictor": _get_local_predictor().version,
                 "projects": {
                     "total": len(projects),
@@ -1793,8 +2267,11 @@ def status():
                 },
                 "agents_registered": len(kernel.registry.list_names()),
                 "tools_registered": len(kernel.tool_manager.list_tools()),
+                "runtime_metrics": _runtime.metrics_snapshot(),
+                "failover": _runtime.failover_state(provider, model),
             }
-        )
+
+        return APIResponse(data=_cached_payload("status", _status_cache_ttl, _payload))
     except Exception as exc:
         logger.error("Status check error: %s", exc, exc_info=True)
         return APIResponse(
@@ -1819,22 +2296,27 @@ async def create_task(req: TaskRequest, background_tasks: BackgroundTasks):
 
     def _run_task() -> dict[str, Any]:
         kernel = _get_kernel()
-        if req.agent:
-            agent = kernel.registry.get(req.agent)
-            if agent is None:
-                raise ValueError(f"Agent '{req.agent}' not found.")
-            if hasattr(agent, "attach_runtime"):
-                agent.attach_runtime(
-                    ai_adapter=kernel.ai_adapter,
-                    workflow_engine=kernel.workflow_engine,
-                    tool_manager=kernel.tool_manager,
-                )
-            if hasattr(agent, "attach_memory"):
-                agent.attach_memory(kernel.memory)
-            result = agent.execute_task(req.description)
-        else:
-            messages = [{"role": "user", "content": req.description}]
-            result = kernel.ai_adapter.chat(messages)
+        try:
+            if req.agent:
+                agent = kernel.registry.get(req.agent)
+                if agent is None:
+                    raise ValueError(f"Agent '{req.agent}' not found.")
+                if hasattr(agent, "attach_runtime"):
+                    agent.attach_runtime(
+                        ai_adapter=kernel.ai_adapter,
+                        workflow_engine=kernel.workflow_engine,
+                        tool_manager=kernel.tool_manager,
+                    )
+                if hasattr(agent, "attach_memory"):
+                    agent.attach_memory(kernel.memory)
+                result = agent.execute_task(req.description)
+            else:
+                messages = [{"role": "user", "content": req.description}]
+                result = kernel.ai_adapter.chat(messages)
+            _record_runtime_ai_success()
+        except Exception as exc:
+            _attempt_runtime_failover(exc)
+            raise
 
         return {
             "task_id": task_id,
@@ -1885,11 +2367,20 @@ def start_server() -> None:
     """Canonical FastAPI startup entrypoint used by main.py."""
     import uvicorn
 
+    reload_enabled = os.getenv("AETHER_RELOAD", "false").lower() == "true"
+    workers = _env_int("AETHER_WORKERS", _env_int("AETHEER_WORKERS", 1, minimum=1), minimum=1)
+    if reload_enabled and workers > 1:
+        workers = 1
+
     uvicorn.run(
         "api.server:app",
         host=os.getenv("AETHER_HOST", "0.0.0.0"),
         port=int(os.getenv("AETHER_PORT", "8000")),
-        reload=os.getenv("AETHER_RELOAD", "false").lower() == "true",
+        reload=reload_enabled,
+        workers=workers if not reload_enabled else None,
+        limit_concurrency=_env_int("AETHER_LIMIT_CONCURRENCY", _runtime.config.max_concurrent_requests, minimum=1),
+        backlog=_env_int("AETHER_BACKLOG", 2048, minimum=128),
+        timeout_keep_alive=_env_int("AETHER_KEEPALIVE_SECONDS", 30, minimum=5),
         log_level=os.getenv("LOG_LEVEL", "info").lower(),
     )
 

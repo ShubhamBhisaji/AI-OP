@@ -18,6 +18,7 @@ from .infobip_client import InfobipClient
 from .payu_client import PayUClient
 from .meta_api_client import MetaAPIClient
 from .vercel_client import VercelClient
+from .upstash_redis_queue import UpstashRedisQueue
 from .service_factory import IntegrationFactory, IntegrationClients
 from .errors import (
     IntegrationError,
@@ -32,6 +33,7 @@ __all__ = [
     "PayUClient",
     "MetaAPIClient",
     "VercelClient",
+    "UpstashRedisQueue",
     "IntegrationFactory",
     "IntegrationClients",
     "IntegrationError",

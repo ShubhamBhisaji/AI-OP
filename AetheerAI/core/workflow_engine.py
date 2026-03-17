@@ -220,15 +220,6 @@ class WorkflowEngine:
         # BLOCKER-2: FinOpsController — wired for budget guard.
         self.finops_controller = None    # FinOpsController | None
         # WARNING-1: Per-session token budget cap for retry/heal loops.
-        import os as _os_we
-        self.max_retry_tokens: int = int(
-            _os_we.environ.get("AETHEERAI_MAX_RETRY_TOKENS", "8000")
-        )
-        # BLOCKER-8: ModelRouter applied before every execute() call.
-        self.model_router = None         # ModelRouter | None
-        # BLOCKER-2: FinOpsController — budget guard before every AI call.
-        self.finops_controller = None    # FinOpsController | None
-        # WARNING-1: Per-session token budget cap for retry/heal loops.
         self.max_retry_tokens: int = int(
             __import__("os").environ.get("AETHEERAI_MAX_RETRY_TOKENS", "8000")
         )
@@ -396,6 +387,105 @@ class WorkflowEngine:
     # Single agent execution (synchronous)
     # ------------------------------------------------------------------
 
+    def _policy_precheck(self, agent, task: str) -> str | None:
+        """Evaluate the proposed action against the active constitutional rules."""
+        if self.priority_controller is None:
+            return None
+
+        try:
+            decision = self.priority_controller.evaluate(agent.name, task[:600])
+        except Exception as exc:
+            logger.debug("WorkflowEngine: policy precheck skipped (non-fatal): %s", exc)
+            return None
+
+        outcome = getattr(getattr(decision, "outcome", None), "value", "").lower()
+        reasoning = getattr(decision, "reasoning", "Action blocked by policy.")
+        violated_rule = getattr(decision, "violated_rule", None)
+        rule_suffix = f" (rule: {violated_rule})" if violated_rule else ""
+
+        if outcome == "warn":
+            logger.warning("WorkflowEngine: constitutional warning for '%s': %s", agent.name, reasoning)
+            return None
+        if outcome == "block":
+            return f"POLICY_BLOCKED: {reasoning}{rule_suffix}"
+        if outcome == "escalate":
+            return f"POLICY_ESCALATED: {reasoning}{rule_suffix}"
+        return None
+
+    def _estimate_task_cost_usd(self, task: str) -> float:
+        """Estimate execution cost for budget prechecks before making AI calls."""
+        if self.finops_controller is None:
+            return 0.0
+
+        provider = str(getattr(self.ai_adapter, "provider", "openai") or "openai")
+        model = str(getattr(self.ai_adapter, "model", "gpt-4o") or "gpt-4o")
+        model_key = model if "/" in model else f"{provider}/{model}"
+
+        # Coarse token estimate using task size; bounded to avoid huge outliers.
+        prompt_tokens = max(220, min(6000, int(len(task) * 1.4)))
+        completion_tokens = max(120, int(prompt_tokens * 0.4))
+        return float(
+            self.finops_controller._calculate_cost(  # noqa: SLF001 - static helper in controller
+                model_key,
+                prompt_tokens,
+                completion_tokens,
+            )
+        )
+
+    def _budget_precheck(self, task: str) -> str | None:
+        """Block execution when remaining budget cannot cover estimated cost."""
+        if self.finops_controller is None:
+            return None
+
+        try:
+            estimated = self._estimate_task_cost_usd(task)
+            if not self.finops_controller.can_spend(estimated):
+                status = self.finops_controller.status()
+                remaining = status.get("remaining_usd")
+                remaining_text = "unlimited" if remaining is None else f"${remaining:.4f}"
+                return (
+                    "BUDGET_BLOCKED: projected task cost exceeds remaining budget "
+                    f"(estimated=${estimated:.4f}, remaining={remaining_text})."
+                )
+        except Exception as exc:
+            logger.debug("WorkflowEngine: budget precheck skipped (non-fatal): %s", exc)
+        return None
+
+    def _record_finops_spend(self, agent_name: str, task: str, token_before: int) -> None:
+        """Record approximate spend using observed token deltas from the session."""
+        if self.finops_controller is None:
+            return
+
+        try:
+            token_after = int(getattr(self.ai_adapter, "total_tokens", 0) or 0)
+            delta = max(0, token_after - token_before)
+
+            if delta > 0:
+                prompt_tokens = int(delta * 0.7)
+                completion_tokens = delta - prompt_tokens
+            else:
+                usage = getattr(self.ai_adapter, "usage", {}) or {}
+                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+
+            if prompt_tokens + completion_tokens <= 0:
+                return
+
+            provider = str(getattr(self.ai_adapter, "provider", "openai") or "openai")
+            model = str(getattr(self.ai_adapter, "model", "gpt-4o") or "gpt-4o")
+            model_key = model if "/" in model else f"{provider}/{model}"
+
+            self.finops_controller.record_spend(
+                agent=agent_name,
+                task=task,
+                model=model_key,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                project="workflow",
+            )
+        except Exception as exc:
+            logger.debug("WorkflowEngine: FinOps spend record skipped (non-fatal): %s", exc)
+
     def execute(self, agent, task: str) -> Any:
         """
         Execute a single agent on a task with self-correction (Fix 5).
@@ -403,6 +493,18 @@ class WorkflowEngine:
         On error results the engine feeds the error back and retries.
         """
         logger.info("WorkflowEngine: executing agent '%s'", agent.name)
+
+        blocked_reason = self._policy_precheck(agent, task)
+        if blocked_reason:
+            agent.record_result(success=False)
+            self._record_task_memory(agent=agent, task=task, result=blocked_reason, success=False)
+            return blocked_reason
+
+        blocked_reason = self._budget_precheck(task)
+        if blocked_reason:
+            agent.record_result(success=False)
+            self._record_task_memory(agent=agent, task=task, result=blocked_reason, success=False)
+            return blocked_reason
 
         # BLOCKER-8: Auto-route to cheapest capable model before every call.
         if self.model_router is not None:
@@ -416,6 +518,7 @@ class WorkflowEngine:
             except Exception as _mr_exc:
                 logger.debug("ModelRouter skipped (non-fatal): %s", _mr_exc)
 
+        token_before = int(getattr(self.ai_adapter, "total_tokens", 0) or 0)
         prompt = self._build_prompt(agent=agent, task=task)
         messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
         result = self.ai_adapter.chat(messages=messages)
@@ -424,6 +527,7 @@ class WorkflowEngine:
         if result.strip().startswith("BEYOND_SCOPE:"):
             reason = result.strip()[len("BEYOND_SCOPE:"):].strip()
             agent.record_result(success=False)
+            self._record_finops_spend(agent.name, task, token_before)
             return f"BEYOND_SCOPE: {reason}"
 
         # ── Self-correction loop (Fix 5) ──────────────────────────────
@@ -471,13 +575,16 @@ class WorkflowEngine:
                 if not _looks_like_error(result):
                     agent.record_result(success=True)
                     self._record_task_memory(agent=agent, task=task, result=str(result), success=True)
+                    self._record_finops_spend(agent.name, task, token_before)
                     return self._hitl_gate(agent=agent, task=task, result=result)
             agent.record_result(success=False)
             self._record_task_memory(agent=agent, task=task, result=str(result), success=False)
+            self._record_finops_spend(agent.name, task, token_before)
             return result
 
         agent.record_result(success=True)
         self._record_task_memory(agent=agent, task=task, result=str(result), success=True)
+        self._record_finops_spend(agent.name, task, token_before)
 
         # ── HITL checkpoint (Fix 8) ─────────────────────────────────────────
         result = self._hitl_gate(agent=agent, task=task, result=result)
@@ -495,6 +602,18 @@ class WorkflowEngine:
         """
         logger.info("WorkflowEngine[async]: executing agent '%s'", agent.name)
 
+        blocked_reason = self._policy_precheck(agent, task)
+        if blocked_reason:
+            agent.record_result(success=False)
+            self._record_task_memory(agent=agent, task=task, result=blocked_reason, success=False)
+            return blocked_reason
+
+        blocked_reason = self._budget_precheck(task)
+        if blocked_reason:
+            agent.record_result(success=False)
+            self._record_task_memory(agent=agent, task=task, result=blocked_reason, success=False)
+            return blocked_reason
+
         # BLOCKER-8: Auto-route to cheapest capable model before every call.
         if self.model_router is not None:
             try:
@@ -507,6 +626,7 @@ class WorkflowEngine:
             except Exception as _mr_exc:
                 logger.debug("ModelRouter skipped (non-fatal): %s", _mr_exc)
 
+        token_before = int(getattr(self.ai_adapter, "total_tokens", 0) or 0)
         prompt = self._build_prompt(agent=agent, task=task)
         messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
 
@@ -519,6 +639,7 @@ class WorkflowEngine:
 
         if result.strip().startswith("BEYOND_SCOPE:"):
             agent.record_result(success=False)
+            self._record_finops_spend(agent.name, task, token_before)
             return result
 
         # Self-correction loop (async)
@@ -565,6 +686,7 @@ class WorkflowEngine:
             success = not _looks_like_error(result)
         agent.record_result(success=success)
         self._record_task_memory(agent=agent, task=task, result=str(result), success=success)
+        self._record_finops_spend(agent.name, task, token_before)
 
         # ── HITL checkpoint (Fix 8) ─────────────────────────────────────────
         result = await self._hitl_gate_async(agent=agent, task=task, result=result)

@@ -93,9 +93,9 @@ Commands:
                                    Opens a new terminal window; auto-detects type
                                    Looks in projects/<app_name> at workspace root
   chat <message...>                Chat directly with the AI
-  switch_ai <provider> [model]     Switch AI provider (openai/claude/gemini/ollama/huggingface)
+    switch_ai <provider> [model]     Switch AI provider (openai/claude/gemini/ollama/github)
   add_api [provider] [key]         Add or update an AI provider API key
-                                   Providers: openai, claude, gemini, huggingface, github
+                                                                     Providers: openai, claude, gemini, github
   add_api list                     Show current API key status for all providers
   test_ai                          Test if the current AI provider is working
   memory_list                      List all memory keys

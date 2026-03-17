@@ -458,6 +458,10 @@ class PlanningEngine:
         elapsed = round(time.time() - start_time, 2)
         final_stats = graph.stats()
         final_status = "completed" if graph.is_complete() else "partial"
+        total_tasks = len(graph.all_tasks())
+        completed_count = int(final_stats.get("completed", 0))
+        failed_count = int(final_stats.get("failed", 0))
+        failed_tasks = [t.id for t in graph.all_tasks() if t.status == "failed"]
 
         logger.info(
             "PlanningEngine: plan %s finished in %.1fs — steps=%d stats=%s",
@@ -480,6 +484,10 @@ class PlanningEngine:
             "elapsed_seconds": elapsed,
             "steps_run": steps,
             "replan_cycles": replan_cycles,
+            "completed": completed_count,
+            "failed": failed_count,
+            "total": total_tasks,
+            "failed_tasks": failed_tasks,
             "stats": final_stats,
             "tasks": [t.to_dict() for t in graph.all_tasks()],
         }
@@ -619,15 +627,23 @@ class PlanningEngine:
             raise ValueError(f"Replan parse error: {exc}") from exc
 
     def _resolve_blocked_tasks(self, graph: TaskGraph) -> None:
-        """Mark pending tasks whose deps have failed as skipped."""
-        for node in graph.all_tasks():
-            if node.status != "pending":
-                continue
-            for dep_id in node.depends_on:
-                dep = graph.get_task(dep_id)
-                if dep and dep.status == "failed":
-                    graph.update_task_status(node.id, "skipped", error=f"Dependency '{dep_id}' failed.")
-                    break
+        """Mark pending tasks whose deps are failed/skipped as skipped (propagated)."""
+        changed = True
+        while changed:
+            changed = False
+            for node in graph.all_tasks():
+                if node.status != "pending":
+                    continue
+                for dep_id in node.depends_on:
+                    dep = graph.get_task(dep_id)
+                    if dep and dep.status in ("failed", "skipped"):
+                        graph.update_task_status(
+                            node.id,
+                            "skipped",
+                            error=f"Dependency '{dep_id}' {dep.status}.",
+                        )
+                        changed = True
+                        break
 
     def _parse_plan_json(self, raw: str) -> dict[str, Any]:
         """Extract the first JSON object from an AI response."""

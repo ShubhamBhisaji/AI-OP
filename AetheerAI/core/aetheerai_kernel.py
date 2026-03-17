@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 import re
 
@@ -30,6 +31,7 @@ from core.self_improve import SelfImproveCoordinator
 from core.self_healer import SelfHealingDebugger
 from core.mcp_bridge import InteropBridge
 from core.priority_controller import PriorityController, ConstitutionRule, ActionOutcome
+from core.governance_layer import GovernanceLayer
 from core.state_checkpoint import CheckpointManager, CheckpointStore
 from core.swarm_bus import SwarmBus
 from core.collaboration_engine import CollaborationEngine
@@ -50,8 +52,10 @@ from core.federated_learning import FederatedLearner
 from core.proactive_concierge import ProactiveConcierge
 from core.personality_engine import PersonalityEngine, PersonalityProfile
 from core.planning_engine import PlanningEngine, TaskGraph
+from core.job_executor import build_job_executor
 from core.job_scheduler import JobScheduler
 from core.risk_assessor import RiskAssessor, RiskAction, RiskReport
+from core.business_growth_engine import BusinessGrowthEngine
 from factory.lifecycle_manager import AgentLifecycleManager
 from evals.benchmark_runner import BenchmarkRunner
 from tools.tool_manager import ToolManager
@@ -116,6 +120,7 @@ class AetheerAiKernel:
         # Inject engine into tools that need cross-agent comms (Pattern 2)
         self.tool_manager.inject_engine(self.workflow_engine)
         self.team_manager = TeamManager(registry=self.registry)
+        self._ceo_agent = None
         self.orchestrator = Orchestrator(
             registry=self.registry,
             ai_adapter=self.ai_adapter,
@@ -141,6 +146,8 @@ class AetheerAiKernel:
             ai_adapter=self.ai_adapter,
             audit_logger=_audit,
         )
+        self.governance = GovernanceLayer()
+        self._bootstrap_constitution_defaults()
         self.workflow_engine.priority_controller = self.priority_controller
         # ── Feature 6: State Checkpointing ───────────────────────────────
         self.checkpoint_manager = CheckpointManager()
@@ -155,6 +162,7 @@ class AetheerAiKernel:
             swarm_bus=self.swarm_bus,
             memory=self.memory,
         )
+        self.orchestrator.set_collaboration_runner(self.collaboration_engine.run)
         # ── Feature 8: JIT Tool Synthesizer ──────────────────────────────
         self.tool_synthesizer = ToolSynthesizer(
             ai_adapter=self.ai_adapter,
@@ -206,7 +214,7 @@ class AetheerAiKernel:
             workflow_engine=self.workflow_engine,
             registry=self.registry,
             ai_adapter=self.ai_adapter,
-            governance=self.priority_controller,
+            governance=self.governance,
             self_healer=self.self_healer,
             memory_manager=self.memory,
         )
@@ -216,14 +224,35 @@ class AetheerAiKernel:
             ai_adapter=self.ai_adapter,
         )
         # ── Feature 25: JobScheduler (persistent priority job queue) ─────────
-        self.scheduler = JobScheduler(executor_fn=self.run_agent)
+        self.job_executor = build_job_executor(self.run_agent)
+        self.scheduler = JobScheduler(
+            executor_fn=self.job_executor.execute,
+            executor_name=self.job_executor.info().get("mode", "unknown"),
+        )
         self.scheduler.start()
+        logger.info("Job execution backend: %s", self.job_executor.info())
         # ── Feature 26: RiskAssessor (multi-dimensional risk scoring) ─────────
         self.risk_assessor = RiskAssessor(
             ai_adapter=self.ai_adapter,
             audit_logger=_audit,
         )
+        # ── Feature 27: BusinessGrowthEngine (lead-to-revenue automation) ───
+        self.business = BusinessGrowthEngine()
         logger.info("AetheerAI — An AI Master!! kernel ready.")
+
+    def _bootstrap_constitution_defaults(self) -> None:
+        """Install baseline constitutional rules so decision gating is active by default."""
+        try:
+            if self.priority_controller.list_rules():
+                return
+            for rule in (
+                ConstitutionRule.security_first(),
+                ConstitutionRule.no_data_deletion_without_backup(),
+                ConstitutionRule.human_approval_for_billing(),
+            ):
+                self.priority_controller.add_rule(rule)
+        except Exception as exc:
+            logger.warning("Failed to bootstrap default constitution rules: %s", exc)
 
     @staticmethod
     def _safe_fs_component(raw: str, fallback: str = "item") -> str:
@@ -978,6 +1007,20 @@ class AetheerAiKernel:
         self.skill_engine.upgrade(name)
         logger.info("Agent '%s' upgraded.", name)
 
+    @staticmethod
+    def _is_non_success_result(result: Any) -> bool:
+        text = str(result).strip().lower()
+        return text.startswith(
+            (
+                "error",
+                "[error]",
+                "beyond_scope",
+                "policy_blocked",
+                "policy_escalated",
+                "budget_blocked",
+            )
+        )
+
     def run_agent(self, name: str, task: str) -> Any:
         """Run a named agent on a given task and save token usage to memory."""
         agent = self.registry.get(name)
@@ -987,17 +1030,40 @@ class AetheerAiKernel:
             "Running agent '%s' (permission=%s) on task: %s",
             name, agent.permission_level, task,
         )
-        result = self.workflow_engine.execute(agent=agent, task=task)
-        self.memory.save(key=f"{name}:last_result", value=result)
-        # Persist token usage so it can be queried later
-        usage = self.ai_adapter.usage
-        if usage.get("total_tokens"):
-            self.memory.save(key=f"{name}:last_token_usage", value=usage)
-            self.memory.save(
-                key="session:total_tokens",
-                value=self.ai_adapter.total_tokens,
-            )
-        return result
+        started_at = time.monotonic()
+        outcome = ""
+        success = False
+
+        try:
+            self.lifecycle.activate(name)
+        except Exception:
+            pass
+
+        try:
+            result = self.workflow_engine.execute(agent=agent, task=task)
+            outcome = str(result)
+            success = not self._is_non_success_result(result)
+            self.memory.save(key=f"{name}:last_result", value=result)
+            # Persist token usage so it can be queried later
+            usage = self.ai_adapter.usage
+            if usage.get("total_tokens"):
+                self.memory.save(key=f"{name}:last_token_usage", value=usage)
+                self.memory.save(
+                    key="session:total_tokens",
+                    value=self.ai_adapter.total_tokens,
+                )
+            return result
+        finally:
+            try:
+                self.lifecycle.record_performance(
+                    name,
+                    task_type="direct_run",
+                    success=success,
+                    duration_sec=max(0.0, time.monotonic() - started_at),
+                    notes=(outcome or task)[:180],
+                )
+            except Exception:
+                pass
 
     async def run_agent_async(self, name: str, task: str, timeout_seconds: float | None = None) -> Any:
         """Non-blocking async version of run_agent."""
@@ -1010,13 +1076,36 @@ class AetheerAiKernel:
             "Running agent '%s' async (permission=%s) on task: %s",
             name, agent.permission_level, task,
         )
-        coro = self.workflow_engine.execute_async(agent=agent, task=task)
-        result = await asyncio.wait_for(coro, timeout=timeout_seconds) if timeout_seconds else await coro
-        self.memory.save(key=f"{name}:last_result", value=result)
-        usage = self.ai_adapter.usage
-        if usage.get("total_tokens"):
-            self.memory.save(key=f"{name}:last_token_usage", value=usage)
-        return result
+        started_at = time.monotonic()
+        outcome = ""
+        success = False
+
+        try:
+            self.lifecycle.activate(name)
+        except Exception:
+            pass
+
+        try:
+            coro = self.workflow_engine.execute_async(agent=agent, task=task)
+            result = await asyncio.wait_for(coro, timeout=timeout_seconds) if timeout_seconds else await coro
+            outcome = str(result)
+            success = not self._is_non_success_result(result)
+            self.memory.save(key=f"{name}:last_result", value=result)
+            usage = self.ai_adapter.usage
+            if usage.get("total_tokens"):
+                self.memory.save(key=f"{name}:last_token_usage", value=usage)
+            return result
+        finally:
+            try:
+                self.lifecycle.record_performance(
+                    name,
+                    task_type="direct_run_async",
+                    success=success,
+                    duration_sec=max(0.0, time.monotonic() - started_at),
+                    notes=(outcome or task)[:180],
+                )
+            except Exception:
+                pass
 
     async def run_pipeline_async(
         self,
@@ -1136,6 +1225,118 @@ class AetheerAiKernel:
     def orchestrate(self, task: str) -> dict:
         """AI auto-selects the best agents + mode for the task."""
         return self.orchestrator.orchestrate(task)
+
+    def _get_ceo_agent(self):
+        """Lazily initialize the CEO autonomous orchestrator."""
+        if self._ceo_agent is None:
+            from agents.ceo_agent import CEOAgent
+
+            self._ceo_agent = CEOAgent(
+                self,
+                max_tasks=int(os.getenv("MAX_TASKS_PER_PROJECT", "50")),
+                max_cost_usd=float(os.getenv("MAX_COST_USD", "10.0")),
+                max_runtime_seconds=int(os.getenv("MAX_RUNTIME_SECONDS", "600")),
+                max_retries=int(os.getenv("MAX_RETRIES", "3")),
+            )
+        return self._ceo_agent
+
+    @staticmethod
+    def _project_result_to_dict(result) -> dict:
+        tasks = []
+        for task in result.tasks:
+            tasks.append(
+                {
+                    "task_id": task.task_id,
+                    "index": task.index,
+                    "title": task.title,
+                    "description": task.description,
+                    "agent_type": task.agent_type,
+                    "role_description": task.role_description,
+                    "priority": task.priority,
+                    "depends_on": list(task.depends_on),
+                    "require_approval": task.require_approval,
+                    "status": task.status,
+                    "result": task.result,
+                    "error": task.error,
+                    "attempts": task.attempts,
+                }
+            )
+
+        return {
+            "goal": result.goal,
+            "status": result.status,
+            "total_tasks": result.total_tasks,
+            "completed_tasks": result.completed_tasks,
+            "failed_tasks": result.failed_tasks,
+            "elapsed_seconds": result.elapsed_seconds,
+            "replanned": result.replanned,
+            "workflow_id": result.workflow_id,
+            "spent_usd": result.spent_usd,
+            "final_summary": result.final_summary,
+            "events": result.events,
+            "tasks": tasks,
+        }
+
+    def run_autonomous_goal(
+        self,
+        goal: str,
+        *,
+        context: dict[str, Any] | None = None,
+        parallel: bool = True,
+        collaboration_mode: bool = True,
+        offline_local_mode: bool = False,
+        fast_mode_collaboration: bool = False,
+    ) -> dict:
+        """
+        Execute a full CEO autonomy loop (plan -> execute -> monitor -> replan).
+
+        Returns a serializable dict with task-by-task outcomes and event logs.
+        """
+        ceo = self._get_ceo_agent()
+        result = ceo.run(
+            goal,
+            context=context,
+            parallel=parallel,
+            collaboration_mode=collaboration_mode,
+            offline_local_mode=offline_local_mode,
+            fast_mode_collaboration=fast_mode_collaboration,
+        )
+        return self._project_result_to_dict(result)
+
+    async def run_autonomous_goal_async(
+        self,
+        goal: str,
+        *,
+        context: dict[str, Any] | None = None,
+        parallel: bool = True,
+        collaboration_mode: bool = True,
+        offline_local_mode: bool = False,
+        fast_mode_collaboration: bool = False,
+    ) -> dict:
+        """Async variant of run_autonomous_goal()."""
+        ceo = self._get_ceo_agent()
+        result = await ceo.run_async(
+            goal,
+            context=context,
+            parallel=parallel,
+            collaboration_mode=collaboration_mode,
+            offline_local_mode=offline_local_mode,
+            fast_mode_collaboration=fast_mode_collaboration,
+        )
+        return self._project_result_to_dict(result)
+
+    def autonomy_events(self, limit: int = 500) -> list[dict]:
+        """Return recent CEO execution events for live monitoring UIs/CLI."""
+        ceo = self._get_ceo_agent()
+        return ceo.execution_engine.get_events(limit=limit)
+
+    def latest_autonomous_goal(self) -> dict | None:
+        """Return the last CEO execution result as a dict, if any."""
+        ceo = self._get_ceo_agent()
+        latest = ceo.latest_result()
+        if latest is None:
+            return None
+        return self._project_result_to_dict(latest)
 
     # ------------------------------------------------------------------
     # AI System builder  (design + create a multi-agent system from text)
@@ -4015,11 +4216,21 @@ class AetheerAiKernel:
         """
         if state:
             return self.lifecycle.list_by_state(state)
-        return self.lifecycle.summary().get("all_agents", [])
+        summary = self.lifecycle.summary().get("by_state", {})
+        all_agents: list[str] = []
+        for names in summary.values():
+            all_agents.extend(names)
+        return sorted(set(all_agents))
 
     def lifecycle_record(self, agent_name: str, success: bool, duration_ms: float = 0.0, task: str = "") -> None:
         """Record a task completion for performance tracking."""
-        self.lifecycle.record_performance(agent_name, success=success, duration_ms=duration_ms, task=task)
+        self.lifecycle.record_performance(
+            agent_name,
+            task_type=(task or "general"),
+            success=success,
+            duration_sec=max(0.0, float(duration_ms) / 1000.0),
+            notes=task[:180],
+        )
 
     def discover_capabilities(self, agent_name: str) -> dict:
         """
@@ -4108,7 +4319,9 @@ class AetheerAiKernel:
 
     def scheduler_stats(self) -> dict:
         """Return job queue statistics."""
-        return self.scheduler.stats()
+        out = self.scheduler.stats()
+        out["execution"] = self.job_executor.info()
+        return out
 
     # ═══════════════════════════════════════════════════════════════════
     # ── Feature 26: RiskAssessor ─────────────────────────────────────
@@ -4151,3 +4364,76 @@ class AetheerAiKernel:
     def risk_history(self, limit: int = 50) -> list[dict]:
         """Return recent risk assessment reports."""
         return self.risk_assessor.history(limit=limit)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 27: BusinessGrowthEngine ─────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def business_register_campaign(
+        self,
+        name: str,
+        channel: str,
+        cta: str,
+        target_stage: str = "lead",
+        cadence_hours: float = 24.0,
+        enabled: bool = True,
+    ) -> dict:
+        """Create a marketing automation campaign."""
+        return self.business.register_campaign(
+            name=name,
+            channel=channel,
+            cta=cta,
+            target_stage=target_stage,
+            cadence_hours=cadence_hours,
+            enabled=enabled,
+        )
+
+    def business_capture_leads(self, leads: list[dict], source: str = "manual") -> dict:
+        """Ingest leads from acquisition channels."""
+        return self.business.ingest_leads(leads=leads, source=source)
+
+    def business_run_marketing_loop(self, max_contacts: int = 25) -> dict:
+        """Execute one marketing automation cycle."""
+        return self.business.run_marketing_automation(max_contacts=max_contacts)
+
+    def business_track_conversion(
+        self,
+        lead_id: str,
+        event_type: str,
+        value: float = 0.0,
+        currency: str = "USD",
+        metadata: dict | None = None,
+    ) -> dict:
+        """Track a conversion event and update lifecycle state."""
+        return self.business.track_conversion(
+            lead_id=lead_id,
+            event_type=event_type,
+            value=value,
+            currency=currency,
+            metadata=metadata,
+        )
+
+    def business_customer_lifecycle(self, stage: str | None = None, limit: int = 200) -> list[dict]:
+        """Return customer lifecycle records."""
+        return self.business.customer_lifecycle(stage=stage, limit=limit)
+
+    def business_metrics(self) -> dict:
+        """Return growth funnel, conversion, and revenue metrics."""
+        return self.business.metrics()
+
+    def business_revenue_loop(
+        self,
+        min_new_leads: int = 20,
+        min_lead_to_customer_rate: float = 0.05,
+        max_churn_rate: float = 0.20,
+    ) -> dict:
+        """Evaluate business health and generate revenue actions."""
+        return self.business.run_revenue_loop(
+            min_new_leads=min_new_leads,
+            min_lead_to_customer_rate=min_lead_to_customer_rate,
+            max_churn_rate=max_churn_rate,
+        )
+
+    def business_open_actions(self, limit: int = 100) -> list[dict]:
+        """Return open autonomous revenue actions."""
+        return self.business.open_actions(limit=limit)

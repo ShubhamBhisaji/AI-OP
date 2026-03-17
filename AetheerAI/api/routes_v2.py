@@ -6,6 +6,7 @@ Adds endpoints for:
   /api/jobs         — JobScheduler  (persistent priority queue)
   /api/risk         — RiskAssessor  (multi-dimensional risk scoring)
   /api/lifecycle    — AgentLifecycleManager (warm/idle/cold/retired + capabilities)
+    /api/business     — BusinessGrowthEngine (lead-to-revenue automation)
 
 Mount this router from api/server.py:
     from api.routes_v2 import router as v2_router
@@ -333,3 +334,136 @@ def compose_skills(agent_name: str, skills: list[str]):
     k = _kernel()
     updated = k.compose_skills(agent_name, skills)
     return {"success": True, "data": {"name": agent_name, "skills": updated}}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ── Business Growth Engine ─────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CampaignRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    channel: str = Field(..., min_length=1, max_length=60)
+    cta: str = Field(default="Book a demo", max_length=200)
+    target_stage: str = Field(default="lead", max_length=40)
+    cadence_hours: float = Field(default=24.0, gt=0.0, le=720.0)
+    enabled: bool = Field(default=True)
+
+
+class LeadPayload(BaseModel):
+    lead_id: str | None = None
+    external_id: str | None = None
+    email: str | None = None
+    name: str = ""
+    company: str = ""
+    stage: str = "lead"
+    score: float = 0.0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LeadCaptureRequest(BaseModel):
+    source: str = Field(default="manual", min_length=1, max_length=60)
+    leads: list[LeadPayload] = Field(..., min_length=1, max_length=1000)
+
+
+class MarketingLoopRequest(BaseModel):
+    max_contacts: int = Field(default=25, ge=1, le=2000)
+
+
+class ConversionRequest(BaseModel):
+    lead_id: str = Field(..., min_length=1, max_length=80)
+    event_type: str = Field(..., min_length=1, max_length=80)
+    value: float = Field(default=0.0)
+    currency: str = Field(default="USD", min_length=3, max_length=6)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RevenueLoopRequest(BaseModel):
+    min_new_leads: int = Field(default=20, ge=1, le=100000)
+    min_lead_to_customer_rate: float = Field(default=0.05, ge=0.0, le=1.0)
+    max_churn_rate: float = Field(default=0.20, ge=0.0, le=1.0)
+
+
+@router.post("/api/business/campaigns", summary="Register a marketing automation campaign", status_code=201)
+def business_create_campaign(req: CampaignRequest):
+    k = _kernel()
+    try:
+        campaign = k.business_register_campaign(
+            name=req.name,
+            channel=req.channel,
+            cta=req.cta,
+            target_stage=req.target_stage,
+            cadence_hours=req.cadence_hours,
+            enabled=req.enabled,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("business_create_campaign failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"success": True, "data": campaign}
+
+
+@router.post("/api/business/leads", summary="Ingest leads from acquisition channels")
+def business_capture_leads(req: LeadCaptureRequest):
+    k = _kernel()
+    result = k.business_capture_leads(
+        leads=[item.model_dump() for item in req.leads],
+        source=req.source,
+    )
+    return {"success": True, "data": result}
+
+
+@router.post("/api/business/marketing/run", summary="Run one marketing automation cycle")
+def business_run_marketing(req: MarketingLoopRequest):
+    k = _kernel()
+    result = k.business_run_marketing_loop(max_contacts=req.max_contacts)
+    return {"success": True, "data": result}
+
+
+@router.post("/api/business/conversions", summary="Track a conversion event")
+def business_track_conversion(req: ConversionRequest):
+    k = _kernel()
+    try:
+        out = k.business_track_conversion(
+            lead_id=req.lead_id,
+            event_type=req.event_type,
+            value=req.value,
+            currency=req.currency,
+            metadata=req.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        logger.error("business_track_conversion failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"success": True, "data": out}
+
+
+@router.get("/api/business/lifecycle", summary="List customer lifecycle records")
+def business_lifecycle(stage: str | None = None, limit: int = 200):
+    k = _kernel()
+    data = k.business_customer_lifecycle(stage=stage, limit=limit)
+    return {"success": True, "data": data}
+
+
+@router.get("/api/business/metrics", summary="Get lead funnel and revenue metrics")
+def business_metrics():
+    k = _kernel()
+    return {"success": True, "data": k.business_metrics()}
+
+
+@router.get("/api/business/actions", summary="List open autonomous revenue actions")
+def business_actions(limit: int = 100):
+    k = _kernel()
+    return {"success": True, "data": k.business_open_actions(limit=limit)}
+
+
+@router.post("/api/business/revenue/run", summary="Run revenue optimization loop")
+def business_run_revenue_loop(req: RevenueLoopRequest):
+    k = _kernel()
+    result = k.business_revenue_loop(
+        min_new_leads=req.min_new_leads,
+        min_lead_to_customer_rate=req.min_lead_to_customer_rate,
+        max_churn_rate=req.max_churn_rate,
+    )
+    return {"success": True, "data": result}

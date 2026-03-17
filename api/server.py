@@ -6,6 +6,7 @@ Usage:
 
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 
@@ -15,6 +16,10 @@ _AETHEERAI_ROOT = os.path.join(_PROJECT_ROOT, "AetheerAI")
 for _p in (_AETHEERAI_ROOT, _PROJECT_ROOT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+# Ensure `api.*` imports inside AetheerAI resolve to `AetheerAI.api.*`
+# instead of this root-level gateway package.
+sys.modules["api"] = importlib.import_module("AetheerAI.api")
 
 from AetheerAI.api.server import app  # noqa: E402
 

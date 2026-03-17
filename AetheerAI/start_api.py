@@ -32,6 +32,14 @@ _load_env(_ENV_PATH)
 _check_env_file(_ENV_PATH)
 
 
+def _env_workers_default() -> int:
+    raw = (os.getenv("AETHER_WORKERS") or os.getenv("AETHEER_WORKERS") or "1").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 1
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="AetheerAI REST API server (FastAPI + Uvicorn)",
@@ -57,7 +65,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=1,
+        default=_env_workers_default(),
         help="Number of worker processes (incompatible with --reload).",
     )
     parser.add_argument(

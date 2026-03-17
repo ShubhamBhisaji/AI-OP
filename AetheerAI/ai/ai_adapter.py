@@ -1,6 +1,6 @@
 """
 AIAdapter — litellm-backed abstraction layer for multiple AI providers.
-Supports GitHub Models (free with GitHub account), OpenAI, Claude, Gemini, Ollama, HuggingFace.
+Supports GitHub Models (free with GitHub account), OpenAI, Claude, Gemini, and Ollama.
 Switch providers by changing the `provider` argument at init time.
 
 LiteLLM handles streaming, structured outputs, retries, and rate limiting uniformly
@@ -18,9 +18,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
+import time
+import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 def _litellm():
@@ -34,7 +39,7 @@ def _litellm():
         ) from exc
     return _ll
 
-SUPPORTED_PROVIDERS = ("github", "openai", "claude", "gemini", "ollama", "huggingface")
+SUPPORTED_PROVIDERS = ("github", "openai", "claude", "gemini", "ollama")
 
 # GitHub Models REST endpoint (models.inference.ai.azure.com)
 # Works with any GitHub PAT — free tier, no Copilot subscription needed.
@@ -46,7 +51,6 @@ _PROVIDER_MODEL_ENV_KEYS: dict[str, str] = {
     "claude": "ANTHROPIC_MODEL",
     "gemini": "GEMINI_MODEL",
     "ollama": "OLLAMA_MODEL",
-    "huggingface": "HF_MODEL",
 }
 
 _PROVIDER_API_BASE_ENV_KEYS: dict[str, str] = {
@@ -55,7 +59,6 @@ _PROVIDER_API_BASE_ENV_KEYS: dict[str, str] = {
     "claude": "ANTHROPIC_API_BASE",
     "gemini": "GEMINI_API_BASE",
     "ollama": "OLLAMA_API_BASE",
-    "huggingface": "HF_INFERENCE_API_BASE",
 }
 
 # Confirmed working model IDs on the GitHub Models REST API (tested March 2026)
@@ -112,6 +115,15 @@ class AIAdapter:
         self._semaphore = asyncio.Semaphore(
             int(os.environ.get("AETHEERAI_ASYNC_CONCURRENCY", "10"))
         )
+        self._failover_enabled = _env_bool("AETHEERAI_PROVIDER_FAILOVER", True)
+        self._failover_chain = self._load_failover_chain()
+        self._failure_threshold = _env_int("AETHEERAI_PROVIDER_FAILURE_THRESHOLD", 2, minimum=1)
+        self._failure_cooldown_seconds = _env_int(
+            "AETHEERAI_PROVIDER_FAILURE_COOLDOWN_SECONDS", 45, minimum=1
+        )
+        self._provider_failures: dict[str, int] = {p: 0 for p in SUPPORTED_PROVIDERS}
+        self._provider_open_until: dict[str, float] = {p: 0.0 for p in SUPPORTED_PROVIDERS}
+        self._provider_lock = threading.Lock()
         logger.info("AIAdapter initialized: provider=%s model=%s", self.provider, self.model)
 
     # ------------------------------------------------------------------
@@ -129,9 +141,80 @@ class AIAdapter:
             "claude": self._chat_claude,
             "gemini": self._chat_gemini,
             "ollama": self._chat_ollama,
-            "huggingface": self._chat_huggingface,
         }
-        return dispatch[self.provider](messages, **kwargs)
+        request_id = uuid.uuid4().hex[:10]
+        call_plan = self._build_provider_call_plan()
+        errors: list[str] = []
+        last_error: Exception | None = None
+
+        for attempt, (provider, model_override) in enumerate(call_plan, start=1):
+            if self._is_provider_circuit_open(provider):
+                retry_after = self._retry_after_seconds(provider)
+                logger.warning(
+                    "AIAdapter circuit-open skip: request_id=%s provider=%s retry_after_s=%d",
+                    request_id,
+                    provider,
+                    retry_after,
+                )
+                errors.append(f"{provider}: circuit-open ({retry_after}s)")
+                continue
+
+            started = time.monotonic()
+            try:
+                response = dispatch[provider](
+                    messages,
+                    model_override=model_override,
+                    **kwargs,
+                )
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                self._mark_provider_success(provider)
+                logger.info(
+                    "AIAdapter request success: request_id=%s provider=%s model=%s attempt=%d/%d elapsed_ms=%d",
+                    request_id,
+                    provider,
+                    model_override or (
+                        self.model
+                        if provider == self.provider
+                        else self._default_model(provider)
+                    ),
+                    attempt,
+                    len(call_plan),
+                    elapsed_ms,
+                )
+                if provider != self.provider:
+                    logger.warning(
+                        "AIAdapter failover used: request_id=%s primary=%s fallback=%s",
+                        request_id,
+                        self.provider,
+                        provider,
+                    )
+                return response
+            except Exception as exc:  # noqa: BLE001
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                self._mark_provider_failure(provider, exc)
+                last_error = exc
+                errors.append(f"{provider}: {type(exc).__name__}: {exc}")
+                logger.warning(
+                    "AIAdapter request failed: request_id=%s provider=%s attempt=%d/%d elapsed_ms=%d error=%s",
+                    request_id,
+                    provider,
+                    attempt,
+                    len(call_plan),
+                    elapsed_ms,
+                    exc,
+                )
+                if not self._should_failover(exc):
+                    logger.error(
+                        "AIAdapter failover aborted: request_id=%s provider=%s reason=non-retryable",
+                        request_id,
+                        provider,
+                    )
+                    raise
+
+        detail = " | ".join(errors) if errors else "no attempts"
+        raise RuntimeError(
+            f"AI providers unavailable for request {request_id}. Attempts: {detail}"
+        ) from last_error
 
     async def async_chat(self, messages: list[dict[str, str]], **kwargs) -> str:
         """
@@ -153,6 +236,117 @@ class AIAdapter:
         self.provider = provider
         self.model = (model or "").strip() or self._default_model(provider)
         logger.info("AIAdapter switched: provider=%s model=%s", self.provider, self.model)
+
+    def provider_health(self) -> dict[str, dict[str, Any]]:
+        """Return provider failure and circuit-breaker state for troubleshooting."""
+        now = time.monotonic()
+        with self._provider_lock:
+            return {
+                provider: {
+                    "failures": self._provider_failures.get(provider, 0),
+                    "circuit_open": self._provider_open_until.get(provider, 0.0) > now,
+                    "retry_after_seconds": max(
+                        0,
+                        int(self._provider_open_until.get(provider, 0.0) - now),
+                    ),
+                }
+                for provider in SUPPORTED_PROVIDERS
+            }
+
+    def _build_provider_call_plan(self) -> list[tuple[str, str | None]]:
+        plan: list[tuple[str, str | None]] = [(self.provider, None)]
+        if not self._failover_enabled:
+            return plan
+
+        for provider in self._failover_chain:
+            if provider == self.provider:
+                continue
+            if provider not in SUPPORTED_PROVIDERS:
+                continue
+            if not self._provider_has_required_credentials(provider):
+                continue
+            plan.append((provider, self._default_model(provider)))
+
+        return plan
+
+    def _is_provider_circuit_open(self, provider: str) -> bool:
+        with self._provider_lock:
+            return self._provider_open_until.get(provider, 0.0) > time.monotonic()
+
+    def _retry_after_seconds(self, provider: str) -> int:
+        with self._provider_lock:
+            return max(
+                0,
+                int(self._provider_open_until.get(provider, 0.0) - time.monotonic()),
+            )
+
+    def _mark_provider_success(self, provider: str) -> None:
+        with self._provider_lock:
+            self._provider_failures[provider] = 0
+            self._provider_open_until[provider] = 0.0
+
+    def _mark_provider_failure(self, provider: str, error: Exception) -> None:
+        with self._provider_lock:
+            failures = self._provider_failures.get(provider, 0) + 1
+            self._provider_failures[provider] = failures
+            if failures >= self._failure_threshold:
+                self._provider_open_until[provider] = (
+                    time.monotonic() + self._failure_cooldown_seconds
+                )
+                logger.warning(
+                    "AIAdapter circuit opened: provider=%s failures=%d cooldown_s=%d reason=%s",
+                    provider,
+                    failures,
+                    self._failure_cooldown_seconds,
+                    error,
+                )
+
+    @staticmethod
+    def _should_failover(exc: Exception) -> bool:
+        if isinstance(exc, (TypeError, AttributeError, KeyError, AssertionError)):
+            return False
+
+        if isinstance(exc, (OSError, RuntimeError, ImportError, ConnectionError, TimeoutError)):
+            return True
+
+        name = type(exc).__name__.lower()
+        return any(
+            token in name
+            for token in (
+                "timeout",
+                "rate",
+                "api",
+                "request",
+                "network",
+                "connection",
+                "auth",
+            )
+        )
+
+    @staticmethod
+    def _provider_has_required_credentials(provider: str) -> bool:
+        required_env = {
+            "github": "GITHUB_TOKEN",
+            "openai": "OPENAI_API_KEY",
+            "claude": "ANTHROPIC_API_KEY",
+            "gemini": "GEMINI_API_KEY",
+        }
+        env_name = required_env.get(provider)
+        if not env_name:
+            return True
+        return bool((os.environ.get(env_name) or "").strip())
+
+    @staticmethod
+    def _load_failover_chain() -> tuple[str, ...]:
+        default_chain = ("ollama", "github", "openai", "claude", "gemini")
+        raw = (os.environ.get("AETHEERAI_PROVIDER_FAILOVER_CHAIN") or "").strip().lower()
+        if not raw:
+            return default_chain
+
+        parsed = [p.strip() for p in raw.split(",") if p.strip()]
+        cleaned = [p for p in parsed if p in SUPPORTED_PROVIDERS]
+        unique = tuple(dict.fromkeys(cleaned))
+        return unique or default_chain
 
     # ------------------------------------------------------------------
     # litellm core call + token tracking
@@ -190,7 +384,13 @@ class AIAdapter:
     # Provider implementations
     # ------------------------------------------------------------------
 
-    def _chat_github(self, messages: list[dict], **kwargs) -> str:
+    def _chat_github(
+        self,
+        messages: list[dict],
+        *,
+        model_override: str | None = None,
+        **kwargs,
+    ) -> str:
         """GitHub Models — free AI via GitHub PAT. litellm routes as openai-compatible."""
         token = os.environ.get("GITHUB_TOKEN")
         if not token:
@@ -207,7 +407,8 @@ class AIAdapter:
         )
         # Walk the fallback list; on unknown-model errors try the next candidate.
         tried: set[str] = set()
-        for model_name in dict.fromkeys([self.model] + self._GITHUB_FALLBACK_MODELS):
+        selected_model = (model_override or self.model).strip() or self._default_model("github")
+        for model_name in dict.fromkeys([selected_model] + self._GITHUB_FALLBACK_MODELS):
             tried.add(model_name)
             try:
                 result = self._call(
@@ -217,10 +418,11 @@ class AIAdapter:
                     num_retries=3,
                     **call_kwargs,
                 )
-                if model_name != self.model:
+                if model_name != selected_model and model_override is None:
                     logger.info(
                         "GitHub Models: '%s' unavailable, switched to '%s'",
-                        self.model, model_name,
+                        selected_model,
+                        model_name,
                     )
                     self.model = model_name
                 return result
@@ -234,6 +436,7 @@ class AIAdapter:
         )
 
     def _chat_openai(self, messages: list[dict], **kwargs) -> str:
+        model_override = kwargs.pop("model_override", None)
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY environment variable not set.")
@@ -242,7 +445,7 @@ class AIAdapter:
         if api_base:
             call_kwargs.setdefault("api_base", api_base)
         return self._call(
-            model=self.model,
+            model=(model_override or self.model),
             messages=messages,
             api_key=api_key,
             num_retries=3,
@@ -250,11 +453,13 @@ class AIAdapter:
         )
 
     def _chat_claude(self, messages: list[dict], **kwargs) -> str:
+        model_override = kwargs.pop("model_override", None)
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise EnvironmentError("ANTHROPIC_API_KEY environment variable not set.")
         # litellm auto-detects Anthropic from the "claude-" prefix; add it if missing
-        model = self.model if self.model.startswith("claude") else f"anthropic/{self.model}"
+        selected_model = model_override or self.model
+        model = selected_model if selected_model.startswith("claude") else f"anthropic/{selected_model}"
         call_kwargs = dict(kwargs)
         api_base = self._provider_api_base("claude")
         if api_base:
@@ -268,6 +473,7 @@ class AIAdapter:
         )
 
     def _chat_gemini(self, messages: list[dict], **kwargs) -> str:
+        model_override = kwargs.pop("model_override", None)
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise EnvironmentError(
@@ -275,7 +481,12 @@ class AIAdapter:
                 "Get a free key at https://aistudio.google.com/apikey\n"
                 "Then add GEMINI_API_KEY=<key> to your .env file."
             )
-        model = self.model if self.model.startswith("gemini/") else f"gemini/{self.model}"
+        selected_model = model_override or self.model
+        model = (
+            selected_model
+            if selected_model.startswith("gemini/")
+            else f"gemini/{selected_model}"
+        )
         call_kwargs = dict(kwargs)
         api_base = self._provider_api_base("gemini")
         if api_base:
@@ -289,24 +500,14 @@ class AIAdapter:
         )
 
     def _chat_ollama(self, messages: list[dict], **kwargs) -> str:
-        model = self.model if self.model.startswith("ollama/") else f"ollama/{self.model}"
+        model_override = kwargs.pop("model_override", None)
+        selected_model = model_override or self.model
+        model = selected_model if selected_model.startswith("ollama/") else f"ollama/{selected_model}"
         call_kwargs = dict(kwargs)
         api_base = self._provider_api_base("ollama")
         if api_base:
             call_kwargs.setdefault("api_base", api_base)
         return self._call(model=model, messages=messages, **call_kwargs)
-
-    def _chat_huggingface(self, messages: list[dict], **kwargs) -> str:
-        api_key = os.environ.get("HF_API_KEY")
-        model = (
-            self.model if self.model.startswith("huggingface/")
-            else f"huggingface/{self.model}"
-        )
-        call_kwargs = dict(kwargs)
-        api_base = self._provider_api_base("huggingface")
-        if api_base:
-            call_kwargs.setdefault("api_base", api_base)
-        return self._call(model=model, messages=messages, api_key=api_key, **call_kwargs)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -359,7 +560,6 @@ class AIAdapter:
             "claude": "claude-sonnet-4.6",
             "gemini": "gemini-2.5-flash-lite",
             "ollama": "qwen2.5-coder:7b",    # top-rated local model for agentic coding
-            "huggingface": "mistralai/Mistral-7B-Instruct-v0.2",
         }
         return defaults.get(provider, "unknown")
 
@@ -375,3 +575,26 @@ class AIAdapter:
         ("wizardlm2:7b",           "WizardLM2 7B — fast, low-resource (8GB VRAM)"),
         ("llama3.2:3b",            "Llama 3.2 3B  — ultra-fast, minimal hardware (4GB VRAM)"),
     ]
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in _TRUE_VALUES
+
+
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return max(minimum, default)
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        logger.warning(
+            "Invalid integer for %s=%r; using default=%d",
+            name,
+            raw,
+            default,
+        )
+        return max(minimum, default)

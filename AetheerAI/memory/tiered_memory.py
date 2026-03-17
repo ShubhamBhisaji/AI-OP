@@ -49,6 +49,22 @@ _DEFAULT_RECALL_PATH = Path(__file__).parent / "recall_cache.json"
 _DEFAULT_RECALL_CAPACITY = 500  # max recall entries before LRU eviction
 
 
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("TieredMemory: invalid int for %s='%s', using %d", name, raw, default)
+        return default
+    return max(minimum, value)
+
+
+_DEFAULT_RECALL_RETENTION_DAYS = _env_int("AETHEERAI_RECALL_RETENTION_DAYS", default=30, minimum=0)
+_DEFAULT_RECALL_BACKUP_KEEP = _env_int("AETHEERAI_RECALL_BACKUP_KEEP", default=20, minimum=1)
+
+
 def _to_text(value: Any) -> str:
     """Serialize any value to a string suitable for vector indexing."""
     if isinstance(value, str):
@@ -71,6 +87,8 @@ class TieredMemoryManager:
         self,
         recall_capacity: int = _DEFAULT_RECALL_CAPACITY,
         recall_path: Path | str | None = None,
+        recall_retention_days: int = _DEFAULT_RECALL_RETENTION_DAYS,
+        recall_backup_keep: int = _DEFAULT_RECALL_BACKUP_KEEP,
         archival_manager=None,   # MemoryManager instance
     ) -> None:
         # ── Tier 1: Core (in-memory) ──────────────────────────────────
@@ -80,7 +98,11 @@ class TieredMemoryManager:
         self._recall: OrderedDict[str, dict] = OrderedDict()
         self._recall_capacity = recall_capacity
         self._recall_path = Path(recall_path or _DEFAULT_RECALL_PATH)
+        self._recall_retention_days = max(0, int(recall_retention_days))
+        self._recall_backup_keep = max(1, int(recall_backup_keep))
+        self._recall_backup_dir = self._recall_path.parent / "recall_backups"
         self._load_recall()
+        self._prune_recall_expired(persist_changes=True)
 
         # ── Tier 3: Archival (ChromaDB via MemoryManager) ─────────────
         self._archival = archival_manager  # may be None
@@ -243,6 +265,8 @@ class TieredMemoryManager:
             "core_entries": len(self._core),
             "recall_entries": len(self._recall),
             "recall_capacity": self._recall_capacity,
+            "recall_retention_days": self._recall_retention_days,
+            "recall_backup_keep": self._recall_backup_keep,
             "recall_path": str(self._recall_path),
             "archival_available": self._archival is not None,
         }
@@ -259,7 +283,8 @@ class TieredMemoryManager:
 
     def _write_recall(self, key: str, value: Any) -> None:
         """Write to Recall tier with LRU eviction and atomic file save."""
-        entry = {"value": value, "ts": time.time()}
+        now = time.time()
+        entry = {"value": value, "updated_at": now, "ts": now}
         if key in self._recall:
             self._recall.move_to_end(key)
         self._recall[key] = entry
@@ -268,6 +293,7 @@ class TieredMemoryManager:
         while len(self._recall) > self._recall_capacity:
             self._recall.popitem(last=False)
 
+        self._prune_recall_expired(persist_changes=False)
         self._save_recall()
 
     def _write_archival(self, key: str, value: Any) -> None:
@@ -301,12 +327,22 @@ class TieredMemoryManager:
         try:
             raw: dict = json.loads(self._recall_path.read_text(encoding="utf-8"))
             for key, entry in raw.items():
-                self._recall[key] = entry
+                if not isinstance(entry, dict):
+                    entry = {"value": entry}
+                ts = entry.get("updated_at", entry.get("ts", time.time()))
+                if not isinstance(ts, (int, float)):
+                    ts = time.time()
+                self._recall[key] = {
+                    "value": entry.get("value"),
+                    "updated_at": float(ts),
+                    "ts": float(ts),
+                }
             logger.debug("TieredMemory: loaded %d recall entries.", len(self._recall))
         except Exception as exc:
             logger.warning("TieredMemory: could not load recall cache: %s", exc)
 
     def _save_recall(self) -> None:
+        self._recall_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             tmp = self._recall_path.with_suffix(".json.tmp")
             tmp.write_text(
@@ -314,5 +350,49 @@ class TieredMemoryManager:
                 encoding="utf-8",
             )
             os.replace(tmp, self._recall_path)
+            self._backup_recall_file()
         except Exception as exc:
             logger.warning("TieredMemory: could not save recall cache: %s", exc)
+
+    def _prune_recall_expired(self, persist_changes: bool) -> int:
+        if self._recall_retention_days <= 0:
+            return 0
+        cutoff = time.time() - (self._recall_retention_days * 24 * 60 * 60)
+        removed = 0
+        for key in list(self._recall.keys()):
+            entry = self._recall.get(key, {})
+            ts = entry.get("updated_at", entry.get("ts")) if isinstance(entry, dict) else None
+            if not isinstance(ts, (int, float)):
+                continue
+            if float(ts) < cutoff:
+                self._recall.pop(key, None)
+                removed += 1
+
+        if removed:
+            logger.info("TieredMemory: pruned %d expired recall entries.", removed)
+            if persist_changes:
+                self._save_recall()
+        return removed
+
+    def _backup_recall_file(self) -> None:
+        if not self._recall_path.exists():
+            return
+
+        try:
+            self._recall_backup_dir.mkdir(parents=True, exist_ok=True)
+            backup = self._recall_backup_dir / f"recall_cache-{int(time.time() * 1000)}.json"
+            backup.write_text(self._recall_path.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("TieredMemory: could not create recall backup: %s", exc)
+            return
+
+        backups = sorted(
+            self._recall_backup_dir.glob("recall_cache-*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for stale in backups[self._recall_backup_keep:]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
