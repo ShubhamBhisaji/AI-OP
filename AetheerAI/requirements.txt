@@ -26,6 +26,7 @@ python-dotenv>=1.0.0           # Load .env files for API keys
 pyyaml>=6.0.1                  # Parse YAML agent configs
 requests>=2.31.0               # HTTP calls (web_search, http_client, scrapers)
 beautifulsoup4>=4.12.0         # HTML parsing (web_search, web_scraper_pro)
+websocket-client>=1.8.0        # Supabase realtime websocket subscriptions
 
 # --- Fix 4: Advanced Memory  vector database for semantic RAG search ---
 # Optional but recommended  the system works without it (graceful fallback).
@@ -110,3 +111,27 @@ cryptography>=42.0.0           # security_tool
 
 # --- Feature 13: Intelligent Model Router ---
 # (uses only stdlib + existing ai_adapter)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXTERNAL SERVICE INTEGRATIONS  (install for full feature set)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Core HTTP transport for all integrations:
+# requests>=2.31.0 is already listed in the Utilities section.
+
+# --- Supabase realtime (optional but recommended) ---
+# Used by SupabaseClient.listen_realtime() for live database event streaming.
+# websocket-client>=1.8.0 is already listed in the Utilities section.
+
+# --- Supabase official SDK (optional — integrations/supabase_client.py works  ---
+# --- with direct REST calls so this is only needed for advanced usage)         ---
+# supabase>=2.5.0               # Official Supabase Python SDK
+
+# --- PayU Money webhooks / async flows ---
+# (uses stdlib hmac/hashlib — no extra install required)
+
+# --- Meta Graph API batch/async extensions ---
+# (uses requests already listed above)
+
+# --- Vercel CLI mirroring (optional) ---
+# (no extra install required — uses Vercel REST API via requests)

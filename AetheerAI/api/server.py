@@ -93,11 +93,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── v2 routers: planning, scheduling, risk, lifecycle ─────────────────────────
+from api.routes_v2 import router as _v2_router  # noqa: E402
+app.include_router(_v2_router)
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled API error: %s", exc, exc_info=True)
     return JSONResponse(status_code=500, content={"success": False, "error": "Internal server error"})
+
 
 
 class APIResponse(BaseModel):

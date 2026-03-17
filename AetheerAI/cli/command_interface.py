@@ -139,6 +139,39 @@ Commands:
   ollama_remove <model>            Delete a locally installed Ollama model
   ────────────────────────────────────────────────────────────────────
 
+  ─── Planning Engine ────────────────────────────────────────────────
+  plan <goal...>                   Decompose a high-level goal into a task graph
+                                   and immediately execute it autonomously.
+  plan_create <goal...>            Decompose goal into a plan but do NOT execute.
+                                   Prints the plan with its plan_id.
+  plan_run <plan_id>               Execute a previously created plan by ID.
+  plan_resume <plan_id>            Resume a saved plan, skipping completed tasks.
+  list_plans                       List all saved plans.
+  ────────────────────────────────────────────────────────────────────
+
+  ─── Job Scheduler ──────────────────────────────────────────────────
+  schedule <agent> <task...>       Schedule an immediate job for an agent.
+  schedule_at <agent> <HH:MM> <task...>
+                                   Schedule a job at a specific time today (UTC).
+  schedule_every <agent> <secs> <task...>
+                                   Schedule a recurring job every N seconds.
+  list_jobs [status]               List all jobs (optionally filter by status).
+  cancel_job <job_id>              Cancel a pending job.
+  job_status <job_id>              Show the current state of a job.
+  ────────────────────────────────────────────────────────────────────
+
+  ─── Risk Assessor ──────────────────────────────────────────────────
+  risk_assess <action...>          Assess the risk of an action before executing.
+                                   Scores across financial/security/compliance/
+                                   reputation/operational categories.
+  risk_history                     Show the last 20 risk assessment reports.
+  ────────────────────────────────────────────────────────────────────
+
+  ─── Agent Lifecycle ────────────────────────────────────────────────
+  lifecycle_info <name>            Show an agent's lifecycle state and capabilities.
+  find_agent <task...>             Find the best-matched agent for a task.
+  ────────────────────────────────────────────────────────────────────
+
   help                             Show this help message
   exit / quit                      Exit AetheerAI — An AI Master!!
 """
@@ -371,6 +404,25 @@ class CommandInterface:
             "ollama_pull":      self._cmd_ollama_pull,
             "ollama_models":    self._cmd_ollama_models,
             "ollama_remove":    self._cmd_ollama_remove,
+            # ── Planning Engine ───────────────────────────────────
+            "plan":             self._cmd_plan,
+            "plan_create":      self._cmd_plan_create,
+            "plan_run":         self._cmd_plan_run,
+            "plan_resume":      self._cmd_plan_resume,
+            "list_plans":       self._cmd_list_plans,
+            # ── Job Scheduler ─────────────────────────────────────
+            "schedule":         self._cmd_schedule,
+            "schedule_at":      self._cmd_schedule_at,
+            "schedule_every":   self._cmd_schedule_every,
+            "list_jobs":        self._cmd_list_jobs,
+            "cancel_job":       self._cmd_cancel_job,
+            "job_status":       self._cmd_job_status,
+            # ── Risk Assessor ─────────────────────────────────────
+            "risk_assess":      self._cmd_risk_assess,
+            "risk_history":     self._cmd_risk_history,
+            # ── Agent Lifecycle ───────────────────────────────────
+            "lifecycle_info":   self._cmd_lifecycle_info,
+            "find_agent":       self._cmd_find_agent,
             # ──────────────────────────────────────────────────────
             "help": lambda _: print(HELP_TEXT),
             "exit": self._cmd_exit,
@@ -936,6 +988,334 @@ class CommandInterface:
         print("Shutting down AetheerAI — An AI Master!!. Goodbye.")
         self._running = False
         sys.exit(0)
+
+    # ------------------------------------------------------------------
+    # Planning Engine
+    # ------------------------------------------------------------------
+
+    def _cmd_plan(self, args: list[str]) -> None:
+        """Decompose + execute a goal autonomously."""
+        if not args:
+            print("  Usage: plan <goal...>")
+            return
+        goal = " ".join(args)
+        print(f"\n  Planning: {goal}")
+        print("  Step 1/2 — Decomposing goal into task graph...")
+        with Spinner("Decomposing"):
+            plan_dict = self.kernel.plan_goal(goal)
+        tasks = plan_dict.get("tasks", [])
+        print(f"\r  Plan '{plan_dict.get('title', '')}' — {len(tasks)} task(s)")
+        for t in tasks:
+            deps = f" (after {', '.join(t['depends_on'])})" if t.get("depends_on") else ""
+            print(f"    [{t['id']}] {t['title']} → {t['agent_type']}{deps}")
+        print(f"\n  Step 2/2 — Executing plan '{plan_dict.get('plan_id', '')}'...")
+        with Spinner("Executing"):
+            result = self.kernel.execute_plan(plan_dict)
+        status = result.get("status", "unknown")
+        completed = result.get("completed", 0)
+        total = result.get("total", len(tasks))
+        elapsed = result.get("elapsed_seconds", 0)
+        print(f"\r  Done — status={status}, {completed}/{total} tasks completed ({elapsed:.1f}s)\n")
+        if result.get("failed_tasks"):
+            print("  Failed tasks:")
+            for ft in result["failed_tasks"]:
+                print(f"    • {ft}")
+        print()
+
+    def _cmd_plan_create(self, args: list[str]) -> None:
+        """Decompose a goal into a plan without executing it."""
+        if not args:
+            print("  Usage: plan_create <goal...>")
+            return
+        goal = " ".join(args)
+        with Spinner("Decomposing goal"):
+            plan_dict = self.kernel.plan_goal(goal)
+        plan_id = plan_dict.get("plan_id", "")
+        tasks = plan_dict.get("tasks", [])
+        print(f"\n  Plan created: {plan_dict.get('title', '')}")
+        print(f"  ID           : {plan_id}")
+        print(f"  Summary      : {plan_dict.get('plan_summary', '')[:120]}")
+        print(f"  Tasks ({len(tasks)}):")
+        for t in tasks:
+            crit = "★" if t.get("critical") else " "
+            deps = f" ← {', '.join(t['depends_on'])}" if t.get("depends_on") else ""
+            print(f"    {crit}[{t['id']}] {t['title']} [{t['agent_type']}]{deps}")
+        print(f"\n  Run with: plan_run {plan_id}\n")
+
+    def _cmd_plan_run(self, args: list[str]) -> None:
+        """Execute a previously created plan by ID."""
+        if not args:
+            print("  Usage: plan_run <plan_id>")
+            return
+        plan_id = args[0]
+        print(f"\n  Executing plan {plan_id}...")
+        with Spinner("Executing"):
+            result = self.kernel.execute_plan(plan_id)
+        if result.get("error"):
+            print(f"  Error: {result['error']}")
+            return
+        status = result.get("status", "unknown")
+        completed = result.get("completed", 0)
+        total = result.get("total", 0)
+        elapsed = result.get("elapsed_seconds", 0)
+        print(f"\r  Done — status={status}, {completed}/{total} tasks ({elapsed:.1f}s)\n")
+
+    def _cmd_plan_resume(self, args: list[str]) -> None:
+        """Resume a saved plan, skipping completed tasks."""
+        if not args:
+            print("  Usage: plan_resume <plan_id>")
+            return
+        plan_id = args[0]
+        print(f"\n  Resuming plan {plan_id}...")
+        with Spinner("Resuming"):
+            result = self.kernel.resume_plan(plan_id)
+        if result is None:
+            print(f"  Plan '{plan_id}' not found.")
+            return
+        status = result.get("status", "unknown")
+        completed = result.get("completed", 0)
+        total = result.get("total", 0)
+        print(f"\r  Done — status={status}, {completed}/{total} tasks\n")
+
+    def _cmd_list_plans(self, _args: list[str]) -> None:
+        """List all saved plans."""
+        plans = self.kernel.list_plans()
+        if not plans:
+            print("  No saved plans.")
+            return
+        W = 60
+        print(f"\n  {'─'*W}")
+        print(f"  {'ID':<36}  {'Tasks':>5}  Title")
+        print(f"  {'─'*W}")
+        for p in plans:
+            print(f"  {p.get('plan_id',''):<36}  {p.get('task_count',0):>5}  {p.get('title','')}")
+        print(f"  {'─'*W}\n")
+
+    # ------------------------------------------------------------------
+    # Job Scheduler
+    # ------------------------------------------------------------------
+
+    def _cmd_schedule(self, args: list[str]) -> None:
+        """Schedule an immediate job: schedule <agent> <task...>"""
+        if len(args) < 2:
+            print("  Usage: schedule <agent_name> <task...>")
+            return
+        agent = args[0]
+        task = " ".join(args[1:])
+        job_id = self.kernel.schedule_job(name=f"cli-{agent}", agent_name=agent, task=task)
+        print(f"\n  Job scheduled — ID: {job_id}")
+        print(f"  Agent: {agent}")
+        print(f"  Task : {task[:80]}")
+        print(f"  Use 'job_status {job_id[:8]}...' to monitor.\n")
+
+    def _cmd_schedule_at(self, args: list[str]) -> None:
+        """Schedule a job at HH:MM today (UTC): schedule_at <agent> <HH:MM> <task...>"""
+        if len(args) < 3:
+            print("  Usage: schedule_at <agent_name> <HH:MM> <task...>")
+            return
+        agent = args[0]
+        time_str = args[1]
+        task = " ".join(args[2:])
+        from datetime import datetime, timezone
+        try:
+            now_utc = datetime.now(timezone.utc)
+            hh, mm = map(int, time_str.split(":"))
+            run_dt = now_utc.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if run_dt.timestamp() < now_utc.timestamp():
+                # Next day
+                from datetime import timedelta
+                run_dt = run_dt + timedelta(days=1)
+        except ValueError:
+            print(f"  Invalid time format: '{time_str}'. Use HH:MM (24h UTC).")
+            return
+        job_id = self.kernel.schedule_job(
+            name=f"scheduled-{agent}", agent_name=agent, task=task, run_at=run_dt
+        )
+        print(f"\n  Job scheduled at {run_dt.strftime('%H:%M UTC')} — ID: {job_id}\n")
+
+    def _cmd_schedule_every(self, args: list[str]) -> None:
+        """Schedule a recurring job: schedule_every <agent> <seconds> <task...>"""
+        if len(args) < 3:
+            print("  Usage: schedule_every <agent_name> <seconds> <task...>")
+            return
+        agent = args[0]
+        try:
+            secs = float(args[1])
+        except ValueError:
+            print(f"  Invalid interval: '{args[1]}'. Must be a number of seconds.")
+            return
+        task = " ".join(args[2:])
+        job_id = self.kernel.schedule_job(
+            name=f"recurring-{agent}", agent_name=agent, task=task, interval_sec=secs
+        )
+        print(f"\n  Recurring job scheduled every {secs:.0f}s — ID: {job_id}\n")
+
+    def _cmd_list_jobs(self, args: list[str]) -> None:
+        """List all jobs, optionally filtered by status."""
+        status_filter = args[0] if args else None
+        jobs = self.kernel.list_jobs(status=status_filter, limit=50)
+        if not jobs:
+            print("  No jobs found.")
+            return
+        W = 74
+        print(f"\n  {'─'*W}")
+        print(f"  {'ID[:8]':<10}  {'Status':<12}  {'Agent':<18}  {'Name'}")
+        print(f"  {'─'*W}")
+        for j in jobs:
+            jid = j.get("job_id", "")[:8]
+            status = j.get("status", "?")
+            agent = j.get("agent_name", "")[:18]
+            name = j.get("name", "")[:28]
+            print(f"  {jid:<10}  {status:<12}  {agent:<18}  {name}")
+        print(f"  {'─'*W}")
+        stats = self.kernel.scheduler_stats()
+        print(f"  Total: {stats.get('total',0)}  Running: {stats.get('running',0)}\n")
+
+    def _cmd_cancel_job(self, args: list[str]) -> None:
+        """Cancel a pending job by ID prefix."""
+        if not args:
+            print("  Usage: cancel_job <job_id>")
+            return
+        job_id_prefix = args[0]
+        # Allow partial match
+        jobs = self.kernel.list_jobs()
+        matches = [j for j in jobs if j["job_id"].startswith(job_id_prefix)]
+        if not matches:
+            print(f"  No job found with ID starting with '{job_id_prefix}'.")
+            return
+        if len(matches) > 1:
+            print(f"  Ambiguous — {len(matches)} jobs match prefix '{job_id_prefix}'.")
+            return
+        job_id = matches[0]["job_id"]
+        ok = self.kernel.cancel_job(job_id)
+        if ok:
+            print(f"  Job {job_id[:8]} cancelled.")
+        else:
+            print(f"  Could not cancel — job may already be running or completed.")
+
+    def _cmd_job_status(self, args: list[str]) -> None:
+        """Show the status of a job by ID prefix."""
+        if not args:
+            print("  Usage: job_status <job_id>")
+            return
+        job_id_prefix = args[0]
+        jobs = self.kernel.list_jobs()
+        matches = [j for j in jobs if j["job_id"].startswith(job_id_prefix)]
+        if not matches:
+            print(f"  No job found with ID starting with '{job_id_prefix}'.")
+            return
+        j = matches[0]
+        elapsed = j.get("elapsed") or (
+            round(j.get("finished_at", 0) - (j.get("started_at") or 0), 1)
+            if j.get("started_at") and j.get("finished_at") else None
+        )
+        print(f"\n  Job  : {j.get('name')}  [{j['job_id'][:12]}]")
+        print(f"  Status  : {j.get('status')}")
+        print(f"  Agent   : {j.get('agent_name')}")
+        print(f"  Task    : {j.get('task','')[:80]}")
+        print(f"  Attempts: {j.get('attempts', 0)}/{j.get('max_retries',1)+1}")
+        if elapsed is not None:
+            print(f"  Elapsed : {elapsed}s")
+        if j.get("result"):
+            print(f"  Result  : {j['result'][:120]}")
+        if j.get("error"):
+            print(f"  Error   : {j['error'][:120]}")
+        print()
+
+    # ------------------------------------------------------------------
+    # Risk Assessor
+    # ------------------------------------------------------------------
+
+    def _cmd_risk_assess(self, args: list[str]) -> None:
+        """Assess the risk of an action: risk_assess <action description...>"""
+        if not args:
+            print("  Usage: risk_assess <action description...>")
+            return
+        action = " ".join(args)
+        agent = input("  Agent name (or press Enter for 'user'): ").strip() or "user"
+        context = input("  Context / extra details (optional): ").strip()
+        print()
+        with Spinner("Assessing risk"):
+            report = self.kernel.assess_risk(agent_name=agent, action=action, context=context)
+        overall = report.get("overall_score", 0)
+        level = report.get("overall_level", "?")
+        rec = report.get("recommendation", "?")
+        rec_icon = {"PASS": "✓", "WARN": "⚠", "BLOCK": "✗"}.get(rec, "?")
+        W = 58
+        print(f"  {'─'*W}")
+        print(f"  Risk Assessment")
+        print(f"  {'─'*W}")
+        print(f"  Action  : {action[:60]}")
+        print(f"  Score   : {overall:.1f}/10  [{level}]")
+        print(f"  Decision: {rec_icon} {rec}")
+        print(f"  Summary : {report.get('summary','')[:120]}")
+        print(f"  {'─'*W}")
+        print(f"  Category breakdown:")
+        for c in report.get("categories", []):
+            icon = {"LOW": "●", "MEDIUM": "▲", "HIGH": "■"}.get(c.get("level"), "?")
+            print(f"    {icon} {c['category']:<12} {c['score']:>4.1f}  {c['reasoning'][:55]}")
+        print(f"  {'─'*W}\n")
+
+    def _cmd_risk_history(self, _args: list[str]) -> None:
+        """Show the last 20 risk assessments."""
+        history = self.kernel.risk_history(limit=20)
+        if not history:
+            print("  No risk assessments recorded yet.")
+            return
+        print(f"\n  Last {len(history)} risk assessment(s):")
+        print(f"  {'─'*68}")
+        print(f"  {'Agent':<18}  {'Score':>5}  {'Decision':<8}  Action")
+        print(f"  {'─'*68}")
+        for r in history:
+            agent = r.get("agent_name", "")[:18]
+            score = r.get("overall_score", 0)
+            rec = r.get("recommendation", "?")
+            action = r.get("action", "")[:32]
+            print(f"  {agent:<18}  {score:>5.1f}  {rec:<8}  {action}")
+        print(f"  {'─'*68}\n")
+
+    # ------------------------------------------------------------------
+    # Agent Lifecycle
+    # ------------------------------------------------------------------
+
+    def _cmd_lifecycle_info(self, args: list[str]) -> None:
+        """Show an agent's lifecycle state and capabilities."""
+        if not args:
+            print("  Usage: lifecycle_info <agent_name>")
+            return
+        name = args[0]
+        state = self.kernel.lifecycle_state(name)
+        caps = self.kernel.discover_capabilities(name)
+        print(f"\n  Agent      : {name}")
+        print(f"  State      : {state}")
+        if isinstance(caps, dict):
+            sr = caps.get("success_rate", None)
+            tasks = caps.get("total_tasks", None)
+            skills = caps.get("skills", [])
+            tools = caps.get("tools", [])
+            if sr is not None:
+                print(f"  Success    : {sr*100:.1f}%  ({tasks} tasks)")
+            if skills:
+                print(f"  Skills     : {', '.join(skills[:8])}{'...' if len(skills)>8 else ''}")
+            if tools:
+                print(f"  Tools      : {', '.join(tools[:8])}{'...' if len(tools)>8 else ''}")
+        print()
+
+    def _cmd_find_agent(self, args: list[str]) -> None:
+        """Find the best-matched agent for a task description."""
+        if not args:
+            print("  Usage: find_agent <task description...>")
+            return
+        task = " ".join(args)
+        with Spinner("Matching agents"):
+            best = self.kernel.find_best_agent(task)
+        if best:
+            state = self.kernel.lifecycle_state(best)
+            print(f"\n  Best match: {best}  [state: {state}]")
+            print(f"  Task      : {task[:80]}\n")
+        else:
+            print(f"\n  No suitable agent found for: {task[:80]}")
+            print("  Tip: create agents first with 'create_agent'.\n")
 
     # ------------------------------------------------------------------
     # Multi-agent  —  Teams

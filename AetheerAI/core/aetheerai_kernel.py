@@ -49,6 +49,10 @@ from core.human_supervisor import HumanSupervisor, DelegationLevel
 from core.federated_learning import FederatedLearner
 from core.proactive_concierge import ProactiveConcierge
 from core.personality_engine import PersonalityEngine, PersonalityProfile
+from core.planning_engine import PlanningEngine, TaskGraph
+from core.job_scheduler import JobScheduler
+from core.risk_assessor import RiskAssessor, RiskAction, RiskReport
+from factory.lifecycle_manager import AgentLifecycleManager
 from evals.benchmark_runner import BenchmarkRunner
 from tools.tool_manager import ToolManager
 from ai.ai_adapter import AIAdapter
@@ -183,6 +187,28 @@ class AetheerAiKernel:
         self.memory.set_isolation_mode(True)
         # ── Feature 17: Semantic Preprocessor (Unstructured → Structured) ─
         self.semantic = SemanticPreprocessor(ai_adapter=self.ai_adapter)
+        # ── Feature 23: PlanningEngine (true goal decomposition + DAG) ──────
+        self.planning = PlanningEngine(
+            workflow_engine=self.workflow_engine,
+            registry=self.registry,
+            ai_adapter=self.ai_adapter,
+            governance=self.priority_controller,
+            self_healer=self.self_healer,
+            memory_manager=self.memory,
+        )
+        # ── Feature 24: AgentLifecycleManager (warm/idle/cold/retired) ──────
+        self.lifecycle = AgentLifecycleManager(
+            registry=self.registry,
+            ai_adapter=self.ai_adapter,
+        )
+        # ── Feature 25: JobScheduler (persistent priority job queue) ─────────
+        self.scheduler = JobScheduler(executor_fn=self.run_agent)
+        self.scheduler.start()
+        # ── Feature 26: RiskAssessor (multi-dimensional risk scoring) ─────────
+        self.risk_assessor = RiskAssessor(
+            ai_adapter=self.ai_adapter,
+            audit_logger=_audit,
+        )
         logger.info("AetheerAI — An AI Master!! kernel ready.")
 
     @staticmethod
@@ -3868,3 +3894,246 @@ class AetheerAiKernel:
 
     def pe_styling_stats(self) -> dict:
         return self.personality.styling_stats()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 23: PlanningEngine (true goal decomposition + DAG) ───
+    # ═══════════════════════════════════════════════════════════════════
+
+    def plan_goal(
+        self,
+        goal: str,
+        context: str = "",
+        plan_id: str | None = None,
+    ) -> dict:
+        """
+        Decompose a high-level goal into a dependency task graph.
+
+        The AI breaks the goal into named subtasks, assigns each to an
+        agent type, and respects inter-task dependencies.
+
+        Returns the plan as a dict (includes plan_id, title, tasks).
+        """
+        graph = self.planning.decompose_goal(goal, context=context, plan_id=plan_id)
+        return graph.to_dict()
+
+    def execute_plan(
+        self,
+        plan_id_or_dict,
+        *,
+        max_steps: int = 50,
+        max_workers: int = 4,
+    ) -> dict:
+        """
+        Execute a plan by ID (string) or raw plan dict.
+
+        Runs the task graph: independent tasks in parallel, dependent tasks
+        sequentially.  Returns a final status dict.
+        """
+        if isinstance(plan_id_or_dict, str):
+            graph = TaskGraph.load(plan_id_or_dict)
+            if graph is None:
+                return {"error": f"Plan '{plan_id_or_dict}' not found."}
+        else:
+            from core.planning_engine import TaskNode, TaskGraph as _TG
+            raw = plan_id_or_dict
+            g = _TG(
+                plan_id=raw.get("plan_id", ""),
+                title=raw.get("title", ""),
+                summary=raw.get("plan_summary", ""),
+            )
+            for td in raw.get("tasks", []):
+                g.add_task(TaskNode.from_dict(td))
+            graph = g
+
+        return self.planning.execute_plan(
+            graph, max_steps=max_steps, max_workers=max_workers
+        )
+
+    def plan_and_execute(
+        self,
+        goal: str,
+        context: str = "",
+        max_steps: int = 50,
+        max_workers: int = 4,
+    ) -> dict:
+        """
+        Single call: decompose a goal, then immediately execute the plan.
+
+        Returns the final execution result dict.
+        """
+        graph = self.planning.decompose_goal(goal, context=context)
+        return self.planning.execute_plan(
+            graph, max_steps=max_steps, max_workers=max_workers
+        )
+
+    def list_plans(self) -> list[dict]:
+        """Return metadata of all saved plans in workspace/plans/."""
+        return self.planning.list_plans()
+
+    def resume_plan(self, plan_id: str, **kwargs) -> dict | None:
+        """Resume a previously saved plan, skipping already-completed tasks."""
+        return self.planning.resume_plan(plan_id, **kwargs)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 24: AgentLifecycleManager ────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def lifecycle_activate(self, agent_name: str) -> str:
+        """Mark an agent as warm (active, recently used)."""
+        return self.lifecycle.activate(agent_name)
+
+    def lifecycle_deactivate(self, agent_name: str) -> str:
+        """Move an agent to idle state (conserve resources)."""
+        return self.lifecycle.deactivate(agent_name)
+
+    def lifecycle_retire(self, agent_name: str, reason: str = "") -> None:
+        """Permanently retire an agent — no new tasks dispatched."""
+        self.lifecycle.retire(agent_name, reason=reason)
+
+    def lifecycle_state(self, agent_name: str) -> str:
+        """Return the current lifecycle state of an agent."""
+        return self.lifecycle.get_state(agent_name)
+
+    def lifecycle_list(self, state: str | None = None) -> list[str]:
+        """
+        Return all agent names, optionally filtered by state.
+        State values: warm | idle | cold | retired
+        """
+        if state:
+            return self.lifecycle.list_by_state(state)
+        return self.lifecycle.summary().get("all_agents", [])
+
+    def lifecycle_record(self, agent_name: str, success: bool, duration_ms: float = 0.0, task: str = "") -> None:
+        """Record a task completion for performance tracking."""
+        self.lifecycle.record_performance(agent_name, success=success, duration_ms=duration_ms, task=task)
+
+    def discover_capabilities(self, agent_name: str) -> dict:
+        """
+        Build a scored capability profile for an agent.
+        Returns skills, tools, performance stats, and capability scores.
+        """
+        return self.lifecycle.discover_capabilities(agent_name)
+
+    def all_capabilities(self) -> list[dict]:
+        """Return capability profiles for all tracked agents."""
+        return self.lifecycle.all_capabilities()
+
+    def compose_skills(self, agent_name: str, extra_skills: list[str]) -> list[str]:
+        """Dynamically add skills to a running agent without recreation."""
+        return self.lifecycle.compose_skills(agent_name, extra_skills)
+
+    def auto_specialize(self, agent_name: str) -> dict:
+        """
+        Ask the AI to suggest new skills and tools based on the agent's
+        task history, then apply them automatically.
+        """
+        return self.lifecycle.auto_specialize(agent_name)
+
+    def find_best_agent(self, task_description: str) -> str | None:
+        """
+        Semantically score all warm/idle agents against a task description
+        and return the name of the best-matched agent, or None.
+        """
+        return self.lifecycle.find_best_agent(task_description)
+
+    def lifecycle_summary(self) -> dict:
+        """Return full lifecycle summary: per-state counts and performance."""
+        return self.lifecycle.summary()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 25: JobScheduler (persistent priority job queue) ─────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def schedule_job(
+        self,
+        name: str,
+        agent_name: str,
+        task: str,
+        *,
+        priority: int = 50,
+        run_at=None,
+        interval_sec: float = 0.0,
+        max_retries: int = 1,
+    ) -> str:
+        """
+        Schedule or enqueue an agent task.
+
+        Parameters
+        ----------
+        name         : Human-readable label.
+        agent_name   : Agent that will execute the task.
+        task         : Task description.
+        priority     : 0 (highest) – 100 (lowest); default 50.
+        run_at       : datetime or Unix timestamp; None = run immediately.
+        interval_sec : If > 0, reschedule every N seconds (recurring job).
+        max_retries  : Retry attempts on failure.
+
+        Returns the job_id string.
+        """
+        return self.scheduler.schedule(
+            name=name,
+            agent_name=agent_name,
+            task=task,
+            priority=priority,
+            run_at=run_at,
+            interval_sec=interval_sec,
+            max_retries=max_retries,
+        )
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Cancel a pending job by ID. Returns True if cancelled."""
+        return self.scheduler.cancel(job_id)
+
+    def job_status(self, job_id: str) -> dict | None:
+        """Return the current state of a job, or None if not found."""
+        return self.scheduler.status(job_id)
+
+    def list_jobs(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        """Return all scheduled jobs, optionally filtered by status."""
+        return self.scheduler.list_jobs(status_filter=status, limit=limit)
+
+    def scheduler_stats(self) -> dict:
+        """Return job queue statistics."""
+        return self.scheduler.stats()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 26: RiskAssessor ─────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def assess_risk(
+        self,
+        agent_name: str,
+        action: str,
+        context: str = "",
+    ) -> dict:
+        """
+        Assess the risk of a proposed agent action.
+
+        Returns a dict with keys:
+          overall_score (0–10), overall_level (LOW|MEDIUM|HIGH),
+          recommendation (PASS|WARN|BLOCK), summary, categories[].
+        """
+        report = self.risk_assessor.assess(
+            agent_name=agent_name,
+            action=action,
+            context=context,
+        )
+        return report.to_dict()
+
+    def assess_tool_risk(
+        self,
+        agent_name: str,
+        tool_name: str,
+        tool_kwargs: dict,
+    ) -> dict:
+        """Assess risk of a specific tool call before execution."""
+        report = self.risk_assessor.assess_tool_call(
+            agent_name=agent_name,
+            tool_name=tool_name,
+            tool_kwargs=tool_kwargs,
+        )
+        return report.to_dict()
+
+    def risk_history(self, limit: int = 50) -> list[dict]:
+        """Return recent risk assessment reports."""
+        return self.risk_assessor.history(limit=limit)
