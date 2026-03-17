@@ -73,9 +73,22 @@ class AetheerAiKernel:
     All subsystems are initialized and coordinated here.
     """
 
-    def __init__(self, ai_provider: str = "openai", model: str | None = "gpt-4o"):
+    def __init__(self, ai_provider: str | None = None, model: str | None = None):
         logger.info("Booting AetheerAI — An AI Master!! kernel...")
-        self.ai_adapter = AIAdapter(provider=ai_provider, model=model)
+        resolved_provider = (
+            (ai_provider or "").strip().lower()
+            or (os.environ.get("AETHEERAI_DEFAULT_PROVIDER") or "").strip().lower()
+            or (os.environ.get("AI_PROVIDER") or "").strip().lower()
+            or "openai"
+        )
+        resolved_model = (
+            (model or "").strip()
+            or (os.environ.get("AETHEERAI_DEFAULT_MODEL") or "").strip()
+            or (os.environ.get("AI_MODEL") or "").strip()
+            or None
+        )
+
+        self.ai_adapter = AIAdapter(provider=resolved_provider, model=resolved_model)
         self.memory = MemoryManager()
         self.registry = AgentRegistry()
         # ── Feature 4: Intent Manifest guard (wired into ToolManager) ───────

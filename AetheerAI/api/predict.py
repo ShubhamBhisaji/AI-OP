@@ -44,6 +44,20 @@ _ALLOWED_TYPES = {
 _MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
+def _resolve_ai_runtime() -> tuple[str, str]:
+    provider = (
+        (os.getenv("AETHEERAI_DEFAULT_PROVIDER") or "").strip().lower()
+        or (os.getenv("AI_PROVIDER") or "").strip().lower()
+        or "openai"
+    )
+    model = (
+        (os.getenv("AETHEERAI_DEFAULT_MODEL") or "").strip()
+        or (os.getenv("AI_MODEL") or "").strip()
+        or "gpt-4o"
+    )
+    return provider, model
+
+
 # ── Request / response schemas ─────────────────────────────────────────────
 
 class PredictRequest(BaseModel):
@@ -76,8 +90,7 @@ def _get_kernel():
     from core.aetheerai_kernel import AetheerAiKernel  # type: ignore
     _k = getattr(_get_kernel, "_instance", None)
     if _k is None:
-        provider = os.getenv("AI_PROVIDER", "openai")
-        model    = os.getenv("AI_MODEL",    "gpt-4o")
+        provider, model = _resolve_ai_runtime()
         _k = AetheerAiKernel(ai_provider=provider, model=model)
         _get_kernel._instance = _k  # type: ignore[attr-defined]
     return _k
@@ -151,8 +164,9 @@ def predict(
     current_user: User | None  = Depends(get_optional_user),
 ):
     kernel   = _get_kernel()
-    provider = req.provider or os.getenv("AI_PROVIDER", "openai")
-    model    = req.model    or os.getenv("AI_MODEL",    "gpt-4o")
+    default_provider, default_model = _resolve_ai_runtime()
+    provider = req.provider or default_provider
+    model    = req.model    or default_model
 
     # Resolve uploaded file context
     extra_context = ""
@@ -210,13 +224,14 @@ def compare_models(
     current_user: User | None  = Depends(get_optional_user),
 ):
     kernel = _get_kernel()
+    default_provider, default_model = _resolve_ai_runtime()
     alternatives = []
     best_result: str | None = None
     best_conf: float | None = None
 
     for spec in req.models:
-        p = spec.get("provider", os.getenv("AI_PROVIDER", "openai"))
-        m = spec.get("model",    os.getenv("AI_MODEL", "gpt-4o"))
+        p = spec.get("provider", default_provider)
+        m = spec.get("model", default_model)
         try:
             res, conf, lat, cost, tok = _run_single(
                 kernel, req.prompt, req.system_prompt, p, m,

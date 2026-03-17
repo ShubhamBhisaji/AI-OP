@@ -40,6 +40,24 @@ SUPPORTED_PROVIDERS = ("github", "openai", "claude", "gemini", "ollama", "huggin
 # Works with any GitHub PAT — free tier, no Copilot subscription needed.
 _GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com"
 
+_PROVIDER_MODEL_ENV_KEYS: dict[str, str] = {
+    "github": "GITHUB_MODEL",
+    "openai": "OPENAI_MODEL",
+    "claude": "ANTHROPIC_MODEL",
+    "gemini": "GEMINI_MODEL",
+    "ollama": "OLLAMA_MODEL",
+    "huggingface": "HF_MODEL",
+}
+
+_PROVIDER_API_BASE_ENV_KEYS: dict[str, str] = {
+    "github": "GITHUB_MODELS_API_BASE",
+    "openai": "OPENAI_API_BASE",
+    "claude": "ANTHROPIC_API_BASE",
+    "gemini": "GEMINI_API_BASE",
+    "ollama": "OLLAMA_API_BASE",
+    "huggingface": "HF_INFERENCE_API_BASE",
+}
+
 # Confirmed working model IDs on the GitHub Models REST API (tested March 2026)
 # NOTE: The GitHub Copilot Chat models (Claude, GPT-5.x, Gemini) listed at
 # docs.github.com/en/copilot/reference/ai-models/model-comparison are only
@@ -76,7 +94,7 @@ class AIAdapter:
                 f"Unsupported provider '{provider}'. Choose from: {SUPPORTED_PROVIDERS}"
             )
         self.provider = provider
-        self.model = model or self._default_model(provider)
+        self.model = (model or "").strip() or self._default_model(provider)
         # ── Token tracking (Fix 4) ────────────────────────────────────
         self.usage: dict[str, int] = {
             "prompt_tokens": 0,
@@ -133,7 +151,7 @@ class AIAdapter:
         if provider not in SUPPORTED_PROVIDERS:
             raise ValueError(f"Unsupported provider '{provider}'.")
         self.provider = provider
-        self.model = model or self._default_model(provider)
+        self.model = (model or "").strip() or self._default_model(provider)
         logger.info("AIAdapter switched: provider=%s model=%s", self.provider, self.model)
 
     # ------------------------------------------------------------------
@@ -182,6 +200,11 @@ class AIAdapter:
                 "Then add GITHUB_TOKEN=<token> to your .env file."
             )
         litellm = _litellm()
+        call_kwargs = dict(kwargs)
+        call_kwargs.setdefault(
+            "base_url",
+            self._provider_api_base("github") or _GITHUB_MODELS_ENDPOINT,
+        )
         # Walk the fallback list; on unknown-model errors try the next candidate.
         tried: set[str] = set()
         for model_name in dict.fromkeys([self.model] + self._GITHUB_FALLBACK_MODELS):
@@ -190,10 +213,9 @@ class AIAdapter:
                 result = self._call(
                     model=f"openai/{model_name}",
                     messages=messages,
-                    base_url=_GITHUB_MODELS_ENDPOINT,
                     api_key=token,
                     num_retries=3,
-                    **kwargs,
+                    **call_kwargs,
                 )
                 if model_name != self.model:
                     logger.info(
@@ -215,12 +237,16 @@ class AIAdapter:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY environment variable not set.")
+        call_kwargs = dict(kwargs)
+        api_base = self._provider_api_base("openai")
+        if api_base:
+            call_kwargs.setdefault("api_base", api_base)
         return self._call(
             model=self.model,
             messages=messages,
             api_key=api_key,
             num_retries=3,
-            **kwargs,
+            **call_kwargs,
         )
 
     def _chat_claude(self, messages: list[dict], **kwargs) -> str:
@@ -229,12 +255,16 @@ class AIAdapter:
             raise EnvironmentError("ANTHROPIC_API_KEY environment variable not set.")
         # litellm auto-detects Anthropic from the "claude-" prefix; add it if missing
         model = self.model if self.model.startswith("claude") else f"anthropic/{self.model}"
+        call_kwargs = dict(kwargs)
+        api_base = self._provider_api_base("claude")
+        if api_base:
+            call_kwargs.setdefault("api_base", api_base)
         return self._call(
             model=model,
             messages=messages,
             api_key=api_key,
             num_retries=3,
-            **kwargs,
+            **call_kwargs,
         )
 
     def _chat_gemini(self, messages: list[dict], **kwargs) -> str:
@@ -246,17 +276,25 @@ class AIAdapter:
                 "Then add GEMINI_API_KEY=<key> to your .env file."
             )
         model = self.model if self.model.startswith("gemini/") else f"gemini/{self.model}"
+        call_kwargs = dict(kwargs)
+        api_base = self._provider_api_base("gemini")
+        if api_base:
+            call_kwargs.setdefault("api_base", api_base)
         return self._call(
             model=model,
             messages=messages,
             api_key=api_key,
             num_retries=3,
-            **kwargs,
+            **call_kwargs,
         )
 
     def _chat_ollama(self, messages: list[dict], **kwargs) -> str:
         model = self.model if self.model.startswith("ollama/") else f"ollama/{self.model}"
-        return self._call(model=model, messages=messages, **kwargs)
+        call_kwargs = dict(kwargs)
+        api_base = self._provider_api_base("ollama")
+        if api_base:
+            call_kwargs.setdefault("api_base", api_base)
+        return self._call(model=model, messages=messages, **call_kwargs)
 
     def _chat_huggingface(self, messages: list[dict], **kwargs) -> str:
         api_key = os.environ.get("HF_API_KEY")
@@ -264,7 +302,11 @@ class AIAdapter:
             self.model if self.model.startswith("huggingface/")
             else f"huggingface/{self.model}"
         )
-        return self._call(model=model, messages=messages, api_key=api_key, **kwargs)
+        call_kwargs = dict(kwargs)
+        api_base = self._provider_api_base("huggingface")
+        if api_base:
+            call_kwargs.setdefault("api_base", api_base)
+        return self._call(model=model, messages=messages, api_key=api_key, **call_kwargs)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -284,7 +326,33 @@ class AIAdapter:
         self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     @staticmethod
+    def _provider_api_base(provider: str) -> str | None:
+        env_key = _PROVIDER_API_BASE_ENV_KEYS.get(provider)
+        if not env_key:
+            return None
+        value = (os.environ.get(env_key) or "").strip()
+        return value or None
+
+    @staticmethod
     def _default_model(provider: str) -> str:
+        env_key = _PROVIDER_MODEL_ENV_KEYS.get(provider)
+        if env_key:
+            env_model = (os.environ.get(env_key) or "").strip()
+            if env_model:
+                return env_model
+
+        default_provider = (
+            (os.environ.get("AETHEERAI_DEFAULT_PROVIDER") or "").strip().lower()
+            or (os.environ.get("AI_PROVIDER") or "").strip().lower()
+        )
+        if provider == default_provider:
+            shared_model = (
+                (os.environ.get("AETHEERAI_DEFAULT_MODEL") or "").strip()
+                or (os.environ.get("AI_MODEL") or "").strip()
+            )
+            if shared_model:
+                return shared_model
+
         defaults = {
             "github": "gpt-4.1",              # best free-tier model on GitHub Models REST API
             "openai": "gpt-4o",

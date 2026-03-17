@@ -83,11 +83,24 @@ class _SQLiteLogHandler(logging.Handler):
                 db.close()
 
 
+def _resolve_ai_runtime() -> tuple[str, str]:
+    provider = (
+        (os.getenv("AETHEERAI_DEFAULT_PROVIDER") or "").strip().lower()
+        or (os.getenv("AI_PROVIDER") or "").strip().lower()
+        or "openai"
+    )
+    model = (
+        (os.getenv("AETHEERAI_DEFAULT_MODEL") or "").strip()
+        or (os.getenv("AI_MODEL") or "").strip()
+        or "gpt-4o"
+    )
+    return provider, model
+
+
 def _get_kernel() -> AetheerAiKernel:
     global _kernel
     if _kernel is None:
-        provider = os.getenv("AI_PROVIDER", "openai")
-        model = os.getenv("AI_MODEL", "gpt-4o")
+        provider, model = _resolve_ai_runtime()
         _kernel = AetheerAiKernel(ai_provider=provider, model=model)
         logger.info("Kernel booted (provider=%s model=%s)", provider, model)
     return _kernel
@@ -854,12 +867,13 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
          description="Lightweight liveness probe. Always returns `200 OK` with the active "
                      "provider and model. **No API key required.**")
 def health_check():
+    provider, model = _resolve_ai_runtime()
     return APIResponse(
         data={
             "status": "ok",
             "version": "2.0.0",
-            "provider": os.getenv("AI_PROVIDER", "openai"),
-            "model": os.getenv("AI_MODEL", "gpt-4o"),
+            "provider": provider,
+            "model": model,
             "offline_local_mode_default": os.getenv("AETHEER_OFFLINE_LOCAL_MODE", "false").strip().lower()
             in {"1", "true", "yes", "on"},
             "fast_mode_collaboration_default": os.getenv("AETHEER_FAST_MODE_COLLABORATION", "false")
@@ -878,14 +892,15 @@ def health_check():
                      "Use this as a rich dashboard data source.")
 def system_status():
     kernel = _get_kernel()
+    provider, model = _resolve_ai_runtime()
     with _projects_lock:
         projects = list(_projects.values())
 
     data = {
         "status": "ok",
         "uptime_seconds": round(time.time() - _boot_time, 3),
-        "provider": os.getenv("AI_PROVIDER", "openai"),
-        "model": os.getenv("AI_MODEL", "gpt-4o"),
+        "provider": provider,
+        "model": model,
         "offline_local_mode_default": os.getenv("AETHEER_OFFLINE_LOCAL_MODE", "false").strip().lower()
         in {"1", "true", "yes", "on"},
         "fast_mode_collaboration_default": os.getenv("AETHEER_FAST_MODE_COLLABORATION", "false")
@@ -1387,6 +1402,7 @@ class SaveStateRequest(BaseModel):
           description="Serialise the current agent roster and global memory to a JSON file on disk.")
 def save_state(req: SaveStateRequest):
     kernel = _get_kernel()
+    provider, model = _resolve_ai_runtime()
     _SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
     safe_name = "".join(c for c in req.name if c.isalnum() or c in "-_")[:50] or "snapshot"
@@ -1404,8 +1420,8 @@ def save_state(req: SaveStateRequest):
             "name": safe_name,
             "agents": agents,
             "memory": memory,
-            "provider": os.getenv("AI_PROVIDER", "openai"),
-            "model": os.getenv("AI_MODEL", "gpt-4o"),
+            "provider": provider,
+            "model": model,
         }
         filepath.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
         return APIResponse(
