@@ -1833,7 +1833,8 @@ async def create_task(req: TaskRequest, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-if __name__ == "__main__":
+def start_server() -> None:
+    """Canonical FastAPI startup entrypoint used by main.py."""
     import uvicorn
 
     uvicorn.run(
@@ -1843,3 +1844,7 @@ if __name__ == "__main__":
         reload=os.getenv("AETHER_RELOAD", "false").lower() == "true",
         log_level=os.getenv("LOG_LEVEL", "info").lower(),
     )
+
+
+if __name__ == "__main__":
+    start_server()

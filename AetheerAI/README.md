@@ -27,6 +27,27 @@ It manages AI agents the way an OS manages processes — with scheduling, securi
 > **AetheerAI is Proactive** — it builds systems that work *for* you.  
 > It is the difference between a tool you hold in your hand and an engine that runs in the background.
 
+## Purpose (Clear and Practical)
+
+AetheerAI is built to run autonomous business and engineering workflows from one goal.
+
+Primary output:
+- You provide one goal (example: build a feature, run weekly analytics, generate a market brief).
+- AetheerAI plans tasks, assigns specialist agents, executes with guardrails, and returns deliverables.
+
+Primary use-cases:
+- Product delivery automation: plan and generate feature code, docs, and deployment artifacts.
+- Repeated operations: scheduled multi-step pipelines for research, reporting, and notifications.
+- Governed AI execution: approval gates, permission levels, and audit logs for risky actions.
+
+## Quick Start
+
+Run one command:
+
+python main.py
+
+This starts the FastAPI server at http://localhost:8000 and docs at http://localhost:8000/docs.
+
 ---
 
 ## Table of Contents
@@ -383,8 +404,8 @@ Then open `.env` in any text editor and fill in your credentials (see [Configura
 **Step 6 — Verify the install**
 
 ```bash
-python main.py --version
-# Expected: AetheerAI v2.0  Python 3.x.x
+python main.py
+# Expected: FastAPI server starts on http://localhost:8000
 ```
 
 ---
@@ -443,51 +464,18 @@ AETHER_HEADLESS=false        # true = auto-reject all guarded tool calls (for CI
 
 ## How to Run
 
-AetheerAI has four ways to run — pick the one that fits your workflow:
+Use the canonical entrypoint:
 
-### 1. Streamlit GUI Dashboard *(beginner-friendly)*
-
-```bash
-python launcher.py
-# or
-streamlit run app.py
-```
-
-Opens `http://localhost:8501` in your browser. Best for exploring agents visually.
-
-### 2. CLI Interactive Mode
-
-```bash
 python main.py
 
-# Connect to a specific provider at startup:
-python main.py --provider github
-python main.py --provider openai --model gpt-4o
-```
+What this does:
+- Starts the API server.
+- Uses environment settings from .env.
+- Opens all endpoints through http://localhost:8000/docs.
 
-Type `help` at the `AETHEERAI>` prompt to see all available commands.
-
-### 3. FastAPI REST Server
-
-```bash
-uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
-# or
-python api/server.py
-```
-
-Opens `http://localhost:8000/docs` — interactive Swagger UI for all endpoints.
-
-### 4. Python Script (programmatic)
-
-```python
-from core.aetheerai_kernel import AetheerAiKernel
-from agents.ceo_agent import CEOAgent
-
-kernel = AetheerAiKernel(ai_provider="openai", model="gpt-4o")
-ceo = CEOAgent(kernel, max_cost_usd=5.0, max_runtime_seconds=300)
-result = ceo.run("Build a landing page for my SaaS product")
-print(result.final_summary)
-```
+Advanced alternatives (optional):
+- Streamlit dashboard: python launcher.py
+- Direct uvicorn: uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
