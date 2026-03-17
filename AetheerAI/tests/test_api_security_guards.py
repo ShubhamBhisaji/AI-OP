@@ -1,4 +1,5 @@
 import hashlib
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -68,6 +69,38 @@ class ApiKeyRBACTests(unittest.TestCase):
         self.assertTrue(server_mod._role_allows("admin", "writer"))
         self.assertTrue(server_mod._role_allows("writer", "reader"))
         self.assertFalse(server_mod._role_allows("reader", "writer"))
+
+    def test_strict_api_key_mode_defaults_on_in_production(self):
+        with patch.dict(os.environ, {"AETHEER_ENV": "production"}, clear=True):
+            self.assertTrue(server_mod._strict_api_keys_required())
+
+    def test_strict_api_key_mode_can_be_overridden(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AETHEER_ENV": "production",
+                "AETHEER_REQUIRE_API_KEYS": "0",
+            },
+            clear=True,
+        ):
+            self.assertFalse(server_mod._strict_api_keys_required())
+
+    def test_custom_openapi_keeps_existing_security_schemes(self):
+        prev_schema = server_mod.app.openapi_schema
+        try:
+            server_mod.app.openapi_schema = None
+            schema = server_mod.custom_openapi()
+        finally:
+            server_mod.app.openapi_schema = prev_schema
+
+        security_schemes = schema.get("components", {}).get("securitySchemes", {})
+        self.assertIn("ApiKeyHeader", security_schemes)
+        bearer_present = any(
+            str(item.get("scheme") or "").lower() == "bearer"
+            for item in security_schemes.values()
+            if isinstance(item, dict)
+        )
+        self.assertTrue(bearer_present)
 
 
 class PayUHardeningTests(unittest.TestCase):

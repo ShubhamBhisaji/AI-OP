@@ -23,9 +23,18 @@ sys.modules["api"] = importlib.import_module("AetheerAI.api")
 
 from AetheerAI.api.server import (  # noqa: E402
     _parse_api_keys,
+    _strict_api_keys_required,
     _required_role_for,
     _role_allows,
     app,
+    custom_openapi,
 )
 
-__all__ = ["app", "_parse_api_keys", "_required_role_for", "_role_allows"]
+__all__ = [
+    "app",
+    "custom_openapi",
+    "_strict_api_keys_required",
+    "_parse_api_keys",
+    "_required_role_for",
+    "_role_allows",
+]

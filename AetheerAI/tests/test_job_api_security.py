@@ -78,6 +78,22 @@ class JobApiSecurityTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.status_code, 429)
 
+    def test_write_burst_limit_blocks_short_spikes(self):
+        with patch.dict(
+            os.environ,
+            {
+                "JOB_API_WRITE_RATE_LIMIT_RPM": "100",
+                "JOB_API_WRITE_RATE_LIMIT_BURST": "2",
+            },
+            clear=False,
+        ):
+            job_security.enforce_job_api_rate_limit(self._user, bucket="write")
+            job_security.enforce_job_api_rate_limit(self._user, bucket="write")
+            with self.assertRaises(HTTPException) as ctx:
+                job_security.enforce_job_api_rate_limit(self._user, bucket="write")
+
+        self.assertEqual(ctx.exception.status_code, 429)
+
     def test_admin_bypasses_rate_limit(self):
         with patch.dict(os.environ, {"JOB_API_WRITE_RATE_LIMIT_RPM": "1"}, clear=False):
             for _ in range(4):

@@ -745,6 +745,15 @@ class QueueRouterTests(unittest.TestCase):
         self.assertEqual(status.status, "queued")
         self.assertEqual(status.task_type, "goal")
 
+    def test_get_queue_job_status_rejects_invalid_job_id(self):
+        with self.assertRaises(queue_router.HTTPException) as ctx:
+            queue_router.get_queue_job_status(
+                "invalid id",
+                current_user=_FakeUser(user_id=9, username="bob", is_admin=False),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+
     def test_batch_enqueue_and_event_polling(self):
         req = queue_router.QueueBatchJobRequest(
             jobs=[

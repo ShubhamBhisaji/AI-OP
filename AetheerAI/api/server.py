@@ -99,6 +99,25 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _deployment_environment() -> str:
+    return (
+        (os.getenv("AETHEER_ENV") or "").strip().lower()
+        or (os.getenv("ENVIRONMENT") or "").strip().lower()
+        or (os.getenv("PYTHON_ENV") or "").strip().lower()
+        or "development"
+    )
+
+
+def _strict_api_keys_required() -> bool:
+    if os.getenv("AETHEER_REQUIRE_API_KEYS") is not None:
+        return _env_bool("AETHEER_REQUIRE_API_KEYS", default=False)
+    return _deployment_environment() in {"prod", "production"}
+
+
+def _trust_proxy_headers() -> bool:
+    return _env_bool("AETHEER_TRUST_PROXY_HEADERS", default=False)
+
+
 _runtime = ProductionRuntime(RuntimeConfig.from_env())
 _request_slots = asyncio.Semaphore(_runtime.config.max_concurrent_requests)
 _response_cache = TTLResponseCache(max_entries=64)
@@ -704,10 +723,13 @@ def _client_rate_limit_id(request: Request) -> str:
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
         return f"key:{digest}"
 
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        ip = forwarded.split(",")[0].strip()
-    else:
+    ip = ""
+    if _trust_proxy_headers():
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            ip = forwarded.split(",")[0].strip()
+
+    if not ip:
         ip = request.client.host if request.client else "unknown"
     return f"ip:{ip}"
 
@@ -719,6 +741,10 @@ def _allow_request_under_rate_limit(client_id: str) -> tuple[bool, int]:
 async def _authorize_websocket(websocket: WebSocket, required_role: str = "reader") -> bool:
     configured = _configured_api_keys()
     if not configured:
+        if _strict_api_keys_required():
+            await websocket.accept()
+            await websocket.close(code=1011, reason="Server misconfigured: API keys required")
+            return False
         websocket.state.api_role = "admin"
         return True
 
@@ -779,6 +805,9 @@ async def security_middleware(request: Request, call_next):
         request.state.api_role = "public"
     else:
         configured = _configured_api_keys()
+        if _strict_api_keys_required() and not configured:
+            return _build_rejection(503, "Server misconfigured: AETHER_API_KEYS required in production")
+
         if configured:
             role = _resolve_api_role(request.headers.get("X-API-Key"), configured)
             if role is None:
@@ -863,14 +892,35 @@ def custom_openapi() -> dict[str, Any]:
         tags=_TAGS_METADATA,
     )
     components = schema.setdefault("components", {})
-    components["securitySchemes"] = {
-        "ApiKeyHeader": {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-API-Key",
-            "description": "Optional unless AETHER_API_KEYS is configured on the server.",
-        }
+    security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes["ApiKeyHeader"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Optional unless AETHER_API_KEYS is configured on the server.",
     }
+
+    # Protected routes are gated by middleware even if they do not declare a
+    # per-route dependency, so annotate them for generated API clients.
+    for path, path_item in (schema.get("paths") or {}).items():
+        if _is_public_path(str(path)):
+            continue
+        if not isinstance(path_item, dict):
+            continue
+
+        for method, operation in path_item.items():
+            if str(method).lower() not in {"get", "post", "put", "patch", "delete", "options", "head"}:
+                continue
+            if not isinstance(operation, dict):
+                continue
+
+            security = operation.get("security")
+            if isinstance(security, list):
+                if {"ApiKeyHeader": []} not in security:
+                    security.append({"ApiKeyHeader": []})
+            else:
+                operation["security"] = [{"ApiKeyHeader": []}]
+
     app.openapi_schema = schema
     return app.openapi_schema
 

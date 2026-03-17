@@ -6,10 +6,11 @@ import hashlib
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -30,6 +31,7 @@ router = APIRouter(tags=["Queue"])
 
 _job_store: SupabaseJobStore | None = None
 _queue_client: UpstashRedisQueue | None = None
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:_-]{7,127}$")
 
 
 def _utc_now_iso() -> str:
@@ -181,13 +183,25 @@ def _request_ip(request: Request | None) -> str | None:
     if request is None:
         return None
 
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip() or None
+    trust_proxy_headers = _env_bool(
+        "JOB_API_TRUST_PROXY_HEADERS",
+        _env_bool("AETHEER_TRUST_PROXY_HEADERS", False),
+    )
+    if trust_proxy_headers:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip() or None
 
     client = getattr(request, "client", None)
     host = getattr(client, "host", None)
     return str(host).strip() if host else None
+
+
+def _validated_job_id(job_id: str) -> str:
+    normalized = str(job_id or "").strip()
+    if not _JOB_ID_RE.fullmatch(normalized):
+        raise HTTPException(status_code=422, detail="job_id format is invalid")
+    return normalized
 
 
 def _queue_job_fingerprint(req: "QueueJobRequest", *, priority: str) -> str:
@@ -1163,7 +1177,7 @@ def create_queue_jobs_batch(
     response_model=QueueJobStatusResponse,
 )
 def get_queue_job_status(
-    job_id: str,
+    job_id: str = Path(..., min_length=8, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9:_-]{7,127}$"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     request: Request = None,
@@ -1178,22 +1192,24 @@ def get_queue_job_status(
         source_ip=source_ip,
     )
 
-    row = _get_job_store().get_job(job_id)
+    safe_job_id = _validated_job_id(job_id)
+
+    row = _get_job_store().get_job(safe_job_id)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+        raise HTTPException(status_code=404, detail=f"Job '{safe_job_id}' not found.")
 
     if not _row_visible_to_user(row, current_user):
         _audit_queue_activity(
             db,
             current_user=current_user,
             action="queue_job_status_denied",
-            detail={"job_id": job_id, "tenant_id": tenant_id},
+            detail={"job_id": safe_job_id, "tenant_id": tenant_id},
             source_ip=source_ip,
         )
-        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+        raise HTTPException(status_code=404, detail=f"Job '{safe_job_id}' not found.")
 
     response_payload = QueueJobStatusResponse(
-        job_id=str(row.get("id") or row.get("job_id") or job_id),
+        job_id=str(row.get("id") or row.get("job_id") or safe_job_id),
         status=str(row.get("status") or "unknown"),
         task_type=row.get("task_type"),
         task_payload=row.get("task_payload") if isinstance(row.get("task_payload"), dict) else None,
@@ -1227,7 +1243,7 @@ def get_queue_job_status(
     response_model=QueueJobEventsResponse,
 )
 def get_queue_job_events(
-    job_id: str,
+    job_id: str = Path(..., min_length=8, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9:_-]{7,127}$"),
     limit: int = 50,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1242,19 +1258,21 @@ def get_queue_job_events(
         source_ip=source_ip,
     )
 
-    row = _get_job_store().get_job(job_id)
+    safe_job_id = _validated_job_id(job_id)
+
+    row = _get_job_store().get_job(safe_job_id)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+        raise HTTPException(status_code=404, detail=f"Job '{safe_job_id}' not found.")
 
     if not _row_visible_to_user(row, current_user):
         _audit_queue_activity(
             db,
             current_user=current_user,
             action="queue_job_events_denied",
-            detail={"job_id": job_id, "tenant_id": tenant_id},
+            detail={"job_id": safe_job_id, "tenant_id": tenant_id},
             source_ip=source_ip,
         )
-        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+        raise HTTPException(status_code=404, detail=f"Job '{safe_job_id}' not found.")
 
     metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     events = metadata.get("stream_events") if isinstance(metadata.get("stream_events"), list) else []
@@ -1263,7 +1281,7 @@ def get_queue_job_events(
     safe_limit = max(1, min(int(limit), 500))
     clipped = event_rows[-safe_limit:]
     response_payload = QueueJobEventsResponse(
-        job_id=str(row.get("id") or row.get("job_id") or job_id),
+        job_id=str(row.get("id") or row.get("job_id") or safe_job_id),
         total_events=len(event_rows),
         events=clipped,
     )

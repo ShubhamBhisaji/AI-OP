@@ -15,8 +15,10 @@ from sqlalchemy.orm import Session
 from api.database import BillingPlan, Subscription, UsageEvent, User
 
 _RATE_LIMIT_WINDOW_SECONDS = 60.0
+_BURST_RATE_LIMIT_WINDOW_SECONDS = 10.0
 _RATE_LIMIT_LOCK = threading.Lock()
 _RATE_LIMIT_BUCKETS: dict[tuple[str, str, str], deque[float]] = {}
+_BURST_RATE_LIMIT_BUCKETS: dict[tuple[str, str, str], deque[float]] = {}
 
 _ABUSE_LOCK = threading.Lock()
 _ABUSE_DUPLICATE_BUCKETS: dict[tuple[str, str, str], deque[float]] = {}
@@ -74,24 +76,51 @@ def _rate_limit_for_bucket(bucket: str, *, scope: str = "user") -> int:
     return max(0, _env_int("JOB_API_READ_RATE_LIMIT_RPM", 120))
 
 
-def _enforce_rate_limit_key(*, scope: str, scope_id: str, bucket: str, rpm: int) -> None:
+def _burst_limit_for_bucket(bucket: str, *, scope: str = "user") -> int:
+    if scope == "tenant":
+        if bucket == "write":
+            return max(0, _env_int("JOB_API_TENANT_WRITE_RATE_LIMIT_BURST", 20))
+        return max(0, _env_int("JOB_API_TENANT_READ_RATE_LIMIT_BURST", 60))
+
+    if scope == "ip":
+        if bucket == "write":
+            return max(0, _env_int("JOB_API_IP_WRITE_RATE_LIMIT_BURST", 15))
+        return max(0, _env_int("JOB_API_IP_READ_RATE_LIMIT_BURST", 50))
+
+    if bucket == "write":
+        return max(0, _env_int("JOB_API_WRITE_RATE_LIMIT_BURST", 8))
+    return max(0, _env_int("JOB_API_READ_RATE_LIMIT_BURST", 24))
+
+
+def _enforce_rate_limit_key(
+    *,
+    scope: str,
+    scope_id: str,
+    bucket: str,
+    rpm: int,
+    window_seconds: float,
+    buckets: dict[tuple[str, str, str], deque[float]],
+    detail_suffix: str = "",
+) -> None:
     if rpm <= 0:
         return
 
     now = time.time()
     key = (scope, scope_id, bucket)
-    cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
+    safe_window_seconds = max(1.0, float(window_seconds))
+    cutoff = now - safe_window_seconds
 
     with _RATE_LIMIT_LOCK:
-        hits = _RATE_LIMIT_BUCKETS.setdefault(key, deque())
+        hits = buckets.setdefault(key, deque())
         while hits and hits[0] <= cutoff:
             hits.popleft()
 
         if len(hits) >= rpm:
-            retry_after = max(1, int(_RATE_LIMIT_WINDOW_SECONDS - (now - hits[0])))
+            retry_after = max(1, int(safe_window_seconds - (now - hits[0])))
+            detail_bucket = bucket if not detail_suffix else f"{bucket} {detail_suffix}"
             raise HTTPException(
                 status_code=429,
-                detail=f"Job API {bucket} rate limit exceeded",
+                detail=f"Job API {detail_bucket} rate limit exceeded",
                 headers={"Retry-After": str(retry_after)},
             )
 
@@ -172,32 +201,36 @@ def enforce_job_api_rate_limit(
     if current_user.is_admin:
         return
 
+    def _enforce_scope(scope: str, scope_id: str) -> None:
+        _enforce_rate_limit_key(
+            scope=scope,
+            scope_id=scope_id,
+            bucket=normalized_bucket,
+            rpm=_rate_limit_for_bucket(normalized_bucket, scope=scope),
+            window_seconds=_RATE_LIMIT_WINDOW_SECONDS,
+            buckets=_RATE_LIMIT_BUCKETS,
+        )
+        _enforce_rate_limit_key(
+            scope=scope,
+            scope_id=scope_id,
+            bucket=normalized_bucket,
+            rpm=_burst_limit_for_bucket(normalized_bucket, scope=scope),
+            window_seconds=_BURST_RATE_LIMIT_WINDOW_SECONDS,
+            buckets=_BURST_RATE_LIMIT_BUCKETS,
+            detail_suffix="burst",
+        )
+
     normalized_bucket = _normalize_rate_limit_bucket(bucket)
     user_scope_id = str(int(current_user.id))
-    _enforce_rate_limit_key(
-        scope="user",
-        scope_id=user_scope_id,
-        bucket=normalized_bucket,
-        rpm=_rate_limit_for_bucket(normalized_bucket, scope="user"),
-    )
+    _enforce_scope("user", user_scope_id)
 
     tenant_scope_id = _normalized_scope_id(tenant_id)
     if tenant_scope_id:
-        _enforce_rate_limit_key(
-            scope="tenant",
-            scope_id=tenant_scope_id,
-            bucket=normalized_bucket,
-            rpm=_rate_limit_for_bucket(normalized_bucket, scope="tenant"),
-        )
+        _enforce_scope("tenant", tenant_scope_id)
 
     ip_scope_id = _normalized_scope_id(source_ip)
     if ip_scope_id:
-        _enforce_rate_limit_key(
-            scope="ip",
-            scope_id=ip_scope_id,
-            bucket=normalized_bucket,
-            rpm=_rate_limit_for_bucket(normalized_bucket, scope="ip"),
-        )
+        _enforce_scope("ip", ip_scope_id)
 
 
 def enforce_job_submission_abuse_controls(
@@ -298,5 +331,6 @@ def record_job_create_usage(
 def _reset_job_rate_limit_state_for_tests() -> None:
     with _RATE_LIMIT_LOCK:
         _RATE_LIMIT_BUCKETS.clear()
+        _BURST_RATE_LIMIT_BUCKETS.clear()
     with _ABUSE_LOCK:
         _ABUSE_DUPLICATE_BUCKETS.clear()

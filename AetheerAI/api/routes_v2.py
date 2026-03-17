@@ -19,10 +19,10 @@ import hashlib
 import json
 import logging
 import os
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
-
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -39,11 +39,30 @@ logger = logging.getLogger("aetheer.api.v2")
 
 router = APIRouter(tags=["v2"])
 
+_VALID_JOB_STATUSES = {"pending", "running", "completed", "failed", "cancelled"}
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:_-]{7,127}$")
+
 # ── Lazy kernel accessor (avoids import-time circular dependency) ─────────────
 
 def _kernel():
     from api.server import _get_kernel
     return _get_kernel()
+
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    raw = (os.getenv(name) or "").strip()
+    try:
+        value = int(raw) if raw else int(default)
+    except ValueError:
+        value = int(default)
+    return max(minimum, value)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _tenant_id_for_user(current_user: User) -> str:
@@ -55,9 +74,14 @@ def _request_ip(request: Request | None) -> str | None:
     if request is None:
         return None
 
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip() or None
+    trust_proxy_headers = _env_bool(
+        "JOB_API_TRUST_PROXY_HEADERS",
+        _env_bool("AETHEER_TRUST_PROXY_HEADERS", False),
+    )
+    if trust_proxy_headers:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip() or None
 
     client = getattr(request, "client", None)
     host = getattr(client, "host", None)
@@ -148,6 +172,65 @@ def _job_stats_for_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _normalize_job_status_filter(status: str | None) -> str | None:
+    normalized = str(status or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized not in _VALID_JOB_STATUSES:
+        allowed = ", ".join(sorted(_VALID_JOB_STATUSES))
+        raise HTTPException(status_code=422, detail=f"Invalid status filter '{status}'. Allowed: {allowed}")
+    return normalized
+
+
+def _validated_job_lookup_id(job_id: str) -> str:
+    normalized = str(job_id or "").strip()
+    if not _JOB_ID_RE.fullmatch(normalized):
+        raise HTTPException(status_code=422, detail="job_id format is invalid")
+    return normalized
+
+
+def _allow_admin_prefix_lookup() -> bool:
+    return _env_bool("JOB_API_ALLOW_ADMIN_PREFIX_LOOKUP", False)
+
+
+def _lookup_job_for_user(
+    *,
+    kernel: Any,
+    requested_job_id: str,
+    current_user: User,
+) -> dict[str, Any] | None:
+    direct = None
+    status_fn = getattr(kernel, "job_status", None)
+    if callable(status_fn):
+        try:
+            direct = status_fn(requested_job_id)
+        except Exception:
+            direct = None
+
+    if isinstance(direct, dict) and _job_is_visible(direct, current_user):
+        return direct
+
+    if not (current_user.is_admin and _allow_admin_prefix_lookup()):
+        return None
+
+    min_prefix_len = _env_int("JOB_API_ADMIN_PREFIX_MIN_LENGTH", 12, minimum=4)
+    if len(requested_job_id) < min_prefix_len:
+        return None
+
+    scan_limit = max(100, min(5000, _env_int("JOB_API_JOB_LOOKUP_SCAN_LIMIT", 2000, minimum=1)))
+    rows = kernel.list_jobs(limit=scan_limit)
+    matches = [
+        row
+        for row in rows
+        if str(row.get("job_id") or "").startswith(requested_job_id) and _job_is_visible(row, current_user)
+    ]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise HTTPException(status_code=409, detail="Job prefix is ambiguous; provide the full job_id")
+    return matches[0]
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ── Planning Engine ────────────────────────────────────────────────────────────
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -175,6 +258,7 @@ def decompose_plan(req: PlanRequest):
     except Exception as exc:
         logger.error("plan decompose failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
     return {"success": True, "data": plan}
 
 
@@ -232,11 +316,16 @@ def resume_plan(plan_id: str, req: PlanExecuteRequest | None = None):
 
 class JobRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
-    agent_name: str = Field(..., min_length=1, max_length=100)
-    task: str = Field(..., min_length=1)
+    agent_name: str = Field(..., min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
+    task: str = Field(..., min_length=1, max_length=20_000)
     priority: int = Field(default=50, ge=0, le=100)
-    run_at_iso: str | None = Field(default=None, description="ISO-8601 UTC datetime, e.g. 2026-03-18T09:00:00Z")
-    interval_sec: float = Field(default=0.0, ge=0.0)
+    run_at_iso: str | None = Field(
+        default=None,
+        min_length=20,
+        max_length=64,
+        description="ISO-8601 UTC datetime, e.g. 2026-03-18T09:00:00Z",
+    )
+    interval_sec: float = Field(default=0.0, ge=0.0, le=2_592_000.0)
     max_retries: int = Field(default=1, ge=0, le=10)
 
 
@@ -245,7 +334,7 @@ def schedule_job(
     req: JobRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    request: Request | None = None,
+    request: Request = None,
 ):
     """
     Enqueue an agent task immediately, at a specific time, or on a recurring interval.
@@ -278,6 +367,30 @@ def schedule_job(
             run_at = datetime.fromisoformat(req.run_at_iso.replace("Z", "+00:00"))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid run_at_iso format: '{req.run_at_iso}'")
+
+        if run_at.tzinfo is None:
+            run_at = run_at.replace(tzinfo=timezone.utc)
+        run_at = run_at.astimezone(timezone.utc)
+
+        now_utc = datetime.now(timezone.utc)
+        max_schedule_ahead_seconds = _env_int("JOB_API_MAX_SCHEDULE_AHEAD_SECONDS", 15_552_000, minimum=60)
+        if run_at < now_utc - timedelta(seconds=5):
+            raise HTTPException(status_code=422, detail="run_at_iso must be in the future")
+        if run_at > now_utc + timedelta(seconds=max_schedule_ahead_seconds):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "run_at_iso is too far in the future "
+                    f"(max {max_schedule_ahead_seconds} seconds ahead)"
+                ),
+            )
+
+    max_interval_seconds = _env_int("JOB_API_MAX_INTERVAL_SECONDS", 2_592_000, minimum=0)
+    if max_interval_seconds > 0 and req.interval_sec > float(max_interval_seconds):
+        raise HTTPException(
+            status_code=422,
+            detail=f"interval_sec exceeds max allowed value of {max_interval_seconds}",
+        )
 
     try:
         job_id = k.schedule_job(
@@ -336,11 +449,11 @@ def schedule_job(
 
 @router.get("/api/jobs", summary="List all jobs")
 def list_jobs(
-    status: str | None = None,
-    limit: int = 100,
+    status: str | None = Query(default=None, min_length=1, max_length=32),
+    limit: int = Query(default=100, ge=1, le=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    request: Request | None = None,
+    request: Request = None,
 ):
     """Return all jobs, optionally filtered by status (pending/running/completed/failed/cancelled)."""
     tenant_id = _tenant_id_for_user(current_user)
@@ -353,8 +466,9 @@ def list_jobs(
     )
 
     k = _kernel()
-    safe_limit = max(1, min(int(limit), 500))
-    jobs = k.list_jobs(status=status, limit=safe_limit)
+    normalized_status = _normalize_job_status_filter(status)
+    safe_limit = int(limit)
+    jobs = k.list_jobs(status=normalized_status, limit=safe_limit)
     visible_jobs = jobs if current_user.is_admin else [row for row in jobs if _job_is_visible(row, current_user)]
     stats = k.scheduler_stats() if current_user.is_admin else _job_stats_for_rows(visible_jobs)
     _audit_job_activity(
@@ -362,7 +476,7 @@ def list_jobs(
         current_user=current_user,
         action="scheduler_jobs_list",
         detail={
-            "status": status,
+            "status": normalized_status,
             "requested_limit": int(limit),
             "effective_limit": safe_limit,
             "returned": len(visible_jobs),
@@ -375,10 +489,10 @@ def list_jobs(
 
 @router.get("/api/jobs/{job_id}", summary="Get a job by ID")
 def get_job(
-    job_id: str,
+    job_id: str = Path(..., min_length=8, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9:_-]{7,127}$"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    request: Request | None = None,
+    request: Request = None,
 ):
     tenant_id = _tenant_id_for_user(current_user)
     source_ip = _request_ip(request)
@@ -390,40 +504,38 @@ def get_job(
     )
 
     k = _kernel()
-    scan_limit = max(100, min(5000, int(os.getenv("JOB_API_JOB_LOOKUP_SCAN_LIMIT", "2000"))))
-    # Allow partial ID prefix match
-    all_jobs = k.list_jobs(limit=scan_limit)
-    matches = [
-        j
-        for j in all_jobs
-        if (j["job_id"] == job_id or j["job_id"].startswith(job_id)) and _job_is_visible(j, current_user)
-    ]
-    if not matches:
+    requested_job_id = _validated_job_lookup_id(job_id)
+    row = _lookup_job_for_user(
+        kernel=k,
+        requested_job_id=requested_job_id,
+        current_user=current_user,
+    )
+    if row is None:
         _audit_job_activity(
             db,
             current_user=current_user,
             action="scheduler_job_get_denied",
-            detail={"job_id": job_id, "tenant_id": tenant_id},
+            detail={"job_id": requested_job_id, "tenant_id": tenant_id},
             source_ip=source_ip,
         )
-        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+        raise HTTPException(status_code=404, detail=f"Job '{requested_job_id}' not found.")
 
     _audit_job_activity(
         db,
         current_user=current_user,
         action="scheduler_job_get",
-        detail={"job_id": matches[0].get("job_id"), "tenant_id": tenant_id},
+        detail={"job_id": row.get("job_id"), "tenant_id": tenant_id},
         source_ip=source_ip,
     )
-    return {"success": True, "data": matches[0]}
+    return {"success": True, "data": row}
 
 
 @router.delete("/api/jobs/{job_id}", summary="Cancel a pending job")
 def cancel_job(
-    job_id: str,
+    job_id: str = Path(..., min_length=8, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9:_-]{7,127}$"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    request: Request | None = None,
+    request: Request = None,
 ):
     tenant_id = _tenant_id_for_user(current_user)
     source_ip = _request_ip(request)
@@ -435,24 +547,26 @@ def cancel_job(
     )
 
     k = _kernel()
-    scan_limit = max(100, min(5000, int(os.getenv("JOB_API_JOB_LOOKUP_SCAN_LIMIT", "2000"))))
-    # Allow partial match
-    all_jobs = k.list_jobs(limit=scan_limit)
-    matches = [
-        j
-        for j in all_jobs
-        if (j["job_id"] == job_id or j["job_id"].startswith(job_id)) and _job_is_visible(j, current_user)
-    ]
-    if not matches:
+    requested_job_id = _validated_job_lookup_id(job_id)
+    row = _lookup_job_for_user(
+        kernel=k,
+        requested_job_id=requested_job_id,
+        current_user=current_user,
+    )
+    if row is None:
         _audit_job_activity(
             db,
             current_user=current_user,
             action="scheduler_job_cancel_denied",
-            detail={"job_id": job_id, "tenant_id": tenant_id},
+            detail={"job_id": requested_job_id, "tenant_id": tenant_id},
             source_ip=source_ip,
         )
-        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
-    full_id = matches[0]["job_id"]
+        raise HTTPException(status_code=404, detail=f"Job '{requested_job_id}' not found.")
+
+    full_id = str(row.get("job_id") or "")
+    if not full_id:
+        raise HTTPException(status_code=404, detail=f"Job '{requested_job_id}' not found.")
+
     ok = k.cancel_job(full_id)
     if not ok:
         _audit_job_activity(
@@ -478,7 +592,7 @@ def cancel_job(
 def job_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    request: Request | None = None,
+    request: Request = None,
 ):
     tenant_id = _tenant_id_for_user(current_user)
     source_ip = _request_ip(request)
