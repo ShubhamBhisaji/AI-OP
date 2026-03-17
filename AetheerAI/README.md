@@ -48,6 +48,21 @@ python main.py
 
 This starts the FastAPI server at http://localhost:8000 and docs at http://localhost:8000/docs.
 
+Frontend UI is available at:
+- http://localhost:8000/
+
+Core API endpoints exposed immediately:
+- POST /predict
+- GET /status
+
+Quick API checks:
+
+curl -X GET http://localhost:8000/status
+
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"hello"}'
+
 ---
 
 ## Table of Contents

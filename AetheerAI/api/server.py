@@ -48,6 +48,7 @@ _projects_lock = threading.Lock()
 _kernel: AetheerAiKernel | None = None
 _ceo: CEOAgent | None = None
 _ml_engine = None
+_local_predictor = None
 _sqlite_log_handler: logging.Handler | None = None
 
 
@@ -113,6 +114,15 @@ def _get_ml_engine():
         from core.ml_engine import MLEngine
         _ml_engine = MLEngine.load_or_create()
     return _ml_engine
+
+
+def _get_local_predictor():
+    """Lazy-load a local fallback model that always supports predict()."""
+    global _local_predictor
+    if _local_predictor is None:
+        from core.local_predictor import LocalPredictor
+        _local_predictor = LocalPredictor()
+    return _local_predictor
 
 
 def _run_nlp(action: str, text: str, labels=None, question: str = "", max_length: int = 150, target_lang: str = "en") -> str:
@@ -1577,6 +1587,9 @@ def predict(req: PredictRequest, background_tasks: BackgroundTasks):
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=f"Provider/model switch failed: {exc}")
 
+    local_model = _get_local_predictor()
+    local_result = local_model.predict(req.prompt)
+
     try:
         messages: list[dict[str, str]] = []
         if req.system_prompt:
@@ -1595,13 +1608,26 @@ def predict(req: PredictRequest, background_tasks: BackgroundTasks):
         return APIResponse(
             data={
                 "reply": reply,
+                "local_prediction": local_result,
                 "provider": kernel.ai_adapter.provider,
                 "model": kernel.ai_adapter.model,
                 "prompt_length": len(req.prompt),
             }
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        # Keep /predict always usable, even without external AI credentials.
+        logger.warning("/predict cloud inference failed; returning local fallback: %s", exc)
+        return APIResponse(
+            data={
+                "reply": local_result,
+                "local_prediction": local_result,
+                "provider": "local",
+                "model": local_model.version,
+                "prompt_length": len(req.prompt),
+                "fallback": True,
+            },
+            message="Cloud model unavailable; returned local predictor result.",
+        )
     finally:
         if restore is not None:
             try:
@@ -1736,6 +1762,7 @@ def status():
                 "uptime_seconds": round(time.time() - _boot_time, 3),
                 "provider": kernel.ai_adapter.provider,
                 "model": kernel.ai_adapter.model,
+                "local_predictor": _get_local_predictor().version,
                 "projects": {
                     "total": len(projects),
                     "running": len(running),
