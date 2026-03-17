@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import streamlit as st
 
 from core.env_loader import load_env, check_env_file
+from utils.log_config import setup_logging as _setup_logging
+_setup_logging()  # initialise structured logging before any module imports
+
 from core.aetheerai_kernel import AetheerAiKernel
 from core.workflow_engine import WorkflowFeedback, HITLAction
 from core.trace_bus import TraceBus

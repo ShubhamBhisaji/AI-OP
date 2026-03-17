@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+# ── Project metadata ───────────────────────────────────────────────────────
+[project]
+name = "aetheerai"
+version = "1.0.0"
+description = "AetheerAI — multi-agent AI operating system"
+readme = "AetheerAI/README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Runtime dependencies are declared in requirements.txt; keep them in sync.
+dependencies = []
+
+[project.scripts]
+# pip install -e .  →  these commands become available on the PATH
+aetheerai        = "app.cli:main"       # CLI entry point (delegates to AetheerAI/main.py)
+aetheerai-server = "app.server:main"    # REST API server
+
+# ── Package discovery ──────────────────────────────────────────────────────
+[tool.setuptools.packages.find]
+where   = ["src"]          # src-layout: packages live under src/
+include = ["aetheerai*"]
+
+[tool.setuptools.package-dir]
+# Also make the legacy AetheerAI/ importable as 'AetheerAI' when doing
+# an editable install from the repo root.
+"AetheerAI" = "AetheerAI"
+
+# ── pytest ─────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths    = ["AetheerAI/tests"]
+asyncio_mode = "auto"
+log_cli      = true
+log_cli_level = "INFO"
+
+# ── ruff (linter) ──────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "AetheerAI"]
+exclude = ["__pycache__", ".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]    # line-too-long handled by formatter
+
+# ── mypy ───────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version      = "3.10"
+ignore_missing_imports = true
+strict              = false
+files               = ["src", "AetheerAI"]
+
+# ── coverage ───────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source   = ["AetheerAI", "src/aetheerai"]
+omit     = ["*/__pycache__/*", "*/tests/*", ".venv/*"]
+
+[tool.coverage.report]
+show_missing = true

@@ -43,7 +43,10 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from core.model_optimizer import ModelOptimizer  # avoid circular at runtime
 
 logger = logging.getLogger(__name__)
 
@@ -167,11 +170,13 @@ class ModelRouter:
         ai_adapter,
         prefer_local: bool = True,
         custom_routing_table: dict[str, list[tuple[str, str]]] | None = None,
+        optimizer: "ModelOptimizer | None" = None,
     ):
         self.ai_adapter = ai_adapter
         self.prefer_local = prefer_local
         self._routing_table = custom_routing_table or _ROUTING_TABLE
         self._history: list[RoutingDecision] = []
+        self.optimizer = optimizer  # optional ModelOptimizer for perf tracking
 
     # ──────────────────────────────────────────────────────────────────
     # Public API
@@ -261,6 +266,48 @@ class ModelRouter:
             "by_complexity": dict(counts),
             "by_model": dict(models),
         }
+
+    def record_outcome(
+        self,
+        decision: RoutingDecision,
+        latency_ms: float,
+        success: bool,
+    ) -> None:
+        """
+        Feed the real-world outcome of a routed call back into the optimizer.
+
+        Call this after every AI invocation to keep performance data current.
+
+            decision = router.route_and_apply(task)
+            # ... run the model call ...
+            router.record_outcome(decision, latency_ms=312.0, success=True)
+
+        No-ops gracefully when no optimizer is attached.
+        """
+        if self.optimizer is None:
+            return
+        self.optimizer.record(
+            provider=decision.provider,
+            model=decision.model,
+            latency_ms=latency_ms,
+            success=success,
+        )
+
+    def tune_routing_table(self) -> None:
+        """
+        Re-order the routing table using accumulated optimizer performance data.
+
+        Surfaces faster, more reliable models toward the top of each tier.
+        No-ops gracefully when no optimizer is attached or when insufficient
+        data has been collected (< MIN_CALLS_TO_TUNE per model).
+
+            router.tune_routing_table()   # call periodically or on startup
+        """
+        if self.optimizer is None:
+            logger.debug("ModelRouter.tune_routing_table: no optimizer attached — skipping.")
+            return
+        self._routing_table = self.optimizer.tune(self._routing_table)
+        logger.info("ModelRouter: routing table re-ordered by performance data.")
 
     # ──────────────────────────────────────────────────────────────────
     # Scoring methods

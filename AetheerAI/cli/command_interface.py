@@ -12,6 +12,9 @@ import sys
 import threading
 import time
 import logging
+import json
+
+from use_cases import registry as use_case_registry
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +131,9 @@ Commands:
                                    right agent(s) and returns combined output.
   list_ai_systems                  List all saved AI Systems
   ai_system_info <system>          Show full details of an AI System
+    usecase list                     List packaged real-world use-case workflows
+    usecase run <name> [json]        Run a use case with optional JSON inputs
+                                                                     Example: usecase run content_factory {"brand":"TaskFlow","product":"AI PM tool","audience":"SaaS teams"}
   ────────────────────────────────────────────────────────────────────
 
   ─── Ollama (Local AI) ──────────────────────────────────────────────
@@ -398,6 +404,8 @@ class CommandInterface:
             "ai_system_task":   self._cmd_ai_system_task,
             "list_ai_systems":  self._cmd_list_ai_systems,
             "ai_system_info":   self._cmd_ai_system_info,
+            # ── Use cases ─────────────────────────────────────────
+            "usecase":          self._cmd_usecase,
             # ── Ollama management ─────────────────────────────────
             "ollama_install":   self._cmd_ollama_install,
             "ollama_update":    self._cmd_ollama_update,
@@ -711,6 +719,85 @@ class CommandInterface:
     # ------------------------------------------------------------------
     # Ollama management commands
     # ------------------------------------------------------------------
+
+    def _cmd_usecase(self, args: list[str]) -> None:
+        """Run pre-packaged real-world workflows without manual agent setup."""
+        if not args:
+            print("Usage: usecase <list|run> [name] [json_inputs]")
+            print("  Example:")
+            print("    usecase list")
+            print("    usecase run content_factory {\"brand\":\"TaskFlow\",\"product\":\"AI PM tool\",\"audience\":\"SaaS teams\"}")
+            return
+
+        sub = args[0].lower()
+        if sub == "list":
+            packs = use_case_registry.list()
+            if not packs:
+                print("  No use cases registered.")
+                return
+            print("\n  Packaged Use Cases")
+            print(f"  {'─' * 70}")
+            for p in packs:
+                print(f"  • {p['name']} — {p['description']}")
+                print("    Inputs:")
+                for field in p.get("inputs", []):
+                    req = "required" if field.get("required") else "optional"
+                    print(f"      - {field.get('name')} ({req}): {field.get('description')}")
+            print()
+            return
+
+        if sub != "run":
+            print("Usage: usecase <list|run> [name] [json_inputs]")
+            return
+
+        if len(args) < 2:
+            print("Usage: usecase run <name> [json_inputs]")
+            return
+
+        name = args[1]
+        payload_text = " ".join(args[2:]).strip()
+        inputs: dict = {}
+        if payload_text:
+            try:
+                loaded = json.loads(payload_text)
+                if not isinstance(loaded, dict):
+                    print("  JSON inputs must be an object, e.g. {\"path\":\"src\"}")
+                    return
+                inputs = loaded
+            except json.JSONDecodeError as exc:
+                print(f"  Invalid JSON: {exc}")
+                return
+        else:
+            # Lightweight interactive fallback for common packs
+            if name == "content_factory":
+                inputs = {
+                    "brand": input("  brand: ").strip(),
+                    "product": input("  product: ").strip(),
+                    "audience": input("  audience: ").strip(),
+                }
+            elif name == "code_reviewer":
+                inputs = {"path": input("  path: ").strip()}
+            elif name == "market_intel":
+                inputs = {
+                    "topic": input("  topic: ").strip(),
+                    "competitors": input("  competitors (comma-separated): ").strip(),
+                    "geography": input("  geography [Global]: ").strip() or "Global",
+                }
+
+        with Spinner(f"Running usecase {name}"):
+            result = use_case_registry.run(name, inputs, self.kernel)
+
+        if not result.success:
+            print(f"\n  Use case failed: {result.error}\n")
+            return
+
+        print(f"\n  {result.summary}")
+        if result.output_files:
+            print(f"  {'─' * 54}")
+            print("  Output files:")
+            for label, path in result.output_files:
+                print(f"    - {label}: {path}")
+        print()
 
     @staticmethod
     def _ollama_installed() -> bool:

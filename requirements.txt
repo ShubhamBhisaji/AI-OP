@@ -1,0 +1,23 @@
+# AI-OP — root requirements.txt
+#
+# Install ALL dependencies with:
+#   pip install -r requirements.txt
+#
+# This file extends AetheerAI/requirements.txt and adds any repo-level
+# development / tooling dependencies.
+
+# ── Delegate to the AetheerAI package requirements ───────────────────────
+-r AetheerAI/requirements.txt
+
+# ── Development / CI tooling ─────────────────────────────────────────────
+pytest>=8.0.0             # test runner
+pytest-asyncio>=0.23.0   # async test support
+coverage>=7.0.0           # code coverage
+
+# ── Code quality ──────────────────────────────────────────────────────────
+mypy>=1.9.0               # static type checking
+ruff>=0.4.0               # fast linter (replaces flake8 / isort)
+
+# ── Documentation ─────────────────────────────────────────────────────────
+# mkdocs>=1.6.0
+# mkdocs-material>=9.5.0

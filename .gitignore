@@ -32,3 +32,16 @@ logs/
 *.log
 AetheerAI/memory/chroma_store/
 *.sqlite3
+
+# data/ — processed and exported artefacts (too large / ephemeral)
+data/processed/
+data/exports/
+
+# models/ — large binary files (use Git LFS or external registry)
+models/trained/
+models/checkpoints/
+
+# src-layout build artefacts
+src/*.egg-info/
+dist/
+build/

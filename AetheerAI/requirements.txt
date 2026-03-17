@@ -42,12 +42,21 @@ pandas>=2.0.0                  # csv_tool, analytics_tool
 numpy>=1.26.0                  # analytics_tool
 pillow>=10.0.0                 # media_tool, image handling
 
+# --- Real ML / NLP stack ---
+scikit-learn>=1.5.0            # core/ml_engine.py (train/predict pipelines + .pkl models)
+joblib>=1.4.0                  # sklearn model persistence backend
+transformers>=4.44.0           # tools/nlp_tool.py (sentiment, NER, summarize, QA, classify)
+sentence-transformers>=3.0.0   # semantic embeddings for NLP 'embed' action
+torch>=2.4.0                   # default backend for transformers/sentence-transformers
+
 # --- Code quality tools ---
 pylint>=3.0.0                  # linter_tool
 black>=24.0.0                  # code_formatter
 
 # --- Document tools ---
-pypdf2>=3.0.0                  # pdf_tool
+reportlab>=4.0.0               # pdf_tool (primary PDF generation engine)
+fpdf2>=2.7.0                   # pdf_tool (fallback PDF generation engine)
+# pypdf2>=3.0.0                # NOT used — replaced by reportlab/fpdf2
 
 # --- Security tool ---
 cryptography>=42.0.0           # security_tool
@@ -69,7 +78,7 @@ cryptography>=42.0.0           # security_tool
 # (also run: playwright install chromium)
 
 # --- web_scraper_pro ---
-# markdownify>=0.12.0
+markdownify>=0.12.0            # web_scraper_pro (HTML → Markdown conversion)
 
 # --- speech_tool / image_gen_tool ---
 # (uses openai sdk already listed above)
@@ -112,6 +121,7 @@ cryptography>=42.0.0           # security_tool
 # --- Feature 13: Intelligent Model Router ---
 # (uses only stdlib + existing ai_adapter)
 
+<<<<<<< HEAD
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXTERNAL SERVICE INTEGRATIONS  (install for full feature set)
@@ -135,3 +145,13 @@ cryptography>=42.0.0           # security_tool
 
 # --- Vercel CLI mirroring (optional) ---
 # (no extra install required — uses Vercel REST API via requests)
+=======
+# ---
+# BUILD TOOLS  (only when packaging the app as a standalone .exe)
+# ---
+# pyinstaller>=6.6.0           # build_pyinstaller.py — creates standalone exe
+# ---
+# BUILD TOOLS  (only when packaging the app as a standalone .exe)
+# ---
+# pyinstaller>=6.6.0           # build_pyinstaller.py — creates standalone exe
+>>>>>>> 1f44c8bf313781aa050c56364d327bd5a5cb0958
