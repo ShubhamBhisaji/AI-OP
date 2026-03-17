@@ -185,6 +185,25 @@ class _FakeStore:
                 counts[status] += 1
         return counts
 
+    def list_dead_lettered_jobs(self, *, limit=100, scan_limit=1000):
+        del scan_limit
+        rows = []
+        for row in self.rows.values():
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            if bool(metadata.get("dead_lettered")):
+                rows.append(row)
+        return rows[: int(limit)]
+
+    def latency_metrics(self, *, sample_limit=500):
+        del sample_limit
+        return {
+            "sample_size": len(self.rows),
+            "avg_queue_wait_ms": 12.5,
+            "p95_queue_wait_ms": 20.0,
+            "avg_execution_ms": 45.0,
+            "p95_execution_ms": 70.0,
+        }
+
 
 class _FakeQueue:
     queue_name = "job_queue"
@@ -458,6 +477,30 @@ class QueueRouterTests(unittest.TestCase):
         self.assertEqual(row["metadata"]["owner_user_id"], 7)
         self.assertIn("max_retries", row["metadata"])
 
+    def test_create_queue_job_idempotency_deduplicates_retries(self):
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "Idempotent launch"},
+            metadata={"source": "test"},
+            idempotency_key="idem_launch_20260318",
+        )
+
+        first = queue_router.create_queue_job(
+            req,
+            current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+            db=_FakeDb(),
+        )
+        second = queue_router.create_queue_job(
+            req,
+            current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+            db=_FakeDb(),
+        )
+
+        self.assertEqual(first["data"]["job_id"], second["data"]["job_id"])
+        self.assertFalse(first["data"]["deduplicated"])
+        self.assertTrue(second["data"]["deduplicated"])
+        self.assertEqual(len(queue_router._queue_client.payloads), 1)
+
     def test_get_queue_job_status_reads_supabase_row(self):
         store = queue_router._job_store
         job_id = "job-status-1"
@@ -563,6 +606,44 @@ class QueueRouterTests(unittest.TestCase):
         self.assertGreaterEqual(metrics.queue_depth_total, 1)
         self.assertIn("queued", metrics.status_counts)
         self.assertEqual(metrics.status_counts["queued"], 1)
+        self.assertGreaterEqual(metrics.avg_queue_wait_ms, 0.0)
+        self.assertGreaterEqual(metrics.avg_execution_ms, 0.0)
+
+    def test_list_dead_letter_queue_jobs_requires_admin(self):
+        with self.assertRaises(queue_router.HTTPException) as ctx:
+            queue_router.list_dead_letter_queue_jobs(
+                current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_list_dead_letter_queue_jobs_returns_failed_rows(self):
+        store = queue_router._job_store
+        store.create_job(
+            job_id="job-dlq-1",
+            task_type="goal",
+            task_payload={"goal": "recover"},
+            metadata={
+                "owner_user_id": 7,
+                "owner_username": "alice",
+                "retry_count": 3,
+                "max_retries": 3,
+                "dead_lettered": True,
+                "dead_letter_reason": "external_timeout",
+                "dead_lettered_at": "2026-03-18T00:00:00+00:00",
+            },
+        )
+        store.rows["job-dlq-1"]["status"] = "failed"
+        store.rows["job-dlq-1"]["error"] = "Timed out"
+        store.rows["job-dlq-1"]["completed_at"] = "2026-03-18T00:00:00+00:00"
+
+        response = queue_router.list_dead_letter_queue_jobs(
+            current_user=_FakeUser(user_id=1, username="admin", is_admin=True),
+        )
+
+        self.assertEqual(response.total, 1)
+        self.assertEqual(response.jobs[0].job_id, "job-dlq-1")
+        self.assertEqual(response.jobs[0].dead_letter_reason, "external_timeout")
 
 
 if __name__ == "__main__":

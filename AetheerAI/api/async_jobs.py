@@ -38,6 +38,43 @@ def _rows_from_response(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _parse_iso_datetime(value: Any) -> datetime.datetime | None:
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+
+    ordered = sorted(float(v) for v in values)
+    if len(ordered) == 1:
+        return ordered[0]
+
+    rank = max(0.0, min(100.0, float(pct))) / 100.0 * (len(ordered) - 1)
+    lower = int(rank)
+    upper = min(lower + 1, len(ordered) - 1)
+    if lower == upper:
+        return ordered[lower]
+    weight = rank - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
 def build_queue_payload(
     job_id: str,
     task_type: str,
@@ -428,6 +465,83 @@ class SupabaseJobStore:
             counts[normalized] = len(_rows_from_response(response))
 
         return counts
+
+    def list_dead_lettered_jobs(
+        self,
+        *,
+        limit: int = 100,
+        scan_limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        max_rows = _coerce_int(limit, 100, minimum=1)
+        scan_rows = max(max_rows, _coerce_int(scan_limit, 1000, minimum=max_rows))
+
+        response = self.supabase.query_rows(
+            table=self.table_name,
+            filters={"status": "eq.failed"},
+            order="completed_at.desc",
+            limit=scan_rows,
+            use_service_role=True,
+        )
+
+        rows = _rows_from_response(response)
+        dead_lettered: list[dict[str, Any]] = []
+        for row in rows:
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            raw_dead_lettered = metadata.get("dead_lettered")
+            if isinstance(raw_dead_lettered, bool):
+                is_dead_lettered = raw_dead_lettered
+            else:
+                is_dead_lettered = str(raw_dead_lettered or "").strip().lower() in {"1", "true", "yes", "on"}
+
+            if not is_dead_lettered:
+                continue
+
+            dead_lettered.append(row)
+            if len(dead_lettered) >= max_rows:
+                break
+
+        return dead_lettered
+
+    def latency_metrics(
+        self,
+        *,
+        sample_limit: int = 500,
+    ) -> dict[str, Any]:
+        limit = _coerce_int(sample_limit, 500, minimum=10)
+        response = self.supabase.query_rows(
+            table=self.table_name,
+            select="created_at,started_at,completed_at,status,updated_at",
+            filters={"status": "in.(running,completed,failed)"},
+            order="updated_at.desc",
+            limit=limit,
+            use_service_role=True,
+        )
+        rows = _rows_from_response(response)
+
+        queue_wait_ms: list[float] = []
+        execution_ms: list[float] = []
+        for row in rows:
+            created_at = _parse_iso_datetime(row.get("created_at"))
+            started_at = _parse_iso_datetime(row.get("started_at"))
+            completed_at = _parse_iso_datetime(row.get("completed_at"))
+
+            if created_at is not None and started_at is not None:
+                queue_wait_ms.append(max(0.0, (started_at - created_at).total_seconds() * 1000.0))
+            if started_at is not None and completed_at is not None:
+                execution_ms.append(max(0.0, (completed_at - started_at).total_seconds() * 1000.0))
+
+        avg_queue_wait = (sum(queue_wait_ms) / len(queue_wait_ms)) if queue_wait_ms else 0.0
+        avg_execution = (sum(execution_ms) / len(execution_ms)) if execution_ms else 0.0
+
+        return {
+            "sample_size": len(rows),
+            "queue_wait_samples": len(queue_wait_ms),
+            "execution_samples": len(execution_ms),
+            "avg_queue_wait_ms": round(avg_queue_wait, 3),
+            "p95_queue_wait_ms": round(_percentile(queue_wait_ms, 95), 3),
+            "avg_execution_ms": round(avg_execution, 3),
+            "p95_execution_ms": round(_percentile(execution_ms, 95), 3),
+        }
 
     def _update(self, job_id: str, values: Mapping[str, Any]) -> None:
         self.supabase.update_rows(

@@ -39,6 +39,13 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
     return max(minimum, value)
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
 def _json_size_bytes(value: Any) -> int:
     try:
         encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=True)
@@ -110,6 +117,19 @@ def _queue_name_for_priority(queue: UpstashRedisQueue, priority: str) -> str:
     return str(getattr(queue, "queue_name", "job_queue"))
 
 
+def _queue_depth_or_zero(queue: UpstashRedisQueue, queue_name: str) -> int:
+    try:
+        return int(queue.queue_depth(queue_name=queue_name))
+    except Exception:
+        return 0
+
+
+def _stable_job_id(owner_user_id: int, idempotency_key: str) -> str:
+    token = str(idempotency_key or "").strip()
+    seed = f"queue-job:{int(owner_user_id)}:{token}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
+
+
 def _append_queued_event(metadata: dict[str, Any], *, queue_name: str, priority: str) -> None:
     events = metadata.get("stream_events")
     stream_events = [evt for evt in events if isinstance(evt, dict)] if isinstance(events, list) else []
@@ -158,7 +178,14 @@ class QueueJobRequest(BaseModel):
     max_retries: int | None = Field(
         default=None,
         ge=0,
+        le=25,
         description="Optional retry budget for worker retry/dead-letter flow.",
+    )
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        description="Optional dedupe token. Reusing the same key returns the same job for the same user.",
     )
 
     model_config = {
@@ -179,6 +206,7 @@ class QueueJobRequest(BaseModel):
                 "priority": "normal",
                 "stream_results": True,
                 "max_retries": 3,
+                "idempotency_key": "req_20260318_launch_plan_001",
             }
         }
     }
@@ -217,6 +245,31 @@ class QueueMetricsResponse(BaseModel):
     status_counts: dict[str, int]
     stale_running: int
     running_timeout_seconds: int
+    latency_sample_size: int
+    avg_queue_wait_ms: float
+    p95_queue_wait_ms: float
+    avg_execution_ms: float
+    p95_execution_ms: float
+
+
+class QueueDeadLetterRow(BaseModel):
+    job_id: str
+    task_type: str | None = None
+    created_at: str | None = None
+    completed_at: str | None = None
+    retry_count: int
+    max_retries: int
+    dead_letter_reason: str | None = None
+    dead_lettered_at: str | None = None
+    owner_user_id: int | None = None
+    owner_username: str | None = None
+    error: str | None = None
+
+
+class QueueDeadLetterResponse(BaseModel):
+    generated_at: str
+    total: int
+    jobs: list[QueueDeadLetterRow]
 
 
 def _enqueue_single_job(
@@ -233,15 +286,37 @@ def _enqueue_single_job(
 
     enforce_job_create_quota(db, current_user)
 
-    job_id = str(uuid.uuid4())
     store = _get_job_store()
     queue = _get_queue_client()
     priority = _normalize_priority(req.priority)
     queue_name = _queue_name_for_priority(queue, priority)
 
+    idempotency_key = str(req.idempotency_key or "").strip()
+    if idempotency_key:
+        job_id = _stable_job_id(int(current_user.id), idempotency_key)
+    else:
+        job_id = str(uuid.uuid4())
+
     resolved_max_retries = req.max_retries
     if resolved_max_retries is None:
         resolved_max_retries = _env_int("AETHEER_JOB_MAX_RETRIES", 3, minimum=0)
+
+    if idempotency_key:
+        try:
+            existing = store.get_job(job_id)
+        except Exception as exc:
+            logger.warning("Failed idempotency lookup for %s: %s", job_id, exc)
+            existing = None
+
+        if isinstance(existing, dict):
+            return {
+                "job_id": job_id,
+                "status": str(existing.get("status") or "queued"),
+                "queue": queue_name,
+                "queue_depth": _queue_depth_or_zero(queue, queue_name),
+                "priority": priority,
+                "deduplicated": True,
+            }
 
     metadata = dict(req.metadata)
     metadata["owner_user_id"] = current_user.id
@@ -250,6 +325,8 @@ def _enqueue_single_job(
     metadata["retry_count"] = 0
     metadata["max_retries"] = int(resolved_max_retries)
     metadata["stream_results"] = bool(req.stream_results)
+    if idempotency_key:
+        metadata["idempotency_key"] = idempotency_key
     if metadata["stream_results"]:
         _append_queued_event(metadata, queue_name=queue_name, priority=priority)
 
@@ -261,6 +338,21 @@ def _enqueue_single_job(
             metadata=metadata,
         )
     except Exception as exc:
+        if idempotency_key:
+            try:
+                existing = store.get_job(job_id)
+            except Exception:
+                existing = None
+            if isinstance(existing, dict):
+                return {
+                    "job_id": job_id,
+                    "status": str(existing.get("status") or "queued"),
+                    "queue": queue_name,
+                    "queue_depth": _queue_depth_or_zero(queue, queue_name),
+                    "priority": priority,
+                    "deduplicated": True,
+                }
+
         logger.error("Failed to create Supabase job row %s: %s", job_id, exc)
         raise HTTPException(status_code=502, detail="Failed to persist job in Supabase") from exc
 
@@ -304,6 +396,7 @@ def _enqueue_single_job(
         "queue": queue_name,
         "queue_depth": queue_depth,
         "priority": priority,
+        "deduplicated": False,
     }
 
 
@@ -484,6 +577,18 @@ def get_queue_metrics(
         logger.warning("Stale-running probe failed: %s", exc)
         stale_running = 0
 
+    latency_metrics_fn = getattr(store, "latency_metrics", None)
+    if callable(latency_metrics_fn):
+        try:
+            latency_metrics = latency_metrics_fn(
+                sample_limit=_env_int("AETHEER_QUEUE_METRICS_SAMPLE_LIMIT", 500, minimum=10)
+            )
+        except Exception as exc:
+            logger.warning("Latency metrics query failed: %s", exc)
+            latency_metrics = {}
+    else:
+        latency_metrics = {}
+
     return QueueMetricsResponse(
         generated_at=_utc_now_iso(),
         queue_depth_total=sum(queue_depth_by_name.values()),
@@ -493,6 +598,65 @@ def get_queue_metrics(
         status_counts=status_counts,
         stale_running=stale_running,
         running_timeout_seconds=running_timeout_seconds,
+        latency_sample_size=int(latency_metrics.get("sample_size", 0) or 0),
+        avg_queue_wait_ms=float(latency_metrics.get("avg_queue_wait_ms", 0.0) or 0.0),
+        p95_queue_wait_ms=float(latency_metrics.get("p95_queue_wait_ms", 0.0) or 0.0),
+        avg_execution_ms=float(latency_metrics.get("avg_execution_ms", 0.0) or 0.0),
+        p95_execution_ms=float(latency_metrics.get("p95_execution_ms", 0.0) or 0.0),
+    )
+
+
+@router.get(
+    "/api/queue/dlq/jobs",
+    summary="List dead-lettered queue jobs",
+    response_model=QueueDeadLetterResponse,
+)
+def list_dead_letter_queue_jobs(
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
+):
+    enforce_job_api_rate_limit(current_user, bucket="read")
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    safe_limit = max(1, min(int(limit), 500))
+    store = _get_job_store()
+
+    list_dlq_fn = getattr(store, "list_dead_lettered_jobs", None)
+    if callable(list_dlq_fn):
+        rows = list_dlq_fn(limit=safe_limit, scan_limit=max(200, safe_limit * 5))
+    else:
+        rows = []
+
+    jobs: list[QueueDeadLetterRow] = []
+    for row in rows:
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        owner_user_id: int | None
+        try:
+            owner_user_id = int(metadata.get("owner_user_id")) if metadata.get("owner_user_id") is not None else None
+        except (TypeError, ValueError):
+            owner_user_id = None
+
+        jobs.append(
+            QueueDeadLetterRow(
+                job_id=str(row.get("id") or row.get("job_id") or ""),
+                task_type=row.get("task_type"),
+                created_at=row.get("created_at"),
+                completed_at=row.get("completed_at"),
+                retry_count=max(0, _safe_int(metadata.get("retry_count"), 0)),
+                max_retries=max(0, _safe_int(metadata.get("max_retries"), 0)),
+                dead_letter_reason=str(metadata.get("dead_letter_reason") or "") or None,
+                dead_lettered_at=metadata.get("dead_lettered_at"),
+                owner_user_id=owner_user_id,
+                owner_username=str(metadata.get("owner_username") or "") or None,
+                error=str(row.get("error") or "") or None,
+            )
+        )
+
+    return QueueDeadLetterResponse(
+        generated_at=_utc_now_iso(),
+        total=len(jobs),
+        jobs=jobs,
     )
 
 

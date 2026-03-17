@@ -97,16 +97,38 @@ def _coerce_int(value: Any, default: int, minimum: int = 0) -> int:
     return max(minimum, parsed)
 
 
-def _is_retryable_external_error(exc: Exception) -> bool:
-    if isinstance(exc, TimeoutError):
-        return True
-
+def _classify_failure(exc: BaseException) -> dict[str, Any]:
     text = f"{type(exc).__name__}: {exc}".lower()
+
+    if isinstance(exc, KeyboardInterrupt):
+        return {
+            "reason": "worker_interrupt",
+            "classification": "worker_interrupted",
+            "retryable": True,
+        }
+
+    if isinstance(exc, TimeoutError):
+        return {
+            "reason": "external_timeout",
+            "classification": "external_timeout",
+            "retryable": True,
+        }
+
+    rate_limit_hints = (
+        "rate limit",
+        "too many requests",
+        "429",
+    )
+    if any(hint in text for hint in rate_limit_hints):
+        return {
+            "reason": "external_rate_limited",
+            "classification": "external_rate_limited",
+            "retryable": True,
+        }
+
     retryable_hints = (
         "timeout",
         "timed out",
-        "rate limit",
-        "too many requests",
         "temporarily unavailable",
         "service unavailable",
         "connection reset",
@@ -115,12 +137,48 @@ def _is_retryable_external_error(exc: Exception) -> bool:
         "remote disconnected",
         "gateway timeout",
         "bad gateway",
-        "429",
         "502",
         "503",
         "504",
     )
-    return any(hint in text for hint in retryable_hints)
+    if any(hint in text for hint in retryable_hints):
+        return {
+            "reason": "external_api_failure",
+            "classification": "external_transient",
+            "retryable": True,
+        }
+
+    non_retryable_hints = (
+        "invalid api key",
+        "unauthorized",
+        "forbidden",
+        "permission denied",
+        "bad request",
+        "unprocessable",
+        "invalid request",
+        "authentication",
+        "401",
+        "403",
+    )
+    if any(hint in text for hint in non_retryable_hints):
+        return {
+            "reason": "external_non_retryable",
+            "classification": "external_non_retryable",
+            "retryable": False,
+        }
+
+    if isinstance(exc, (ValueError, TypeError, KeyError)):
+        return {
+            "reason": "validation_error",
+            "classification": "validation_error",
+            "retryable": False,
+        }
+
+    return {
+        "reason": "non_retryable_execution_error",
+        "classification": "execution_error",
+        "retryable": False,
+    }
 
 
 def _compute_backoff_seconds(attempt: int, *, base_seconds: float, max_seconds: float) -> float:
@@ -252,6 +310,7 @@ def _requeue_or_dead_letter(
     max_retries: int,
     error_message: str,
     reason: str,
+    failure_classification: str,
     priority: str,
     retry_backoff_base_seconds: float,
     retry_backoff_max_seconds: float,
@@ -271,6 +330,7 @@ def _requeue_or_dead_letter(
         retry_payload["retryCount"] = next_retry_count
         retry_payload["maxRetries"] = max_retries
         retry_payload["retryReason"] = reason
+        retry_payload["failureClassification"] = failure_classification
         retry_payload["lastError"] = normalized_error
         retry_payload["retryAt"] = _utc_now_iso()
         retry_payload["retryBackoffSeconds"] = round(backoff_seconds, 3)
@@ -298,7 +358,10 @@ def _requeue_or_dead_letter(
         except Exception as exc:
             logger.error("Retry enqueue failed for %s: %s", job_id, exc, exc_info=True)
             try:
-                store.mark_failed(job_id, f"Retry enqueue failed: {exc} | original: {normalized_error}")
+                store.mark_failed(
+                    job_id,
+                    f"[{failure_classification}] Retry enqueue failed: {exc} | original: {normalized_error}",
+                )
             except Exception as update_exc:
                 logger.error("Could not persist failed status for %s: %s", job_id, update_exc, exc_info=True)
             return "failed"
@@ -308,6 +371,7 @@ def _requeue_or_dead_letter(
     dlq_payload["retryCount"] = retry_count
     dlq_payload["maxRetries"] = max_retries
     dlq_payload["deadLetterReason"] = reason
+    dlq_payload["failureClassification"] = failure_classification
     dlq_payload["deadLetteredAt"] = _utc_now_iso()
     dlq_payload["lastError"] = normalized_error
 
@@ -393,6 +457,7 @@ def _recover_stale_running_jobs(
             max_retries=max_retries_for_job,
             error_message=timeout_error,
             reason="running_timeout",
+            failure_classification="running_timeout",
             priority=priority,
             retry_backoff_base_seconds=0.0,
             retry_backoff_max_seconds=0.0,
@@ -669,21 +734,47 @@ def _process_job_payload(
         )
         logger.info("Job %s completed", job_id)
         return True
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as exc:
         logger.warning("Job %s interrupted before completion", job_id)
-        _mark_interrupted_job(store, job_id, "interrupt during execution")
+        failure = _classify_failure(exc)
+        reason = str(failure.get("reason") or "worker_interrupt")
+        classification = str(failure.get("classification") or "worker_interrupted")
+        outcome = _requeue_or_dead_letter(
+            queue=queue,
+            store=store,
+            job_id=job_id,
+            task_type=task_type,
+            task_data=task_data,
+            retry_count=retry_count,
+            max_retries=max_retries_for_job,
+            error_message=_interrupt_message("interrupt during execution"),
+            reason=reason,
+            failure_classification=classification,
+            priority=priority,
+            retry_backoff_base_seconds=retry_backoff_base_seconds,
+            retry_backoff_max_seconds=retry_backoff_max_seconds,
+            dlq_queue_name=dlq_queue_name,
+        )
         _append_stream_event_if_enabled(
             store=store,
             job_id=job_id,
             enabled=stream_results,
-            event_type="interrupted",
-            status="failed",
-            payload={"reason": "interrupt during execution"},
+            event_type=("retry_scheduled" if outcome == "requeued" else "dead_lettered"),
+            status=("queued" if outcome == "requeued" else "failed"),
+            payload={
+                "reason": reason,
+                "failure_classification": classification,
+                "retryable": bool(failure.get("retryable", True)),
+            },
         )
         return False
     except Exception as exc:
         logger.error("Job %s failed: %s", job_id, exc, exc_info=True)
-        if _is_retryable_external_error(exc):
+        failure = _classify_failure(exc)
+        reason = str(failure.get("reason") or "non_retryable_execution_error")
+        classification = str(failure.get("classification") or "execution_error")
+
+        if bool(failure.get("retryable")):
             outcome = _requeue_or_dead_letter(
                 queue=queue,
                 store=store,
@@ -693,7 +784,8 @@ def _process_job_payload(
                 retry_count=retry_count,
                 max_retries=max_retries_for_job,
                 error_message=str(exc),
-                reason="external_api_failure",
+                reason=reason,
+                failure_classification=classification,
                 priority=priority,
                 retry_backoff_base_seconds=retry_backoff_base_seconds,
                 retry_backoff_max_seconds=retry_backoff_max_seconds,
@@ -708,14 +800,16 @@ def _process_job_payload(
                 payload={
                     "retry_count": retry_count + 1 if outcome == "requeued" else retry_count,
                     "max_retries": max_retries_for_job,
-                    "reason": "external_api_failure",
+                    "reason": reason,
+                    "failure_classification": classification,
+                    "retryable": True,
                     "error": str(exc),
                 },
             )
             return False
 
         try:
-            store.mark_failed(job_id, str(exc))
+            store.mark_failed(job_id, f"[{classification}] {exc}")
         except Exception as update_exc:
             logger.error("Could not persist failed status for %s: %s", job_id, update_exc, exc_info=True)
 
@@ -726,7 +820,9 @@ def _process_job_payload(
             event_type="failed",
             status="failed",
             payload={
-                "reason": "non_retryable_execution_error",
+                "reason": reason,
+                "failure_classification": classification,
+                "retryable": False,
                 "error": str(exc),
             },
         )

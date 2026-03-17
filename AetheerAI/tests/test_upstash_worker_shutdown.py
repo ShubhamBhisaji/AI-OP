@@ -26,6 +26,8 @@ class _ProcessStore:
         self.running = []
         self.completed = []
         self.failed = []
+        self.requeued = []
+        self.dead_lettered = []
 
     def get_job(self, job_id):
         return {"id": job_id, "status": "queued", "metadata": {}}
@@ -42,11 +44,11 @@ class _ProcessStore:
     def mark_failed(self, job_id, message):
         self.failed.append((job_id, message))
 
-    def mark_requeued_for_retry(self, *args, **kwargs):  # pragma: no cover - not used in this test.
-        return None
+    def mark_requeued_for_retry(self, job_id, *, error_message, retry_count, max_retries, reason):
+        self.requeued.append((job_id, error_message, retry_count, max_retries, reason))
 
-    def mark_dead_lettered(self, *args, **kwargs):  # pragma: no cover - not used in this test.
-        return None
+    def mark_dead_lettered(self, job_id, *, error_message, retry_count, max_retries, reason, dlq_queue):
+        self.dead_lettered.append((job_id, error_message, retry_count, max_retries, reason, dlq_queue))
 
 
 class _InterruptingQueue:
@@ -71,7 +73,7 @@ class _WorkerStore:
 
 
 class WorkerShutdownTests(unittest.TestCase):
-    def test_process_job_payload_keyboard_interrupt_marks_failed(self):
+    def test_process_job_payload_keyboard_interrupt_requeues_with_retry_budget(self):
         store = _ProcessStore()
 
         ok = upstash_job_worker._process_job_payload(
@@ -90,9 +92,12 @@ class WorkerShutdownTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(store.running[0][0], "job-int")
         self.assertEqual(len(store.completed), 0)
-        self.assertEqual(len(store.failed), 1)
-        self.assertEqual(store.failed[0][0], "job-int")
-        self.assertIn("interrupted", store.failed[0][1].lower())
+        self.assertEqual(len(store.failed), 0)
+        self.assertEqual(len(store.requeued), 1)
+        self.assertEqual(store.requeued[0][0], "job-int")
+        self.assertEqual(store.requeued[0][2], 1)
+        self.assertEqual(store.requeued[0][3], 1)
+        self.assertIn("interrupt", store.requeued[0][4])
 
     def test_run_worker_marks_inflight_job_failed_on_shutdown(self):
         queue = _InterruptingQueue()
