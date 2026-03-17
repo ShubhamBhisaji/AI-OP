@@ -61,6 +61,7 @@ _COMPLEXITY_RANKS = {COMPLEXITY_SIMPLE: 0, COMPLEXITY_MODERATE: 1, COMPLEXITY_CO
 
 _ROUTING_TABLE: dict[str, list[tuple[str, str]]] = {
     COMPLEXITY_SIMPLE: [
+        ("ollama", "llama3.2:1b"),              # offline-first default (commonly preinstalled)
         ("ollama", "llama3.2:3b"),              # ultra-fast, minimal hardware
         ("ollama", "qwen2.5-coder:7b"),          # local code tasks
         ("huggingface", "mistralai/Mistral-7B-Instruct-v0.2"),
@@ -69,6 +70,7 @@ _ROUTING_TABLE: dict[str, list[tuple[str, str]]] = {
         ("openai", "gpt-4o-mini"),
     ],
     COMPLEXITY_MODERATE: [
+        ("ollama", "llama3.2:1b"),              # offline-first fallback for local-only environments
         ("gemini", "gemini-2.5-flash-lite"),     # fast + cheap cloud
         ("github", "gpt-4o-mini"),
         ("openai", "gpt-4o-mini"),
@@ -77,6 +79,7 @@ _ROUTING_TABLE: dict[str, list[tuple[str, str]]] = {
         ("openai", "gpt-4o"),
     ],
     COMPLEXITY_COMPLEX: [
+        ("ollama", "llama3.2:1b"),              # keep execution available without cloud auth
         ("github", "gpt-4.1"),                   # best free-tier model
         ("openai", "gpt-4o"),
         ("claude", "claude-sonnet-4.6"),         # highest reasoning

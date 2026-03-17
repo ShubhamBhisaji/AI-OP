@@ -3,6 +3,7 @@
     "id": "723637c6-b812-48f4-84c9-ca258d62b2e1",
     "name": "Web-Developer",
     "role": "\"to Create an web app\"",
+    "objectives": [],
     "tools": [],
     "skills": [
       "responsive_design",
@@ -76,24 +77,33 @@
       "blockchain_identity_management",
       "ai_driven_usability_testing"
     ],
+    "permissions": [],
+    "permission_level": 1,
     "performance": {
       "tasks_completed": 1,
       "tasks_failed": 0,
       "success_rate": 1.0
     },
     "version": "1.0.10",
+    "created_by": "AetheerAI",
     "created_at": "2026-03-10T15:07:54.678302",
     "history": [
       {
         "timestamp": "2026-03-10T15:10:12.368703",
         "success": true
       }
-    ]
+    ],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": ""
   },
   "AUDITOR": {
     "id": "5b02ccf6-0ed2-4d91-844b-bdb33233d214",
     "name": "AUDITOR",
     "role": "to",
+    "objectives": [],
     "tools": [],
     "skills": [
       "advanced_auditing_algorithms",
@@ -162,13 +172,895 @@
       "quantum_resistant_ai_security",
       "ai_ecosystem_resilience"
     ],
+    "permissions": [],
+    "permission_level": 1,
     "performance": {
       "tasks_completed": 0,
       "tasks_failed": 0,
       "success_rate": 0.0
     },
     "version": "1.0.9",
+    "created_by": "AetheerAI",
     "created_at": "2026-03-10T19:00:16.016261",
-    "history": []
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": ""
+  },
+  "collab_dev_1773717116": {
+    "id": "ab25b5e9-6a60-4386-ad4a-d57b432e593e",
+    "name": "collab_dev_1773717116",
+    "role": "Coding Agent",
+    "objectives": [
+      "Build and refactor production quality code",
+      "Validate outputs with tests and linting"
+    ],
+    "tools": [
+      "file_writer",
+      "code_runner"
+    ],
+    "skills": [
+      "python",
+      "debugging",
+      "code_review",
+      "refactoring"
+    ],
+    "permissions": [
+      "read:workspace",
+      "write:workspace",
+      "execute:code"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:11:56.880354+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_dev_1773717116"
+  },
+  "collab_research_1773717116": {
+    "id": "0dcd16ff-784c-47a3-9b38-b4ca93f015ac",
+    "name": "collab_research_1773717116",
+    "role": "Research Agent",
+    "objectives": [
+      "Gather verifiable information",
+      "Produce concise, sourced reports"
+    ],
+    "tools": [
+      "web_search",
+      "file_writer"
+    ],
+    "skills": [
+      "summarization",
+      "fact_checking",
+      "web_research"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:11:56.900133+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_research_1773717116"
+  },
+  "collab_marketing_1773717116": {
+    "id": "2ff98b26-5da2-4bae-809c-0c67472f81a5",
+    "name": "collab_marketing_1773717116",
+    "role": "Marketing Agent",
+    "objectives": [
+      "Create persuasive audience-aligned messaging",
+      "Improve SEO and campaign quality"
+    ],
+    "tools": [
+      "file_writer",
+      "web_search"
+    ],
+    "skills": [
+      "copywriting",
+      "seo",
+      "social_media",
+      "campaign_planning"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:11:56.907210+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_marketing_1773717116"
+  },
+  "collab_dev": {
+    "id": "36770527-6375-4de2-9d0b-de37400106ff",
+    "name": "collab_dev",
+    "role": "Coding Agent",
+    "objectives": [
+      "Build and refactor production quality code",
+      "Validate outputs with tests and linting"
+    ],
+    "tools": [
+      "file_writer",
+      "code_runner"
+    ],
+    "skills": [
+      "python",
+      "debugging",
+      "code_review",
+      "refactoring"
+    ],
+    "permissions": [
+      "read:workspace",
+      "write:workspace",
+      "execute:code"
+    ],
+    "permission_level": 2,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:15:42.372285+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_dev"
+  },
+  "collab_research": {
+    "id": "a1aed826-9f81-49df-8420-257f4c1c4e09",
+    "name": "collab_research",
+    "role": "Research Agent",
+    "objectives": [
+      "Gather verifiable information",
+      "Produce concise, sourced reports"
+    ],
+    "tools": [
+      "web_search",
+      "file_writer"
+    ],
+    "skills": [
+      "summarization",
+      "fact_checking",
+      "web_research"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 2,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:15:42.372285+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_research"
+  },
+  "collab_marketing": {
+    "id": "abc4f180-905c-4e97-ad25-89d1b13d61e6",
+    "name": "collab_marketing",
+    "role": "Marketing Agent",
+    "objectives": [
+      "Create persuasive audience-aligned messaging",
+      "Improve SEO and campaign quality"
+    ],
+    "tools": [
+      "file_writer",
+      "web_search"
+    ],
+    "skills": [
+      "copywriting",
+      "seo",
+      "social_media",
+      "campaign_planning"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 2,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:15:42.390796+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_marketing"
+  },
+  "collab_dev_1773717483": {
+    "id": "86a114d4-55c9-4206-87a5-1e4ad8f530df",
+    "name": "collab_dev_1773717483",
+    "role": "Coding Agent",
+    "objectives": [
+      "Build and refactor production quality code",
+      "Validate outputs with tests and linting"
+    ],
+    "tools": [
+      "file_writer",
+      "code_runner"
+    ],
+    "skills": [
+      "python",
+      "debugging",
+      "code_review",
+      "refactoring"
+    ],
+    "permissions": [
+      "read:workspace",
+      "write:workspace",
+      "execute:code"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:18:03.412589+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_dev_1773717483"
+  },
+  "collab_research_1773717483": {
+    "id": "85a62cb8-3637-4987-801f-7fb24ffb66cd",
+    "name": "collab_research_1773717483",
+    "role": "Research Agent",
+    "objectives": [
+      "Gather verifiable information",
+      "Produce concise, sourced reports"
+    ],
+    "tools": [
+      "web_search",
+      "file_writer"
+    ],
+    "skills": [
+      "summarization",
+      "fact_checking",
+      "web_research"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:18:03.424030+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_research_1773717483"
+  },
+  "collab_marketing_1773717483": {
+    "id": "2d2f9c88-cd55-4ba3-a210-767fe7d460ad",
+    "name": "collab_marketing_1773717483",
+    "role": "Marketing Agent",
+    "objectives": [
+      "Create persuasive audience-aligned messaging",
+      "Improve SEO and campaign quality"
+    ],
+    "tools": [
+      "file_writer",
+      "web_search"
+    ],
+    "skills": [
+      "copywriting",
+      "seo",
+      "social_media",
+      "campaign_planning"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:18:03.431481+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_marketing_1773717483"
+  },
+  "collab_dev_1773717887": {
+    "id": "2cc01a6e-99fc-49aa-bacc-c92f45c92cdb",
+    "name": "collab_dev_1773717887",
+    "role": "Coding Agent",
+    "objectives": [
+      "Build and refactor production quality code",
+      "Validate outputs with tests and linting"
+    ],
+    "tools": [
+      "file_writer",
+      "code_runner"
+    ],
+    "skills": [
+      "python",
+      "debugging",
+      "code_review",
+      "refactoring"
+    ],
+    "permissions": [
+      "read:workspace",
+      "write:workspace",
+      "execute:code"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:24:47.166799+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_dev_1773717887"
+  },
+  "collab_research_1773717887": {
+    "id": "03a925be-3451-43bc-a40b-56cab6aa4468",
+    "name": "collab_research_1773717887",
+    "role": "Research Agent",
+    "objectives": [
+      "Gather verifiable information",
+      "Produce concise, sourced reports"
+    ],
+    "tools": [
+      "web_search",
+      "file_writer"
+    ],
+    "skills": [
+      "summarization",
+      "fact_checking",
+      "web_research"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:24:47.206503+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_research_1773717887"
+  },
+  "collab_marketing_1773717887": {
+    "id": "0b70e13f-d558-4672-b2c9-104424731193",
+    "name": "collab_marketing_1773717887",
+    "role": "Marketing Agent",
+    "objectives": [
+      "Create persuasive audience-aligned messaging",
+      "Improve SEO and campaign quality"
+    ],
+    "tools": [
+      "file_writer",
+      "web_search"
+    ],
+    "skills": [
+      "copywriting",
+      "seo",
+      "social_media",
+      "campaign_planning"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:24:47.211502+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_marketing_1773717887"
+  },
+  "collab_dev_1773718869": {
+    "id": "a751c621-6468-4fef-bda2-1dfcd29d69e1",
+    "name": "collab_dev_1773718869",
+    "role": "Coding Agent",
+    "objectives": [
+      "Build and refactor production quality code",
+      "Validate outputs with tests and linting"
+    ],
+    "tools": [
+      "file_writer",
+      "code_runner"
+    ],
+    "skills": [
+      "python",
+      "debugging",
+      "code_review",
+      "refactoring"
+    ],
+    "permissions": [
+      "read:workspace",
+      "write:workspace",
+      "execute:code"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:41:09.743359+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_dev_1773718869"
+  },
+  "collab_research_1773718869": {
+    "id": "58114001-0e79-4147-b413-46157b2a4a1f",
+    "name": "collab_research_1773718869",
+    "role": "Research Agent",
+    "objectives": [
+      "Gather verifiable information",
+      "Produce concise, sourced reports"
+    ],
+    "tools": [
+      "web_search",
+      "file_writer"
+    ],
+    "skills": [
+      "summarization",
+      "fact_checking",
+      "web_research"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:41:09.785573+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_research_1773718869"
+  },
+  "collab_marketing_1773718869": {
+    "id": "c94cf3ab-2265-4dcd-a285-b9c5cb1c933f",
+    "name": "collab_marketing_1773718869",
+    "role": "Marketing Agent",
+    "objectives": [
+      "Create persuasive audience-aligned messaging",
+      "Improve SEO and campaign quality"
+    ],
+    "tools": [
+      "file_writer",
+      "web_search"
+    ],
+    "skills": [
+      "copywriting",
+      "seo",
+      "social_media",
+      "campaign_planning"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:41:09.791568+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "collab_marketing_1773718869"
+  },
+  "smoke_dev_1773719666": {
+    "id": "92ed6e61-777f-4343-8f81-e63b751d32ee",
+    "name": "smoke_dev_1773719666",
+    "role": "Coding Agent",
+    "objectives": [
+      "Build and refactor production quality code",
+      "Validate outputs with tests and linting"
+    ],
+    "tools": [
+      "file_writer",
+      "code_runner"
+    ],
+    "skills": [
+      "python",
+      "debugging",
+      "code_review",
+      "refactoring"
+    ],
+    "permissions": [
+      "read:workspace",
+      "write:workspace",
+      "execute:code"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:54:26.671873+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "smoke_dev_1773719666"
+  },
+  "smoke_research_1773719666": {
+    "id": "4c37da1d-6b8b-409d-8caa-2cdffa7debb5",
+    "name": "smoke_research_1773719666",
+    "role": "Research Agent",
+    "objectives": [
+      "Gather verifiable information",
+      "Produce concise, sourced reports"
+    ],
+    "tools": [
+      "web_search",
+      "file_writer"
+    ],
+    "skills": [
+      "summarization",
+      "fact_checking",
+      "web_research"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:54:26.673880+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "smoke_research_1773719666"
+  },
+  "smoke_marketing_1773719666": {
+    "id": "dfdc7bba-dfb3-4ebc-9388-1da32c58e128",
+    "name": "smoke_marketing_1773719666",
+    "role": "Marketing Agent",
+    "objectives": [
+      "Create persuasive audience-aligned messaging",
+      "Improve SEO and campaign quality"
+    ],
+    "tools": [
+      "file_writer",
+      "web_search"
+    ],
+    "skills": [
+      "copywriting",
+      "seo",
+      "social_media",
+      "campaign_planning"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T03:54:26.687769+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "smoke_marketing_1773719666"
+  },
+  "aether_operations_agent": {
+    "id": "a809ce77-02da-4f44-b9a8-b20ff213ff62",
+    "name": "aether_operations_agent",
+    "role": "Automation Agent",
+    "objectives": [
+      "Automate repetitive tasks safely",
+      "Execute workflows with clear logs"
+    ],
+    "tools": [
+      "file_writer",
+      "web_search",
+      "code_runner"
+    ],
+    "skills": [
+      "scripting",
+      "workflow_design",
+      "process_automation"
+    ],
+    "permissions": [
+      "read:workspace",
+      "write:workspace",
+      "execute:code"
+    ],
+    "permission_level": 4,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T04:01:04.447297+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "aether_operations_agent"
+  },
+  "offline_dev_1773720180": {
+    "id": "a138f795-c6ea-413a-a07e-9ec2d2c35a39",
+    "name": "offline_dev_1773720180",
+    "role": "Coding Agent",
+    "objectives": [
+      "Build and refactor production quality code",
+      "Validate outputs with tests and linting"
+    ],
+    "tools": [
+      "file_writer",
+      "code_runner"
+    ],
+    "skills": [
+      "python",
+      "debugging",
+      "code_review",
+      "refactoring"
+    ],
+    "permissions": [
+      "read:workspace",
+      "write:workspace",
+      "execute:code"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T04:03:00.652847+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "offline_dev_1773720180"
+  },
+  "offline_research_1773720180": {
+    "id": "f250ea18-2370-40cf-b43a-6d6d4d4a28b9",
+    "name": "offline_research_1773720180",
+    "role": "Research Agent",
+    "objectives": [
+      "Gather verifiable information",
+      "Produce concise, sourced reports"
+    ],
+    "tools": [
+      "web_search",
+      "file_writer"
+    ],
+    "skills": [
+      "summarization",
+      "fact_checking",
+      "web_research"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T04:03:00.656311+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "offline_research_1773720180"
+  },
+  "offline_marketing_1773720180": {
+    "id": "8b295487-fb22-447b-9bb7-3aa18e07df3e",
+    "name": "offline_marketing_1773720180",
+    "role": "Marketing Agent",
+    "objectives": [
+      "Create persuasive audience-aligned messaging",
+      "Improve SEO and campaign quality"
+    ],
+    "tools": [
+      "file_writer",
+      "web_search"
+    ],
+    "skills": [
+      "copywriting",
+      "seo",
+      "social_media",
+      "campaign_planning"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 1,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T04:03:00.670057+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "offline_marketing_1773720180"
+  },
+  "aether_researcher_agent": {
+    "id": "3f211ce5-6906-4625-afad-98c5f04f4cfc",
+    "name": "aether_researcher_agent",
+    "role": "Research Agent",
+    "objectives": [
+      "Gather verifiable information",
+      "Produce concise, sourced reports"
+    ],
+    "tools": [
+      "web_search",
+      "file_writer"
+    ],
+    "skills": [
+      "summarization",
+      "fact_checking",
+      "web_research"
+    ],
+    "permissions": [
+      "read:web",
+      "write:workspace"
+    ],
+    "permission_level": 2,
+    "performance": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0
+    },
+    "version": "1.0.0",
+    "created_by": "AetheerAI",
+    "created_at": "2026-03-17T04:21:02.703641+00:00",
+    "history": [],
+    "last_status": "idle",
+    "last_task": "",
+    "last_result": "",
+    "last_error": "",
+    "memory_namespace": "aether_researcher_agent"
   }
 }

@@ -71,7 +71,10 @@ AetheerAI/
 │
 ├── core/
 │   ├── aetheerai_kernel.py    # Central kernel — boots all subsystems
+│   ├── governance_layer.py    # Approval/budget/runtime/manual-override controls
 │   ├── orchestrator.py        # Multi-agent coordination (pipeline/vote/debate…)
+│   ├── task_execution_engine.py # Sequential/parallel execution + retry/status logs
+│   ├── tool_integration_layer.py # Plugin-style tool abstraction layer
 │   ├── workflow_engine.py     # Task execution with self-correction + HITL
 │   ├── team_manager.py        # Named teams of agents
 │   ├── model_router.py        # Auto-routes tasks to cheapest capable model
@@ -219,12 +222,23 @@ Interactive docs: http://localhost:8000/docs
 
 | Method | URL | Description |
 |---|---|---|
+| `POST` | `/api/goals` | Submit a high-level goal (primary endpoint) |
+| `GET`  | `/api/goals` | List goals and current execution status |
+| `GET`  | `/api/goals/{id}` | Monitor one goal end-to-end |
+| `GET`  | `/api/goals/{id}/tasks` | Monitor task-level progress for a goal |
+| `GET`  | `/api/tasks/{task_id}` | Lookup a task across all goals |
 | `POST` | `/api/projects` | Submit a goal → CEO runs it |
 | `GET`  | `/api/projects` | List all projects |
 | `GET`  | `/api/projects/{id}` | Get results + task breakdown |
 | `POST` | `/api/agents` | Create a custom agent |
+| `POST` | `/api/agents/design` | Auto-design and create a specialist agent from a goal |
 | `GET`  | `/api/agents` | List registered agents |
 | `POST` | `/api/agents/{name}/run` | Run one task on an agent directly |
+| `POST` | `/api/collaborations` | Run a multi-round collaboration session |
+| `GET`  | `/api/collaborations` | List recent collaboration sessions |
+| `GET`  | `/api/collaborations/{session_id}` | Inspect one collaboration transcript |
+| `GET`  | `/api/logs` | View recent audit/governance logs |
+| `GET`  | `/api/system/status` | Check runtime status for dashboards |
 | `POST` | `/api/chat` | Direct AI assistant (no CEO planning) |
 | `GET`  | `/api/health` | Health check |
 
@@ -236,9 +250,18 @@ curl -X POST http://localhost:8000/api/projects \
   -d '{
     "name": "My SaaS Landing Page",
     "goal": "Build a professional landing page for TaskFlow, a project management app",
+        "collaboration_mode": true,
+        "offline_local_mode": true,
+        "fast_mode_collaboration": true,
     "background": false
   }'
 ```
+
+Use `offline_local_mode: true` to force local-model execution for that goal
+(provider/model pinned by server defaults: `AETHEER_OFFLINE_PROVIDER` + `AETHEER_OFFLINE_MODEL`).
+Use `fast_mode_collaboration: true` to allow lightweight one-round internal
+collaboration in fast local mode via a strict timeout helper brief
+(otherwise fast mode limits collaboration to critical tasks only).
 
 ---
 
@@ -255,6 +278,15 @@ The CEO agent will:
 3. Write conversion-optimised marketing copy (MarketingAgent)
 4. Save files to `workspace/` (OperationsAgent)
 5. Deliver a consolidated summary
+
+## Example: Real Team Collaboration (Round-Based)
+
+```bash
+python examples/collaborate_team.py
+```
+
+This runs a multi-round collaboration session where agents actively request
+and provide peer help through the Swarm Bus, then produce a final synthesis.
 
 ---
 

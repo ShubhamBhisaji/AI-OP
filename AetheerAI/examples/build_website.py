@@ -45,10 +45,12 @@ def print_banner():
 
 def print_result(result: ProjectResult):
     print(f"\n{'─' * 60}")
+    print(f"WORKFLOW ID : {result.workflow_id}")
     print(f"STATUS      : {result.status.upper()}")
     print(f"TASKS       : {result.completed_tasks}/{result.total_tasks} completed"
           f"  |  {result.failed_tasks} failed"
           f"  |  replanned={result.replanned}")
+    print(f"SPEND       : ${result.spent_usd:.4f}")
     print(f"ELAPSED     : {result.elapsed_seconds:.1f}s")
 
     print(f"\n{'─' * 60}")

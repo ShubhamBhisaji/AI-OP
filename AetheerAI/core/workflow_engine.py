@@ -470,14 +470,14 @@ class WorkflowEngine:
                 result = self.self_healer.heal(agent, task, _run_once, _looks_like_error)
                 if not _looks_like_error(result):
                     agent.record_result(success=True)
-                    self.memory.save(key=f"workflow:{agent.name}:last", value=result)
+                    self._record_task_memory(agent=agent, task=task, result=str(result), success=True)
                     return self._hitl_gate(agent=agent, task=task, result=result)
             agent.record_result(success=False)
-            self.memory.save(key=f"workflow:{agent.name}:last_error", value=result)
+            self._record_task_memory(agent=agent, task=task, result=str(result), success=False)
             return result
 
         agent.record_result(success=True)
-        self.memory.save(key=f"workflow:{agent.name}:last", value=result)
+        self._record_task_memory(agent=agent, task=task, result=str(result), success=True)
 
         # ── HITL checkpoint (Fix 8) ─────────────────────────────────────────
         result = self._hitl_gate(agent=agent, task=task, result=result)
@@ -564,8 +564,7 @@ class WorkflowEngine:
             )
             success = not _looks_like_error(result)
         agent.record_result(success=success)
-        key = f"workflow:{agent.name}:last" if success else f"workflow:{agent.name}:last_error"
-        self.memory.save(key=key, value=result)
+        self._record_task_memory(agent=agent, task=task, result=str(result), success=success)
 
         # ── HITL checkpoint (Fix 8) ─────────────────────────────────────────
         result = await self._hitl_gate_async(agent=agent, task=task, result=result)
@@ -867,11 +866,26 @@ class WorkflowEngine:
         # Global system instructions — set via Train AI page or kernel.memory
         sys_instr = self.memory.load("system_instructions", default="", namespace="global")
         sys_block = f"\nGlobal System Instructions:\n{sys_instr}\n" if sys_instr else ""
+        # Retrieve relevant memories before execution for better continuity.
+        memory_block = ""
+        try:
+            if hasattr(self.memory, "register_namespace"):
+                self.memory.register_namespace(agent.name)
+            if hasattr(self.memory, "retrieval_context"):
+                mem_ctx = self.memory.retrieval_context(
+                    query=task[:500],
+                    namespace=agent.name,
+                    n_results=3,
+                )
+                if mem_ctx:
+                    memory_block = f"\nRelevant Memory:\n{mem_ctx}\n"
+        except Exception as _mem_exc:
+            logger.debug("WorkflowEngine: memory retrieval skipped: %s", _mem_exc)
         # Shared workspace manifest — lets agents know what artefacts exist
         workspace_info = _get_workspace_manifest()
         workspace_block = f"\nShared Workspace:\n{workspace_info}\n"
         return (
-            f"You are a {agent.role}.{sys_block}{instr_block}\n"
+            f"You are a {agent.role}.{sys_block}{instr_block}{memory_block}\n"
             f"Your skills: {skills_str}.\n"
             f"Available tools: {tools_str}.\n"
             f"{workspace_block}\n"
@@ -881,3 +895,22 @@ class WorkflowEngine:
             f"BEYOND_SCOPE: <one-line reason>\n\n"
             f"Task:\n{task}"
         )
+
+    def _record_task_memory(self, agent, task: str, result: str, success: bool) -> None:
+        """Persist execution traces for global and per-agent long-term recall."""
+        key = f"workflow:{agent.name}:last" if success else f"workflow:{agent.name}:last_error"
+        self.memory.save(key=key, value=result, namespace="global")
+
+        try:
+            if hasattr(self.memory, "register_namespace"):
+                self.memory.register_namespace(agent.name)
+            if hasattr(self.memory, "remember_task"):
+                self.memory.remember_task(
+                    namespace=agent.name,
+                    task=task,
+                    output=result,
+                    success=success,
+                    metadata={"agent": agent.name, "role": agent.role},
+                )
+        except Exception as exc:
+            logger.debug("WorkflowEngine: per-agent memory record skipped: %s", exc)

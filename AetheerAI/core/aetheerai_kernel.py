@@ -6,6 +6,7 @@ Manages all subsystems: agents, workflows, tools, memory, and AI adapters.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 import re
 
@@ -31,6 +32,7 @@ from core.mcp_bridge import InteropBridge
 from core.priority_controller import PriorityController, ConstitutionRule, ActionOutcome
 from core.state_checkpoint import CheckpointManager, CheckpointStore
 from core.swarm_bus import SwarmBus
+from core.collaboration_engine import CollaborationEngine
 from core.tool_synthesizer import ToolSynthesizer
 from core.computer_use import ComputerUseAgent
 from core.zero_copy_connector import ZeroCopyRegistry
@@ -42,6 +44,7 @@ from core.dual_process import DualProcessEngine
 from core.finops_controller import FinOpsController
 from core.semantic_preprocessor import SemanticPreprocessor
 from core.control_plane import ControlPlane
+from core.tool_integration_layer import ToolIntegrationLayer
 from core.human_supervisor import HumanSupervisor, DelegationLevel
 from core.federated_learning import FederatedLearner
 from core.proactive_concierge import ProactiveConcierge
@@ -74,6 +77,7 @@ class AetheerAiKernel:
         _audit = AuditLogger.default()
         self.manifest_guard = ManifestGuard(audit_logger=_audit)
         self.tool_manager = ToolManager(audit_logger=_audit, manifest_guard=self.manifest_guard)
+        self.tool_layer = ToolIntegrationLayer(self.tool_manager)
         self.skill_engine = SkillEngine(registry=self.registry, ai_adapter=None)  # ai_adapter set below
         self.factory = AgentFactory(
             registry=self.registry,
@@ -125,6 +129,14 @@ class AetheerAiKernel:
         self.workflow_engine.checkpoint_manager = self.checkpoint_manager
         # ── Feature 7: Swarm P2P Bus ──────────────────────────────────────
         self.swarm_bus = SwarmBus()
+        # ── Feature 7b: Real multi-agent collaboration engine ─────────────
+        self.collaboration_engine = CollaborationEngine(
+            registry=self.registry,
+            workflow_engine=self.workflow_engine,
+            ai_adapter=self.ai_adapter,
+            swarm_bus=self.swarm_bus,
+            memory=self.memory,
+        )
         # ── Feature 8: JIT Tool Synthesizer ──────────────────────────────
         self.tool_synthesizer = ToolSynthesizer(
             ai_adapter=self.ai_adapter,
@@ -569,6 +581,66 @@ class AetheerAiKernel:
     def swarm_capabilities(self) -> dict:
         """Return all registered agent capabilities."""
         return self.swarm_bus.list_capabilities()
+
+    # ------------------------------------------------------------------
+    # Feature 7b — Collaboration Engine
+    # ------------------------------------------------------------------
+
+    def collaborate(
+        self,
+        goal: str,
+        *,
+        team_name: str | None = None,
+        agent_names: list[str] | None = None,
+        rounds: int = 2,
+    ) -> dict:
+        """Run a real collaborative multi-agent session."""
+        if team_name:
+            team = self.team_manager.get_team(team_name)
+            if not team:
+                raise ValueError(f"Team '{team_name}' not found or empty.")
+            selected = list(team)
+        else:
+            selected = list(agent_names or [])
+
+        if not selected:
+            raise ValueError("No agents provided for collaboration.")
+
+        return self.collaboration_engine.run(goal=goal, agent_names=selected, rounds=rounds)
+
+    async def collaborate_async(
+        self,
+        goal: str,
+        *,
+        team_name: str | None = None,
+        agent_names: list[str] | None = None,
+        rounds: int = 2,
+    ) -> dict:
+        """Async version of collaborate()."""
+        if team_name:
+            team = self.team_manager.get_team(team_name)
+            if not team:
+                raise ValueError(f"Team '{team_name}' not found or empty.")
+            selected = list(team)
+        else:
+            selected = list(agent_names or [])
+
+        if not selected:
+            raise ValueError("No agents provided for collaboration.")
+
+        return await self.collaboration_engine.run_async(
+            goal=goal,
+            agent_names=selected,
+            rounds=rounds,
+        )
+
+    def collaboration_session(self, session_id: str) -> dict | None:
+        """Get one collaboration session by ID."""
+        return self.collaboration_engine.get_session(session_id)
+
+    def collaboration_sessions(self, limit: int = 50) -> list[dict]:
+        """List recent collaboration sessions."""
+        return self.collaboration_engine.list_sessions(limit=limit)
 
     # ------------------------------------------------------------------
     # Feature 8 — JIT Tool Synthesis

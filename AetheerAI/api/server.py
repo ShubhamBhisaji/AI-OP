@@ -1,77 +1,44 @@
-"""
-AETHER OS — FastAPI Backend
-===========================
-Production-ready REST API that exposes the full AETHER multi-agent platform.
-
-Endpoints
----------
-  POST   /api/projects            Create & immediately run a project
-  GET    /api/projects            List all projects
-  GET    /api/projects/{id}       Get project detail + task results
-  DELETE /api/projects/{id}       Delete a project from history
-
-  POST   /api/agents              Create a custom agent
-  GET    /api/agents              List all registered agents
-  GET    /api/agents/{name}       Get agent profile
-  DELETE /api/agents/{name}       Unregister an agent
-  POST   /api/agents/{name}/run   Run a single task on a specific agent
-
-  POST   /api/chat                Single-turn AI assistant (no CEO planning)
-
-  GET    /api/health              Health / version check
-  GET    /api/memory              Inspect global memory keys
-  DELETE /api/memory/{key}        Delete a memory key
-
-Run
----
-  # From the AetheerAI/ directory:
-  uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
-  # Or:
-  python -m api.server
-"""
+"""FastAPI backend for AetheerAI autonomous multi-agent operations."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-import sys, os
+# Ensure local package imports work when running the module directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, status
-    from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse
-except ImportError as exc:
-    raise ImportError(
-        "FastAPI is required.  Install with: pip install fastapi uvicorn"
-    ) from exc
-
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from core.env_loader import load_env
-from core.aetheerai_kernel import AetheerAiKernel
 from agents.ceo_agent import CEOAgent, ProjectResult
+from core.aetheerai_kernel import AetheerAiKernel
+from core.env_loader import load_env
 
-# ── Load environment variables ─────────────────────────────────────────────
-_ENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-load_env(_ENV)
 
+logger = logging.getLogger("aetheer.api")
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-logger = logging.getLogger("aether.api")
 
-# ── In-process project store (swap for a real DB in production) ────────────
-_projects: dict[str, dict] = {}
 
-# ── Kernel singleton ────────────────────────────────────────────────────────
+_ENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+load_env(_ENV)
+
+_boot_time = time.time()
+_projects: dict[str, dict[str, Any]] = {}
+_projects_lock = threading.Lock()
 _kernel: AetheerAiKernel | None = None
 _ceo: CEOAgent | None = None
 
@@ -80,9 +47,9 @@ def _get_kernel() -> AetheerAiKernel:
     global _kernel
     if _kernel is None:
         provider = os.getenv("AI_PROVIDER", "openai")
-        model    = os.getenv("AI_MODEL", "gpt-4o")
-        _kernel  = AetheerAiKernel(ai_provider=provider, model=model)
-        logger.info("AETHER kernel booted (provider=%s model=%s)", provider, model)
+        model = os.getenv("AI_MODEL", "gpt-4o")
+        _kernel = AetheerAiKernel(ai_provider=provider, model=model)
+        logger.info("Kernel booted (provider=%s model=%s)", provider, model)
     return _kernel
 
 
@@ -100,75 +67,37 @@ def _get_ceo() -> CEOAgent:
     return _ceo
 
 
-# ── Lifespan (startup / shutdown) ──────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("AETHER OS starting up...")
-    _get_ceo()  # warm the kernel at boot
+    logger.info("AetheerAI API startup")
+    _get_ceo()
     yield
-    logger.info("AETHER OS shutting down.")
+    logger.info("AetheerAI API shutdown")
 
 
-# ── FastAPI application ─────────────────────────────────────────────────────
 app = FastAPI(
-    title="AETHER OS",
-    description="Autonomous Multi-Agent AI Operating System",
-    version="1.0.0",
+    title="AetheerAI API",
+    description="Autonomous multi-agent AI operating system backend",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
 )
 
-# ── CORS ───────────────────────────────────────────────────────────────────
-_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_origins,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Global exception handler ───────────────────────────────────────────────
 @app.exception_handler(Exception)
-async def _global_exc_handler(request: Request, exc: Exception):
-    logger.error("Unhandled error: %s", exc, exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"success": False, "error": "Internal server error"},
-    )
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Pydantic request / response schemas
-# ═══════════════════════════════════════════════════════════════════════════
-
-class ProjectRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200, description="Short project name")
-    goal: str = Field(..., min_length=1, description="High-level goal for the CEO agent")
-    context: dict[str, Any] = Field(default_factory=dict, description="Optional extra context")
-    max_cost_usd: float | None = None
-    max_runtime_seconds: int | None = None
-    background: bool = Field(default=False, description="Run asynchronously; poll for results")
-
-
-class AgentRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    role: str | None = None
-    tools: list[str] = Field(default_factory=list)
-    skills: list[str] = Field(default_factory=list)
-    permission_level: int = Field(default=1, ge=0, le=3)
-
-
-class AgentRunRequest(BaseModel):
-    task: str = Field(..., min_length=1)
-
-
-class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1)
-    system_prompt: str | None = None
-    history: list[dict[str, str]] = Field(default_factory=list)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled API error: %s", exc, exc_info=True)
+    return JSONResponse(status_code=500, content={"success": False, "error": "Internal server error"})
 
 
 class APIResponse(BaseModel):
@@ -178,20 +107,81 @@ class APIResponse(BaseModel):
     message: str | None = None
 
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
+class GoalRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    goal: str = Field(..., min_length=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+    max_cost_usd: float | None = None
+    max_runtime_seconds: int | None = None
+    background: bool = False
+    parallel: bool = True
+    collaboration_mode: bool = False
+    offline_local_mode: bool = False
+    fast_mode_collaboration: bool = False
 
-def _project_result_to_dict(pid: str, name: str, result: ProjectResult) -> dict:
+
+class AgentRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    role: str | None = None
+    tools: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+    objectives: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+    permission_level: int = Field(default=1, ge=0, le=5)
+
+
+class AgentRunRequest(BaseModel):
+    task: str = Field(..., min_length=1)
+
+
+class AgentDesignRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    role_description: str = Field(..., min_length=1, max_length=200)
+    goal: str = Field(..., min_length=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+    permission_level: int | None = Field(default=None, ge=1, le=5)
+
+
+class CollaborationRequest(BaseModel):
+    goal: str = Field(..., min_length=1)
+    team_name: str | None = None
+    agent_names: list[str] = Field(default_factory=list)
+    rounds: int = Field(default=2, ge=1, le=6)
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    system_prompt: str | None = None
+    history: list[dict[str, str]] = Field(default_factory=list)
+
+
+def _serialize_project_result(project_id: str, name: str, result: ProjectResult) -> dict[str, Any]:
+    total = max(1, result.total_tasks)
     return {
-        "id": pid,
+        "id": project_id,
+        "workflow_id": result.workflow_id,
         "name": name,
         "goal": result.goal,
         "status": result.status,
         "plan_summary": result.final_summary,
+        "spent_usd": result.spent_usd,
+        "progress": {
+            "completed": result.completed_tasks,
+            "failed": result.failed_tasks,
+            "total": result.total_tasks,
+            "percent": round((result.completed_tasks / total) * 100.0, 2),
+        },
         "tasks": [
             {
+                "task_id": t.task_id,
                 "index": t.index,
                 "title": t.title,
+                "description": t.description,
                 "agent_type": t.agent_type,
+                "role_description": t.role_description,
+                "priority": t.priority,
+                "depends_on": t.depends_on,
+                "require_approval": t.require_approval,
                 "status": t.status,
                 "result": t.result,
                 "error": t.error,
@@ -204,180 +194,409 @@ def _project_result_to_dict(pid: str, name: str, result: ProjectResult) -> dict:
         "failed_tasks": result.failed_tasks,
         "elapsed_seconds": result.elapsed_seconds,
         "replanned": result.replanned,
+        "events": result.events,
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Health
-# ═══════════════════════════════════════════════════════════════════════════
+def _read_audit_logs(limit: int = 200) -> list[dict[str, Any]]:
+    root = Path(__file__).resolve().parents[1]
+    log_path = root / "memory" / "audit_log.jsonl"
+    if not log_path.exists() or limit <= 0:
+        return []
 
-@app.get("/api/health", tags=["System"])
-def health_check():
-    """Returns API status and configuration summary."""
-    return {
-        "status": "ok",
-        "version": "1.0.0",
-        "provider": os.getenv("AI_PROVIDER", "openai"),
-        "model": os.getenv("AI_MODEL", "gpt-4o"),
-    }
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return []
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Projects
-# ═══════════════════════════════════════════════════════════════════════════
-
-@app.post("/api/projects", tags=["Projects"], response_model=APIResponse, status_code=201)
-async def create_project(req: ProjectRequest, background_tasks: BackgroundTasks):
-    """
-    Submit a high-level goal. The CEO Agent plans, assigns, and runs tasks.
-
-    Set `background: true` to return immediately and poll GET /api/projects/{id}.
-    """
-    project_id = str(uuid.uuid4())
-    _projects[project_id] = {
-        "id": project_id,
-        "name": req.name,
-        "goal": req.goal,
-        "status": "pending",
-        "started_at": time.time(),
-    }
-
-    def _run():
+    out: list[dict[str, Any]] = []
+    for line in lines[-limit:]:
         try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            out.append({"raw": line})
+    return out
+
+
+def _find_task(task_id: str) -> dict[str, Any] | None:
+    with _projects_lock:
+        projects = list(_projects.values())
+
+    for project in projects:
+        for task in project.get("tasks", []):
+            if str(task.get("task_id", "")) == task_id:
+                return {
+                    "project_id": project.get("id"),
+                    "project_name": project.get("name"),
+                    **task,
+                }
+    return None
+
+
+async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> APIResponse:
+    project_id = str(uuid.uuid4())
+    with _projects_lock:
+        _projects[project_id] = {
+            "id": project_id,
+            "name": req.name,
+            "goal": req.goal,
+            "status": "pending",
+            "started_at": time.time(),
+            "offline_local_mode": req.offline_local_mode,
+            "fast_mode_collaboration": req.fast_mode_collaboration,
+        }
+
+    def _run_goal() -> None:
+        kernel = None
+        restore_provider_model: tuple[str, str] | None = None
+        try:
+            kernel = _get_kernel()
             ceo = _get_ceo()
-            # Override limits per-project if provided
             if req.max_cost_usd is not None:
                 ceo.max_cost_usd = req.max_cost_usd
             if req.max_runtime_seconds is not None:
                 ceo.max_runtime_seconds = req.max_runtime_seconds
 
-            _projects[project_id]["status"] = "running"
-            result: ProjectResult = ceo.run(req.goal, context=req.context or None)
-            _projects[project_id].update(_project_result_to_dict(project_id, req.name, result))
-            _projects[project_id]["status"] = result.status
+            if req.offline_local_mode:
+                target_provider = os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama").strip().lower() or "ollama"
+                target_model = os.getenv("AETHEER_OFFLINE_MODEL", "llama3.2:1b").strip() or "llama3.2:1b"
+                current = (kernel.ai_adapter.provider, kernel.ai_adapter.model)
+                if current != (target_provider, target_model):
+                    try:
+                        kernel.ai_adapter.switch(target_provider, target_model)
+                        restore_provider_model = current
+                        logger.info(
+                            "Goal %s running in offline_local_mode using %s/%s",
+                            project_id,
+                            target_provider,
+                            target_model,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Goal %s requested offline_local_mode but provider switch failed: %s",
+                            project_id,
+                            exc,
+                        )
+
+            with _projects_lock:
+                _projects[project_id]["status"] = "running"
+
+            result = ceo.run(
+                req.goal,
+                context=req.context or None,
+                parallel=req.parallel,
+                collaboration_mode=req.collaboration_mode,
+                offline_local_mode=req.offline_local_mode,
+                fast_mode_collaboration=req.fast_mode_collaboration,
+            )
+            payload = _serialize_project_result(project_id, req.name, result)
+            payload["started_at"] = _projects[project_id].get("started_at")
+            with _projects_lock:
+                _projects[project_id].update(payload)
+                _projects[project_id]["status"] = result.status
         except Exception as exc:
-            logger.error("Project %s failed: %s", project_id, exc, exc_info=True)
-            _projects[project_id]["status"] = "failed"
-            _projects[project_id]["error"] = str(exc)
+            logger.error("Goal %s failed: %s", project_id, exc, exc_info=True)
+            with _projects_lock:
+                _projects[project_id]["status"] = "failed"
+                _projects[project_id]["error"] = str(exc)
+        finally:
+            if restore_provider_model is not None and kernel is not None:
+                try:
+                    kernel.ai_adapter.switch(restore_provider_model[0], restore_provider_model[1])
+                except Exception as exc:
+                    logger.warning("Failed to restore provider/model after goal %s: %s", project_id, exc)
 
     if req.background:
-        background_tasks.add_task(_run)
+        background_tasks.add_task(_run_goal)
         return APIResponse(
             data={"id": project_id, "status": "pending"},
-            message="Project queued — poll GET /api/projects/{id} for results.",
+            message="Goal accepted. Poll /api/goals/{id} for updates.",
         )
 
-    # Run synchronously (blocks until complete)
-    _run()
-    return APIResponse(data=_projects[project_id])
+    _run_goal()
+    with _projects_lock:
+        return APIResponse(data=dict(_projects[project_id]))
+
+
+@app.get("/api/health", tags=["System"], response_model=APIResponse)
+def health_check():
+    return APIResponse(
+        data={
+            "status": "ok",
+            "version": "2.0.0",
+            "provider": os.getenv("AI_PROVIDER", "openai"),
+            "model": os.getenv("AI_MODEL", "gpt-4o"),
+            "offline_local_mode_default": os.getenv("AETHEER_OFFLINE_LOCAL_MODE", "false").strip().lower()
+            in {"1", "true", "yes", "on"},
+            "fast_mode_collaboration_default": os.getenv("AETHEER_FAST_MODE_COLLABORATION", "false")
+            .strip()
+            .lower()
+            in {"1", "true", "yes", "on"},
+            "offline_provider": os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama"),
+            "offline_model": os.getenv("AETHEER_OFFLINE_MODEL", "llama3.2:1b"),
+        }
+    )
+
+
+@app.get("/api/system/status", tags=["System"], response_model=APIResponse)
+def system_status():
+    kernel = _get_kernel()
+    with _projects_lock:
+        projects = list(_projects.values())
+
+    data = {
+        "status": "ok",
+        "uptime_seconds": round(time.time() - _boot_time, 3),
+        "provider": os.getenv("AI_PROVIDER", "openai"),
+        "model": os.getenv("AI_MODEL", "gpt-4o"),
+        "offline_local_mode_default": os.getenv("AETHEER_OFFLINE_LOCAL_MODE", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
+        "fast_mode_collaboration_default": os.getenv("AETHEER_FAST_MODE_COLLABORATION", "false")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"},
+        "offline_provider": os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama"),
+        "offline_model": os.getenv("AETHEER_OFFLINE_MODEL", "llama3.2:1b"),
+        "projects": {
+            "total": len(projects),
+            "running": len([p for p in projects if p.get("status") == "running"]),
+            "completed": len([p for p in projects if p.get("status") == "completed"]),
+            "partial": len([p for p in projects if p.get("status") == "partial"]),
+            "failed": len([p for p in projects if p.get("status") == "failed"]),
+            "cancelled": len([p for p in projects if p.get("status") == "cancelled"]),
+        },
+        "agents_registered": len(kernel.registry.list_names()),
+        "tools_registered": len(kernel.tool_manager.list_tools()),
+        "memory_keys": len(kernel.memory.keys()),
+        "collaboration_sessions": len(kernel.collaboration_sessions(limit=1000)),
+    }
+    return APIResponse(data=data)
+
+
+@app.get("/api/logs", tags=["System"], response_model=APIResponse)
+def list_logs(limit: int = 200):
+    return APIResponse(data=_read_audit_logs(limit=limit))
+
+
+@app.post("/api/goals", tags=["Goals"], response_model=APIResponse, status_code=201)
+async def submit_goal(req: GoalRequest, background_tasks: BackgroundTasks):
+    return await _submit_goal(req, background_tasks)
+
+
+@app.get("/api/goals", tags=["Goals"], response_model=APIResponse)
+def list_goals():
+    with _projects_lock:
+        items = sorted(_projects.values(), key=lambda p: p.get("started_at", 0), reverse=True)
+        return APIResponse(data=list(items))
+
+
+@app.get("/api/goals/{goal_id}", tags=["Goals"], response_model=APIResponse)
+def get_goal(goal_id: str):
+    with _projects_lock:
+        project = _projects.get(goal_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"Goal '{goal_id}' not found.")
+        return APIResponse(data=dict(project))
+
+
+@app.get("/api/goals/{goal_id}/tasks", tags=["Goals"], response_model=APIResponse)
+def get_goal_tasks(goal_id: str):
+    with _projects_lock:
+        project = _projects.get(goal_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"Goal '{goal_id}' not found.")
+        return APIResponse(data=project.get("tasks", []))
+
+
+@app.get("/api/tasks/{task_id}", tags=["Goals"], response_model=APIResponse)
+def get_task(task_id: str):
+    task = _find_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found.")
+    return APIResponse(data=task)
+
+
+@app.post("/api/collaborations", tags=["Collaboration"], response_model=APIResponse, status_code=201)
+def run_collaboration(req: CollaborationRequest):
+    kernel = _get_kernel()
+
+    if req.team_name and req.agent_names:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either team_name or agent_names, not both.",
+        )
+    if not req.team_name and not req.agent_names:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide team_name or at least one agent name.",
+        )
+
+    try:
+        payload = kernel.collaborate(
+            goal=req.goal,
+            team_name=req.team_name,
+            agent_names=req.agent_names or None,
+            rounds=req.rounds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return APIResponse(data=payload)
+
+
+@app.get("/api/collaborations", tags=["Collaboration"], response_model=APIResponse)
+def list_collaborations(limit: int = 50):
+    kernel = _get_kernel()
+    return APIResponse(data=kernel.collaboration_sessions(limit=limit))
+
+
+@app.get("/api/collaborations/{session_id}", tags=["Collaboration"], response_model=APIResponse)
+def get_collaboration(session_id: str):
+    kernel = _get_kernel()
+    session = kernel.collaboration_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Collaboration session '{session_id}' not found.")
+    return APIResponse(data=session)
+
+
+# Backward-compatible project routes.
+@app.post("/api/projects", tags=["Projects"], response_model=APIResponse, status_code=201)
+async def create_project(req: GoalRequest, background_tasks: BackgroundTasks):
+    return await _submit_goal(req, background_tasks)
 
 
 @app.get("/api/projects", tags=["Projects"], response_model=APIResponse)
 def list_projects():
-    """List all projects (most recent first)."""
-    items = sorted(_projects.values(), key=lambda p: p.get("started_at", 0), reverse=True)
-    return APIResponse(data=items)
+    return list_goals()
 
 
 @app.get("/api/projects/{project_id}", tags=["Projects"], response_model=APIResponse)
 def get_project(project_id: str):
-    """Get full detail for a project including all task results."""
-    proj = _projects.get(project_id)
-    if not proj:
-        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found.")
-    return APIResponse(data=proj)
+    return get_goal(project_id)
 
 
 @app.delete("/api/projects/{project_id}", tags=["Projects"], response_model=APIResponse)
 def delete_project(project_id: str):
-    """Remove a project from the in-process store."""
-    if project_id not in _projects:
-        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found.")
-    del _projects[project_id]
+    with _projects_lock:
+        if project_id not in _projects:
+            raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found.")
+        del _projects[project_id]
     return APIResponse(message=f"Project '{project_id}' deleted.")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Agents
-# ═══════════════════════════════════════════════════════════════════════════
-
 @app.post("/api/agents", tags=["Agents"], response_model=APIResponse, status_code=201)
 def create_agent(req: AgentRequest):
-    """Create and register a custom agent."""
     kernel = _get_kernel()
     if kernel.registry.get(req.name):
         raise HTTPException(status_code=409, detail=f"Agent '{req.name}' already exists.")
+
     try:
         agent = kernel.factory.create(
             name=req.name,
             role=req.role,
             tools=req.tools or None,
             skills=req.skills or None,
+            objectives=req.objectives or None,
+            permissions=req.permissions or None,
             permission_level=req.permission_level,
         )
-        return APIResponse(data=agent.to_dict(), message=f"Agent '{req.name}' created.", )
+        if hasattr(agent, "attach_runtime"):
+            agent.attach_runtime(
+                ai_adapter=kernel.ai_adapter,
+                workflow_engine=kernel.workflow_engine,
+                tool_manager=kernel.tool_manager,
+            )
+        if hasattr(agent, "attach_memory"):
+            agent.attach_memory(kernel.memory)
+        return APIResponse(data=agent.to_dict(), message=f"Agent '{req.name}' created.")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/agents/design", tags=["Agents"], response_model=APIResponse, status_code=201)
+def design_agent(req: AgentDesignRequest):
+    kernel = _get_kernel()
+    if kernel.registry.get(req.name):
+        raise HTTPException(status_code=409, detail=f"Agent '{req.name}' already exists.")
+
+    try:
+        agent = kernel.factory.design_agent(
+            name=req.name,
+            role_description=req.role_description,
+            goal=req.goal,
+            context=req.context,
+            permission_level=req.permission_level,
+        )
+        if hasattr(agent, "attach_runtime"):
+            agent.attach_runtime(
+                ai_adapter=kernel.ai_adapter,
+                workflow_engine=kernel.workflow_engine,
+                tool_manager=kernel.tool_manager,
+            )
+        if hasattr(agent, "attach_memory"):
+            agent.attach_memory(kernel.memory)
+        return APIResponse(data=agent.to_dict(), message=f"Agent '{req.name}' designed and created.")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/agents", tags=["Agents"], response_model=APIResponse)
 def list_agents():
-    """List all registered agents."""
     kernel = _get_kernel()
-    agents = kernel.registry.list_all()   # already returns list[dict]
-    return APIResponse(data=agents)
+    return APIResponse(data=kernel.registry.list_all())
 
 
 @app.get("/api/agents/{agent_name}", tags=["Agents"], response_model=APIResponse)
 def get_agent(agent_name: str):
-    """Get an agent's full profile."""
     kernel = _get_kernel()
     agent = kernel.registry.get(agent_name)
-    if not agent:
+    if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
     return APIResponse(data=agent.to_dict())
 
 
 @app.delete("/api/agents/{agent_name}", tags=["Agents"], response_model=APIResponse)
 def delete_agent(agent_name: str):
-    """Unregister an agent."""
     kernel = _get_kernel()
-    if not kernel.registry.get(agent_name):
+    if not kernel.registry.remove(agent_name):
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
-    kernel.registry.remove(agent_name)
     return APIResponse(message=f"Agent '{agent_name}' removed.")
 
 
 @app.post("/api/agents/{agent_name}/run", tags=["Agents"], response_model=APIResponse)
 def run_agent_task(agent_name: str, req: AgentRunRequest):
-    """Run a single task directly on a named agent (bypasses CEO planning)."""
     kernel = _get_kernel()
     agent = kernel.registry.get(agent_name)
-    if not agent:
+    if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found.")
+
     try:
-        result = kernel.workflow_engine.execute(agent, req.task)
+        if hasattr(agent, "attach_runtime"):
+            agent.attach_runtime(
+                ai_adapter=kernel.ai_adapter,
+                workflow_engine=kernel.workflow_engine,
+                tool_manager=kernel.tool_manager,
+            )
+        if hasattr(agent, "attach_memory"):
+            agent.attach_memory(kernel.memory)
+
+        result = agent.execute_task(req.task)
         return APIResponse(data={"agent": agent_name, "result": result})
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Chat (direct assistant — no CEO planning)
-# ═══════════════════════════════════════════════════════════════════════════
-
 @app.post("/api/chat", tags=["Chat"], response_model=APIResponse)
 def chat(req: ChatRequest):
-    """
-    Single-turn AI assistant endpoint.
-    Useful for quick Q&A without spinning up a full project.
-    """
     kernel = _get_kernel()
-    messages = []
+    messages: list[dict[str, str]] = []
     if req.system_prompt:
         messages.append({"role": "system", "content": req.system_prompt})
-    messages.extend(req.history[-20:])      # keep last 20 turns (context guard)
+    messages.extend(req.history[-20:])
     messages.append({"role": "user", "content": req.message})
+
     try:
         reply = kernel.ai_adapter.chat(messages)
         return APIResponse(data={"reply": reply})
@@ -385,46 +604,31 @@ def chat(req: ChatRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Memory
-# ═══════════════════════════════════════════════════════════════════════════
-
 @app.get("/api/memory", tags=["Memory"], response_model=APIResponse)
 def get_memory(namespace: str = "global"):
-    """Inspect the current in-memory key-value store."""
     kernel = _get_kernel()
     try:
-        data = kernel.memory.all(namespace=namespace) if hasattr(kernel.memory, "all") else {}
-    except Exception:
-        data = {}
+        data = kernel.memory.all(namespace=namespace)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return APIResponse(data=data)
 
 
 @app.delete("/api/memory/{key}", tags=["Memory"], response_model=APIResponse)
 def delete_memory_key(key: str, namespace: str = "global"):
-    """Delete a key from memory."""
     kernel = _get_kernel()
     try:
-        deleted = kernel.memory.delete(key, namespace=namespace) if hasattr(kernel.memory, "delete") else False
-        if not deleted:
-            raise HTTPException(status_code=404, detail=f"Key '{key}' not found in namespace '{namespace}'.")
-    except HTTPException:
-        raise
+        deleted = kernel.memory.delete(key, namespace=namespace)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    return APIResponse(message=f"Key '{key}' deleted from '{namespace}'.")
+        raise HTTPException(status_code=400, detail=str(exc))
 
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Key '{key}' not found in namespace '{namespace}'.")
+    return APIResponse(message=f"Key '{key}' deleted from namespace '{namespace}'.")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI entrypoint
-# ═══════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    try:
-        import uvicorn
-    except ImportError:
-        print("uvicorn is required.  Install with: pip install uvicorn")
-        sys.exit(1)
+    import uvicorn
 
     uvicorn.run(
         "api.server:app",

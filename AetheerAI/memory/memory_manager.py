@@ -229,6 +229,63 @@ class MemoryManager:
         """Return a shallow copy of the entire memory store."""
         return dict(self._store)
 
+    def all(self, namespace: str = "global") -> dict[str, Any]:
+        """Return all key/value pairs visible in a namespace.
+
+        For non-global namespaces, returned keys are de-prefixed so callers
+        can work with bare logical keys.
+        """
+        self._assert_namespace(namespace)
+        if namespace == "global":
+            return dict(self._store)
+
+        prefix = f"{namespace}:"
+        out: dict[str, Any] = {}
+        for key, value in self._store.items():
+            if key.startswith(prefix):
+                out[key[len(prefix):]] = value
+        return out
+
+    def recent(self, namespace: str = "global", limit: int = 20) -> list[dict[str, Any]]:
+        """Return up to *limit* most recent task-history entries for a namespace."""
+        self._assert_namespace(namespace)
+        history = self.load("task_history", default=[], namespace=namespace)
+        if not isinstance(history, list):
+            return []
+        return list(history[-max(1, limit):])
+
+    def remember_task(
+        self,
+        *,
+        namespace: str,
+        task: str,
+        output: str,
+        success: bool,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist a task execution entry and index it for semantic recall."""
+        self._assert_namespace(namespace)
+        entry = {
+            "task": task,
+            "output": output[:5000],
+            "success": success,
+            "metadata": metadata or {},
+        }
+        self.append("task_history", entry, namespace=namespace)
+        self.save("last_task_result", entry, namespace=namespace)
+
+    def retrieval_context(self, query: str, namespace: str = "global", n_results: int = 3) -> str:
+        """Return a compact text context assembled from semantic memory hits."""
+        hits = self.semantic_search(query=query, n_results=n_results, namespace=namespace)
+        if not hits:
+            return ""
+        lines: list[str] = []
+        for idx, hit in enumerate(hits, start=1):
+            key = str(hit.get("key", ""))
+            val = str(hit.get("value", ""))
+            lines.append(f"{idx}. {key}: {val[:400]}")
+        return "\n".join(lines)
+
     def __contains__(self, key: str) -> bool:
         return key in self._store
 
@@ -433,6 +490,28 @@ class ScopedMemory:
             namespace=self._ns,
             where=extra_filter,
         )
+
+    def recent(self, limit: int = 20) -> list[dict[str, Any]]:
+        return self._m.recent(namespace=self._ns, limit=limit)
+
+    def remember_task(
+        self,
+        *,
+        task: str,
+        output: str,
+        success: bool,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self._m.remember_task(
+            namespace=self._ns,
+            task=task,
+            output=output,
+            success=success,
+            metadata=metadata,
+        )
+
+    def retrieval_context(self, query: str, n_results: int = 3) -> str:
+        return self._m.retrieval_context(query=query, namespace=self._ns, n_results=n_results)
 
     def keys(self) -> list[str]:
         """Return bare keys (without namespace prefix) stored in this scope."""
