@@ -102,6 +102,12 @@ The worker stores retry/dead-letter lifecycle details in `metadata`, including:
 - `META_DEFAULT_INSTAGRAM_BUSINESS_ID`
 - `META_TIMEOUT_SECONDS` (default: `20`)
 
+Meta webhook callback configuration:
+
+- Callback URL: `https://<your-domain>/api/meta/webhook`
+- Verify token: must exactly match `META_WEBHOOK_VERIFY_TOKEN`
+- Event delivery: `POST /api/meta/webhook` validates `X-Hub-Signature-256` when `META_APP_SECRET` is set
+
 ### Vercel
 
 - `VERCEL_API_BASE_URL` (default: `https://api.vercel.com`)

@@ -171,6 +171,35 @@ class WorkerShutdownTests(unittest.TestCase):
         self.assertEqual(store.failed[0][0], "job-1")
         self.assertIn("interrupt", store.failed[0][1].lower())
 
+    def test_run_worker_graceful_drain_avoids_premature_interrupt_mark(self):
+        queue = _InterruptingQueue()
+        store = _WorkerStore()
+
+        def _completing_process(**_kwargs):
+            time.sleep(0.05)
+            return True
+
+        with patch.object(upstash_job_worker, "UpstashRedisQueue", return_value=queue), patch.object(
+            upstash_job_worker, "SupabaseJobStore", return_value=store
+        ), patch.object(upstash_job_worker, "_supported_shutdown_signals", return_value=()), patch.object(
+            upstash_job_worker, "_recover_stale_running_jobs", return_value=0
+        ), patch.object(upstash_job_worker, "_process_job_payload", side_effect=_completing_process):
+            upstash_job_worker.run_worker(
+                pop_timeout=1,
+                idle_sleep=0.01,
+                run_once=False,
+                max_concurrency=2,
+                shutdown_grace_seconds=0.5,
+                max_retries=0,
+                running_timeout_seconds=30,
+                stale_scan_interval_seconds=60,
+                stale_scan_batch_size=10,
+                dlq_queue_name="job_queue_dlq",
+                sandbox_enabled=False,
+            )
+
+        self.assertEqual(store.failed, [])
+
     def test_process_job_payload_non_retryable_errors_move_to_dlq(self):
         store = _ProcessStore()
 

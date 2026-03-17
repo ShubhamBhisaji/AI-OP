@@ -70,6 +70,9 @@ class ApiKeyRBACTests(unittest.TestCase):
         self.assertTrue(server_mod._role_allows("writer", "reader"))
         self.assertFalse(server_mod._role_allows("reader", "writer"))
 
+    def test_meta_webhook_path_is_public(self):
+        self.assertTrue(server_mod._is_public_path("/api/meta/webhook"))
+
     def test_strict_api_key_mode_defaults_on_in_production(self):
         with patch.dict(os.environ, {"AETHEER_ENV": "production"}, clear=True):
             self.assertTrue(server_mod._strict_api_keys_required())

@@ -31,9 +31,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from agents.ceo_agent import CEOAgent, ProjectResult
+from ai.ai_adapter import AIAdapter
 from api.auth import router as auth_router
 from api.database import GoalRun, SessionLocal, SystemLog, Task, init_db
 from api.db_router import router as db_router
+from api.meta_webhook_router import router as meta_webhook_router
 from api.predict import router as predict_router
 from api.product_router import router as product_router
 from api.queue_router import (
@@ -64,6 +66,7 @@ _ceo: CEOAgent | None = None
 _ml_engine = None
 _local_predictor = None
 _sqlite_log_handler: logging.Handler | None = None
+_ai_switch_lock = threading.RLock()
 
 _API_ROLE_ORDER = {"reader": 1, "writer": 2, "admin": 3}
 _api_keys_cache_raw: str | None = None
@@ -200,14 +203,62 @@ def _get_ceo() -> CEOAgent:
     global _ceo
     if _ceo is None:
         kernel = _get_kernel()
+        limits = _goal_runtime_limits()
         _ceo = CEOAgent(
             kernel,
-            max_tasks=int(os.getenv("MAX_TASKS_PER_PROJECT", "50")),
-            max_cost_usd=float(os.getenv("MAX_COST_USD", "10.0")),
-            max_runtime_seconds=int(os.getenv("MAX_RUNTIME_SECONDS", "600")),
-            max_retries=int(os.getenv("MAX_RETRIES", "3")),
+            max_tasks=limits["max_tasks"],
+            max_cost_usd=limits["max_cost_usd"],
+            max_runtime_seconds=limits["max_runtime_seconds"],
+            max_retries=limits["max_retries"],
         )
     return _ceo
+
+
+def _goal_runtime_limits() -> dict[str, Any]:
+    return {
+        "max_tasks": _env_int("MAX_TASKS_PER_PROJECT", 50, minimum=1),
+        "max_cost_usd": _env_float("MAX_COST_USD", 10.0, minimum=0.0),
+        "max_runtime_seconds": _env_int("MAX_RUNTIME_SECONDS", 600, minimum=1),
+        "max_retries": _env_int("MAX_RETRIES", 3, minimum=0),
+    }
+
+
+def _build_goal_ceo(
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    max_cost_usd: float | None = None,
+    max_runtime_seconds: int | None = None,
+) -> CEOAgent:
+    limits = _goal_runtime_limits()
+
+    if provider is None and model is None:
+        kernel = _get_kernel()
+    else:
+        resolved_provider, resolved_model = _resolve_ai_runtime()
+        kernel = AetheerAiKernel(
+            ai_provider=(provider or resolved_provider).strip().lower(),
+            model=(model or resolved_model).strip(),
+        )
+
+    resolved_max_cost_usd = (
+        limits["max_cost_usd"]
+        if max_cost_usd is None
+        else max(0.0, float(max_cost_usd))
+    )
+    resolved_max_runtime_seconds = (
+        limits["max_runtime_seconds"]
+        if max_runtime_seconds is None
+        else max(1, int(max_runtime_seconds))
+    )
+
+    return CEOAgent(
+        kernel,
+        max_tasks=limits["max_tasks"],
+        max_cost_usd=resolved_max_cost_usd,
+        max_runtime_seconds=resolved_max_runtime_seconds,
+        max_retries=limits["max_retries"],
+    )
 
 
 def _get_ml_engine():
@@ -253,24 +304,25 @@ def _attempt_runtime_failover(error: Exception | str) -> None:
 
     kernel = _get_kernel()
     target_provider = _runtime.config.failover_provider
-    target_model = _runtime.config.failover_model or kernel.ai_adapter.model
-    current = (kernel.ai_adapter.provider, kernel.ai_adapter.model)
-    if current == (target_provider, target_model):
-        _runtime.mark_failover_activated("failover target already active")
-        return
+    with _ai_switch_lock:
+        target_model = _runtime.config.failover_model or kernel.ai_adapter.model
+        current = (kernel.ai_adapter.provider, kernel.ai_adapter.model)
+        if current == (target_provider, target_model):
+            _runtime.mark_failover_activated("failover target already active")
+            return
 
-    try:
-        kernel.ai_adapter.switch(target_provider, target_model)
-        _runtime.mark_failover_activated(reason)
-        logger.warning(
-            "Automatic failover activated: %s/%s (reason=%s)",
-            target_provider,
-            target_model,
-            reason,
-        )
-    except Exception as exc:
-        _runtime.mark_failover_activation_failed(str(exc))
-        logger.error("Automatic failover activation failed: %s", exc)
+        try:
+            kernel.ai_adapter.switch(target_provider, target_model)
+            _runtime.mark_failover_activated(reason)
+            logger.warning(
+                "Automatic failover activated: %s/%s (reason=%s)",
+                target_provider,
+                target_model,
+                reason,
+            )
+        except Exception as exc:
+            _runtime.mark_failover_activation_failed(str(exc))
+            logger.error("Automatic failover activation failed: %s", exc)
 
 
 def _record_runtime_ai_success() -> None:
@@ -572,6 +624,10 @@ _TAGS_METADATA = [
         "description": "Low-level prediction endpoint for direct model calls with optional overrides.",
     },
     {
+        "name": "Integrations",
+        "description": "Inbound/outbound external provider routes such as Meta webhook callbacks.",
+    },
+    {
         "name": "Tasks",
         "description": "Execute one-off tasks directly against a named agent or the base AI adapter.",
     },
@@ -602,6 +658,7 @@ app.include_router(predict_router)
 app.include_router(reports_router)
 app.include_router(product_router)
 app.include_router(queue_router)
+app.include_router(meta_webhook_router)
 
 # Serve built-in Web UI static files
 _UI_DIR = Path(__file__).resolve().parents[1] / "ui"
@@ -676,7 +733,17 @@ def _configured_api_keys() -> dict[str, str]:
 
 
 def _is_public_path(path: str) -> bool:
-    if path in {"/", "/docs", "/redoc", "/openapi.json", "/api/health", "/api/ready", "/api/metrics", "/status"}:
+    if path in {
+        "/",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/api/health",
+        "/api/ready",
+        "/api/metrics",
+        "/status",
+        "/api/meta/webhook",
+    }:
         return True
     if path.startswith("/ui"):
         return True
@@ -1370,36 +1437,27 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
         }
 
     def _run_goal() -> None:
-        kernel = None
-        restore_provider_model: tuple[str, str] | None = None
         try:
-            kernel = _get_kernel()
-            ceo = _get_ceo()
-            if req.max_cost_usd is not None:
-                ceo.max_cost_usd = req.max_cost_usd
-            if req.max_runtime_seconds is not None:
-                ceo.max_runtime_seconds = req.max_runtime_seconds
-
             if req.offline_local_mode:
                 target_provider = os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama").strip().lower() or "ollama"
                 target_model = os.getenv("AETHEER_OFFLINE_MODEL", "llama3.2:1b").strip() or "llama3.2:1b"
-                current = (kernel.ai_adapter.provider, kernel.ai_adapter.model)
-                if current != (target_provider, target_model):
-                    try:
-                        kernel.ai_adapter.switch(target_provider, target_model)
-                        restore_provider_model = current
-                        logger.info(
-                            "Goal %s running in offline_local_mode using %s/%s",
-                            project_id,
-                            target_provider,
-                            target_model,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Goal %s requested offline_local_mode but provider switch failed: %s",
-                            project_id,
-                            exc,
-                        )
+                ceo = _build_goal_ceo(
+                    provider=target_provider,
+                    model=target_model,
+                    max_cost_usd=req.max_cost_usd,
+                    max_runtime_seconds=req.max_runtime_seconds,
+                )
+                logger.info(
+                    "Goal %s running in isolated offline_local_mode runtime using %s/%s",
+                    project_id,
+                    target_provider,
+                    target_model,
+                )
+            else:
+                ceo = _build_goal_ceo(
+                    max_cost_usd=req.max_cost_usd,
+                    max_runtime_seconds=req.max_runtime_seconds,
+                )
 
             with _projects_lock:
                 _projects[project_id]["status"] = "running"
@@ -1414,7 +1472,8 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
             )
             _record_runtime_ai_success()
             payload = _serialize_project_result(project_id, req.name, result)
-            payload["started_at"] = _projects[project_id].get("started_at")
+            with _projects_lock:
+                payload["started_at"] = _projects.get(project_id, {}).get("started_at")
             with _projects_lock:
                 _projects[project_id].update(payload)
                 _projects[project_id]["status"] = result.status
@@ -1436,12 +1495,6 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
                 _persist_project_to_db(project_id, req.name, snapshot)
             except Exception as db_exc:
                 logger.warning("Goal %s failure state could not be persisted: %s", project_id, db_exc)
-        finally:
-            if restore_provider_model is not None and kernel is not None:
-                try:
-                    kernel.ai_adapter.switch(restore_provider_model[0], restore_provider_model[1])
-                except Exception as exc:
-                    logger.warning("Failed to restore provider/model after goal %s: %s", project_id, exc)
 
     if req.background:
         background_tasks.add_task(_run_goal)
@@ -2314,19 +2367,22 @@ class VisionRequest(BaseModel):
 def predict(req: PredictRequest, background_tasks: BackgroundTasks):
     """Run a single-shot AI completion/chat prediction and return the model reply."""
     kernel = _get_kernel()
+    adapter = kernel.ai_adapter
+    using_override_adapter = bool(req.provider or req.model)
+    response_provider = str(adapter.provider)
+    response_model = str(adapter.model)
 
-    # Optionally switch provider/model just for this request
-    restore: tuple[str, str] | None = None
-    if req.provider or req.model:
-        target_provider = (req.provider or kernel.ai_adapter.provider).strip().lower()
-        target_model = (req.model or kernel.ai_adapter.model).strip()
-        current = (kernel.ai_adapter.provider, kernel.ai_adapter.model)
-        if (target_provider, target_model) != current:
-            try:
-                kernel.ai_adapter.switch(target_provider, target_model)
-                restore = current
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Provider/model switch failed: {exc}")
+    # Build a request-scoped adapter when overrides are provided so shared runtime
+    # state is not mutated across concurrent requests.
+    if using_override_adapter:
+        target_provider = (req.provider or response_provider).strip().lower()
+        target_model = (req.model or response_model).strip()
+        try:
+            adapter = AIAdapter(provider=target_provider, model=target_model)
+            response_provider = str(adapter.provider)
+            response_model = str(adapter.model)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Provider/model override failed: {exc}")
 
     local_model = _get_local_predictor()
     local_result = local_model.predict(req.prompt)
@@ -2344,21 +2400,22 @@ def predict(req: PredictRequest, background_tasks: BackgroundTasks):
         if req.temperature is not None:
             extra["temperature"] = req.temperature
 
-        reply = kernel.ai_adapter.chat(messages, **extra) if extra else kernel.ai_adapter.chat(messages)
+        reply = adapter.chat(messages, **extra) if extra else adapter.chat(messages)
         _record_runtime_ai_success()
 
         return APIResponse(
             data={
                 "reply": reply,
                 "local_prediction": local_result,
-                "provider": kernel.ai_adapter.provider,
-                "model": kernel.ai_adapter.model,
+                "provider": response_provider,
+                "model": response_model,
                 "prompt_length": len(req.prompt),
             }
         )
     except Exception as exc:
         # Keep /predict always usable, even without external AI credentials.
-        _attempt_runtime_failover(exc)
+        if not using_override_adapter:
+            _attempt_runtime_failover(exc)
         logger.warning("/predict cloud inference failed; returning local fallback: %s", exc)
         return APIResponse(
             data={
@@ -2371,12 +2428,6 @@ def predict(req: PredictRequest, background_tasks: BackgroundTasks):
             },
             message="Cloud model unavailable; returned local predictor result.",
         )
-    finally:
-        if restore is not None:
-            try:
-                kernel.ai_adapter.switch(restore[0], restore[1])
-            except Exception:
-                pass
 
 
 @app.post("/api/ml/train", tags=["Inference"], response_model=APIResponse,

@@ -2064,9 +2064,11 @@ def run_worker(
         _request_shutdown("interrupt")
     finally:
         if shutdown_requested and inflight:
-            logger.info("Shutdown started with %s in-flight job(s)", len(inflight))
-            for job_id in sorted(set(inflight.values())):
-                _mark_interrupted_job(store, job_id, shutdown_reason)
+            logger.info(
+                "Shutdown started with %s in-flight job(s); waiting up to %.2fs for graceful drain",
+                len(inflight),
+                shutdown_grace_seconds,
+            )
 
         if inflight and shutdown_grace_seconds > 0:
             done, pending = wait(set(inflight), timeout=shutdown_grace_seconds)
@@ -2077,6 +2079,10 @@ def run_worker(
                 except Exception:
                     logger.exception("Unexpected unhandled exception while draining worker futures")
             inflight = {future: inflight[future] for future in pending}
+
+        if shutdown_requested and inflight:
+            for job_id in sorted(set(inflight.values())):
+                _mark_interrupted_job(store, job_id, shutdown_reason)
 
         if inflight:
             for future in inflight:

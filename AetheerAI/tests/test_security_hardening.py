@@ -1,4 +1,5 @@
 ﻿import sys
+import asyncio
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -108,6 +109,29 @@ class SecurityHardeningTests(unittest.TestCase):
         self.assertNotIn("/", safe)
         self.assertNotIn("\\", safe)
         self.assertNotIn("..", safe)
+
+    def test_sync_request_rejects_awaitable_async_callback(self):
+        tm = _LeanToolManager()
+
+        def guarded_tool(value):
+            return value
+
+        async def _approval_callback(_tool_name, _agent_name, _tier, _args_summary):
+            return True
+
+        tm.register("github_tool", guarded_tool)
+
+        async def _invoke() -> None:
+            ApprovalGate.set_headless(False)
+            ApprovalGate.set_auto_approve(False)
+            ApprovalGate.set_async_callback(_approval_callback)
+            try:
+                with self.assertRaises(PermissionError):
+                    tm.call("github_tool", "ok", agent_name="agent-z", agent_level=3)
+            finally:
+                ApprovalGate.set_async_callback(None)
+
+        asyncio.run(_invoke())
 
 
 if __name__ == "__main__":

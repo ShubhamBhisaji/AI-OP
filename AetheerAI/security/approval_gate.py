@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 import asyncio
+import inspect
 import contextvars
 from typing import Any, Callable, Coroutine
 
@@ -178,26 +179,34 @@ class ApprovalGate:
             raise ApprovalDenied(msg)
 
         # BLOCKER-1 fix: Never silently approve in async context.
-        # Use the registered async callback; if none is set, reject (fail-safe).
+        # If an event loop is running, only synchronous callback results are accepted
+        # in this sync API. Awaitable callbacks must use request_async().
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
                 cb = cls._async_callback.get()
                 if cb is not None:
-                    # Delegate to the caller-supplied async-safe approval handler.
-                    # The callback must raise ApprovalDenied to block or return to allow.
-                    import inspect
                     result = cb(tool_name, agent_name, tier, args_summary)
                     if inspect.isawaitable(result):
-                        # Schedule on the running loop — cannot await here (sync call).
-                        # The callback is expected to be fire-and-forget or already resolved.
-                        logger.warning(
-                            "[ApprovalGate] ASYNC CALLBACK: agent=%s tool=%s (%s) — "
-                            "async callback scheduled; treating as approved for this invocation. "
-                            "Use request_async() for full async gating.",
-                            agent_name, tool_name, tier,
+                        closer = getattr(result, "close", None)
+                        if callable(closer):
+                            try:
+                                closer()
+                            except Exception:
+                                pass
+                        msg = (
+                            f"[ApprovalGate] ASYNC-REJECT: sync request() cannot await async "
+                            f"approval callback for {tier} tool '{tool_name}' by '{agent_name}'. "
+                            "Use ApprovalGate.request_async() in async execution paths."
                         )
-                    return  # callback did not raise → approved
+                        logger.error(msg)
+                        raise ApprovalDenied(msg)
+
+                    if result is False:
+                        raise ApprovalDenied(
+                            f"User denied execution of '{tool_name}' by agent '{agent_name}'."
+                        )
+                    return
                 # No async callback registered → fail-safe reject.
                 msg = (
                     f"[ApprovalGate] ASYNC-REJECT: no async approval callback registered. "
@@ -233,6 +242,87 @@ class ApprovalGate:
             )
 
         logger.info("[ApprovalGate] APPROVED: %s → %s", agent_name, tool_name)
+
+    @classmethod
+    async def request_async(
+        cls,
+        tool_name: str,
+        agent_name: str,
+        args_summary: str,
+        force: bool = False,
+    ) -> None:
+        """
+        Async approval API for guarded tools when running inside an event loop.
+
+        The registered async callback receives (tool_name, agent_name, tier, args_summary)
+        and may return:
+          - True / None: approve
+          - False: deny
+          - raise ApprovalDenied: deny
+        """
+        tier = (
+            "DESTRUCTIVE"
+            if tool_name in DESTRUCTIVE_TOOLS
+            else "HIGH-RISK"
+            if tool_name in HIGH_RISK_TOOLS
+            else "CUSTOM"
+            if force
+            else None
+        )
+        if tier is None:
+            return
+
+        if cls._auto_approve():
+            logger.warning(
+                "[ApprovalGate] AUTO-APPROVE: agent=%s tool=%s (%s) args=%s",
+                agent_name, tool_name, tier, args_summary,
+            )
+            return
+
+        if cls._headless():
+            msg = (
+                f"[ApprovalGate] HEADLESS MODE — auto-rejecting {tier} tool "
+                f"'{tool_name}' requested by agent '{agent_name}'."
+            )
+            logger.warning(msg)
+            raise ApprovalDenied(msg)
+
+        cb = cls._async_callback.get()
+        if cb is None:
+            msg = (
+                f"[ApprovalGate] ASYNC-REJECT: no async approval callback registered. "
+                f"Blocking {tier} tool '{tool_name}' for agent '{agent_name}'."
+            )
+            logger.error(msg)
+            raise ApprovalDenied(msg)
+
+        try:
+            result = cb(tool_name, agent_name, tier, args_summary)
+            decision = await result if inspect.isawaitable(result) else result
+        except ApprovalDenied:
+            raise
+        except Exception as exc:
+            msg = (
+                f"[ApprovalGate] ASYNC-REJECT: callback failed for {tier} tool "
+                f"'{tool_name}' by '{agent_name}': {exc}"
+            )
+            logger.error(msg)
+            raise ApprovalDenied(msg) from exc
+
+        if decision is False:
+            raise ApprovalDenied(
+                f"User denied execution of '{tool_name}' by agent '{agent_name}'."
+            )
+
+        if decision not in (None, True):
+            msg = (
+                f"[ApprovalGate] ASYNC-REJECT: invalid callback decision for "
+                f"'{tool_name}' ({type(decision).__name__})."
+            )
+            logger.error(msg)
+            raise ApprovalDenied(msg)
+
+        logger.info("[ApprovalGate] APPROVED (async): %s → %s", agent_name, tool_name)
 
 
 # ── Decorator for tool functions ─────────────────────────────────────────────
