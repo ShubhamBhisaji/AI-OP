@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator
@@ -103,6 +104,8 @@ _instance_id = (
 )
 _health_cache_ttl = _env_float("AETHEER_HEALTH_CACHE_TTL_SECONDS", 2.0, minimum=0.05)
 _status_cache_ttl = _env_float("AETHEER_STATUS_CACHE_TTL_SECONDS", 1.0, minimum=0.05)
+_alert_hook_timeout_seconds = _env_float("AETHEER_ALERT_WEBHOOK_TIMEOUT_SECONDS", 4.0, minimum=0.5)
+_alert_webhook_url = (_runtime.config.alert_webhook_url or "").strip()
 _non_throttled_paths = {
     "/api/health",
     "/api/ready",
@@ -121,9 +124,14 @@ class _SQLiteLogHandler(logging.Handler):
         db: Session | None = None
         try:
             context: dict[str, Any] | None = None
+            event = getattr(record, "event", None)
+            if event is not None:
+                context = {"event": event}
             if record.exc_info:
                 formatter = logging.Formatter()
-                context = {"traceback": formatter.formatException(record.exc_info)}
+                if context is None:
+                    context = {}
+                context["traceback"] = formatter.formatException(record.exc_info)
 
             db = SessionLocal()
             db.add(
@@ -246,6 +254,129 @@ def _record_runtime_ai_success() -> None:
     _runtime.record_ai_success()
 
 
+def _request_log_level(status_code: int) -> int:
+    if status_code >= 500:
+        return logging.ERROR
+    if status_code >= 400:
+        return logging.WARNING
+    return logging.INFO
+
+
+def _observability_settings() -> dict[str, Any]:
+    return {
+        "webhook_configured": bool(_alert_webhook_url),
+        "webhook_timeout_seconds": _alert_hook_timeout_seconds,
+        "error_rate_threshold_pct": _runtime.config.alert_error_rate_threshold_pct,
+        "p95_latency_ms_threshold": _runtime.config.alert_p95_latency_ms_threshold,
+        "saturation_threshold": _runtime.config.alert_saturation_threshold,
+        "min_requests": _runtime.config.alert_min_requests,
+        "cooldown_seconds": _runtime.config.alert_cooldown_seconds,
+    }
+
+
+def _emit_request_log_event(
+    *,
+    request_id: str,
+    method: str,
+    path: str,
+    status_code: int,
+    latency_ms: float,
+    client_id: str,
+    api_role: str,
+    rejected: bool,
+    error: str | None = None,
+) -> None:
+    event: dict[str, Any] = {
+        "event": "http_request",
+        "request_id": request_id,
+        "method": method,
+        "path": path,
+        "status_code": int(status_code),
+        "latency_ms": round(max(0.0, float(latency_ms)), 3),
+        "client_id": client_id,
+        "api_role": api_role,
+        "instance_id": _instance_id,
+        "rejected": rejected,
+    }
+    if error:
+        event["error"] = str(error)[:300]
+
+    logger.log(
+        _request_log_level(int(status_code)),
+        "http_request %s %s -> %s in %.3fms",
+        method,
+        path,
+        int(status_code),
+        round(max(0.0, float(latency_ms)), 3),
+        extra={"event": event},
+    )
+
+
+def _post_alert_webhook(alert: dict[str, Any]) -> None:
+    if not _alert_webhook_url:
+        return
+
+    payload = {
+        "event": "runtime_alert",
+        "instance_id": _instance_id,
+        "alert": alert,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        _alert_webhook_url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "AetheerAI-Observability/2.1",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=_alert_hook_timeout_seconds) as response:
+            status_code = int(getattr(response, "status", response.getcode()))
+        if status_code >= 300:
+            logger.warning(
+                "Runtime alert webhook returned non-2xx status=%s",
+                status_code,
+                extra={"event": {"event": "runtime_alert_hook", "status_code": status_code}},
+            )
+    except Exception as exc:
+        logger.error(
+            "Runtime alert webhook delivery failed: %s",
+            exc,
+            exc_info=True,
+            extra={"event": {"event": "runtime_alert_hook", "error": str(exc)[:300]}},
+        )
+
+
+def _dispatch_runtime_alert_if_needed() -> None:
+    alert = _runtime.evaluate_alerts(uptime_seconds=time.time() - _boot_time)
+    if alert is None:
+        return
+
+    provider, model = _runtime_active_provider_model()
+    alert["runtime"] = {
+        "provider": provider,
+        "model": model,
+    }
+    reason_codes = [str(item.get("code", "")) for item in alert.get("reasons", [])]
+    logger.warning(
+        "runtime_alert_triggered severity=%s reasons=%s",
+        alert.get("severity", "warning"),
+        ",".join(code for code in reason_codes if code),
+        extra={"event": {"event": "runtime_alert", "alert": alert}},
+    )
+
+    if _alert_webhook_url:
+        threading.Thread(
+            target=_post_alert_webhook,
+            args=(dict(alert),),
+            daemon=True,
+            name="aetheer-alert-hook",
+        ).start()
+
+
 def _run_nlp(action: str, text: str, labels=None, question: str = "", max_length: int = 150, target_lang: str = "en") -> str:
     from tools.nlp_tool import nlp_tool
     return nlp_tool(
@@ -283,6 +414,9 @@ async def lifespan(app: FastAPI):
 
     logger.info("AetheerAI API startup")
     init_db()
+
+    if _alert_webhook_url:
+        logger.info("Runtime alert webhook configured")
 
     if _sqlite_log_handler is None:
         _sqlite_log_handler = _SQLiteLogHandler(level=logging.WARNING)
@@ -599,6 +733,18 @@ async def security_middleware(request: Request, call_next):
             client_id=client_id,
             error=error,
         )
+        _emit_request_log_event(
+            request_id=request_id,
+            method=method,
+            path=path,
+            status_code=status_code,
+            latency_ms=elapsed_ms,
+            client_id=client_id,
+            api_role=getattr(request.state, "api_role", "unknown"),
+            rejected=True,
+            error=error,
+        )
+        _dispatch_runtime_alert_if_needed()
         payload: dict[str, Any] = {"success": False, "error": error}
         headers = {
             "X-Request-ID": request_id,
@@ -664,6 +810,18 @@ async def security_middleware(request: Request, call_next):
             client_id=client_id,
             error=failure_text,
         )
+        _emit_request_log_event(
+            request_id=request_id,
+            method=method,
+            path=path,
+            status_code=status_code,
+            latency_ms=elapsed_ms,
+            client_id=client_id,
+            api_role=getattr(request.state, "api_role", "unknown"),
+            rejected=False,
+            error=failure_text,
+        )
+        _dispatch_runtime_alert_if_needed()
         if acquired_slot:
             _request_slots.release()
 
@@ -1361,6 +1519,10 @@ def system_status():
             "memory_keys": len(kernel.memory.keys()),
             "collaboration_sessions": len(kernel.collaboration_sessions(limit=1000)),
             "runtime_metrics": runtime_metrics,
+            "observability": {
+                "settings": _observability_settings(),
+                "recent_alerts": _runtime.recent_alerts(limit=5),
+            },
             "failover": _runtime.failover_state(provider, model),
         }
 
@@ -1381,6 +1543,21 @@ def system_traces(limit: int = 100):
 def system_failover_state():
     provider, model = _runtime_active_provider_model()
     return APIResponse(data=_runtime.failover_state(provider, model))
+
+
+@app.get("/api/system/observability", tags=["System"], response_model=APIResponse,
+         summary="Observability state",
+         description="Returns observability thresholds, monitoring hook status, and recent alerts.")
+def system_observability(limit: int = 25):
+    safe_limit = max(1, min(limit, 50))
+    return APIResponse(
+        data={
+            "instance_id": _instance_id,
+            "runtime_metrics": _runtime.metrics_snapshot(),
+            "settings": _observability_settings(),
+            "recent_alerts": _runtime.recent_alerts(limit=safe_limit),
+        }
+    )
 
 
 @app.get("/api/logs", tags=["System"], response_model=APIResponse,
@@ -2268,6 +2445,10 @@ def status():
                 "agents_registered": len(kernel.registry.list_names()),
                 "tools_registered": len(kernel.tool_manager.list_tools()),
                 "runtime_metrics": _runtime.metrics_snapshot(),
+                "observability": {
+                    "settings": _observability_settings(),
+                    "recent_alerts": _runtime.recent_alerts(limit=3),
+                },
                 "failover": _runtime.failover_state(provider, model),
             }
 

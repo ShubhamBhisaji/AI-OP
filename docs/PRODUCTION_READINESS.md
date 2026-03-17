@@ -13,8 +13,9 @@ knobs available for running AetheerAI in production environments.
 4. [Observability Endpoints](#observability-endpoints)
 5. [Response Compression](#response-compression)
 6. [Uvicorn Tuning](#uvicorn-tuning)
-7. [Environment Variable Reference](#environment-variable-reference)
-8. [Docker Health Checks](#docker-health-checks)
+7. [Async Worker Auto-Scaling](#async-worker-auto-scaling)
+8. [Environment Variable Reference](#environment-variable-reference)
+9. [Docker Health Checks](#docker-health-checks)
 
 ---
 
@@ -74,6 +75,14 @@ Failover is **disabled** when `AETHEER_FAILOVER_PROVIDER` is empty.
 
 ## Observability Endpoints
 
+Every HTTP request is instrumented with:
+- Request ID correlation (`X-Request-ID` header in and out)
+- Runtime trace capture (`/api/system/traces`)
+- Structured request log events (`event=http_request`) including method, path,
+  status, latency, role, and client fingerprint
+
+Set `LOG_JSON=1` to emit JSON log lines with structured context payloads.
+
 ### `GET /api/health`
 
 Liveness probe. Returns `200 OK` with instance ID, uptime, load metrics,
@@ -96,8 +105,11 @@ Prometheus-compatible text format export. Exposes:
 - `aetheer_errors_total` — total 5xx responses
 - `aetheer_rejected_total` — requests rejected by rate limiter / backpressure
 - `aetheer_request_latency_ms_avg` — average request latency
+- `aetheer_request_latency_ms_p95` — p95 latency over recent samples
+- `aetheer_error_rate_pct` — 5xx error rate percentage
 - `aetheer_requests_in_flight` — current concurrent requests
 - `aetheer_uptime_seconds` — process uptime
+- `aetheer_alerts_total` — runtime alerts triggered by thresholds
 - `aetheer_failover_activations_total` — automatic failover activations
 - `aetheer_failover_enabled` — whether failover is configured
 - `aetheer_http_responses_total{status="2xx"}` — per-status-class counts
@@ -116,10 +128,28 @@ Returns the current failover configuration and state: enabled, configured
 provider/model, active provider/model, failure streak, threshold, cooldown,
 activation history.
 
+### `GET /api/system/observability`
+
+Returns the live observability posture:
+- Current runtime metrics snapshot
+- Alert threshold/cooldown configuration
+- Monitoring hook status (`webhook_configured`)
+- Recent triggered runtime alerts
+
 ### `GET /api/system/status` and `GET /status`
 
 Extended system status including runtime metrics, failover state, model info,
-and kernel state. Cached with a configurable TTL.
+kernel state, and a compact `observability` section with recent alerts.
+
+### Runtime Alerting and Monitoring Hooks
+
+Runtime alerts are evaluated on each request using configurable thresholds:
+- Error-rate threshold
+- p95 latency threshold
+- In-flight saturation threshold
+
+Triggered alerts are logged as `event=runtime_alert`. If webhook delivery is
+configured, each alert is POSTed to your monitoring endpoint as JSON.
 
 ---
 
@@ -148,6 +178,44 @@ For multi-core hosts, set `AETHER_WORKERS` to the number of CPU cores.
 
 ---
 
+## Async Worker Auto-Scaling
+
+`start_worker.py` now acts as a supervisor and scales queue worker replicas based
+on Redis queue depth. This removes the single-worker bottleneck while still
+allowing fixed-size worker pools when needed.
+
+Scaling behavior:
+
+1. Compute desired replicas as `ceil(queue_depth / target_queue_depth_per_worker)`.
+2. Clamp desired replicas to `[min_workers, max_workers]`.
+3. Scale up immediately when queue depth rises.
+4. Scale down only after the queue remains empty for the cooldown window.
+
+| Variable | Default | Description |
+|---|---|---|
+| `AETHEER_WORKER_AUTOSCALE` | `1` | Enable/disable queue-depth based autoscaling |
+| `AETHEER_WORKER_MIN_PROCESSES` | `1` | Minimum worker process replicas |
+| `AETHEER_WORKER_MAX_PROCESSES` | CPU cores (capped at 16) | Maximum worker process replicas |
+| `AETHEER_WORKER_TARGET_QUEUE_DEPTH_PER_WORKER` | `4` | Target queued jobs per worker before scale-up |
+| `AETHEER_WORKER_SCALE_INTERVAL_SECONDS` | `5.0` | Autoscaling sample interval |
+| `AETHEER_WORKER_SCALE_DOWN_COOLDOWN_SECONDS` | `45.0` | Required queue-empty window before scale-down |
+| `AETHEER_WORKER_PROCESSES` | `1` | Fixed worker replicas when autoscale is disabled |
+| `AETHEER_WORKER_MAX_CONCURRENCY` | `1` | Thread concurrency per worker process |
+
+Example fixed mode:
+
+```bash
+python start_worker.py --no-autoscale --workers 4
+```
+
+Example autoscale mode:
+
+```bash
+python start_worker.py --autoscale --min-workers 1 --max-workers 8 --target-queue-depth-per-worker 3
+```
+
+---
+
 ## Environment Variable Reference
 
 All variables support both `AETHEER_` and `AETHER_` prefixes (the `AETHEER_`
@@ -163,14 +231,30 @@ variant takes priority when both are set).
 | `AETHEER_FAILOVER_COOLDOWN_SECONDS` | float | 30.0 | 1.0 |
 | `AETHEER_FAILOVER_PROVIDER` | str | `""` | — |
 | `AETHEER_FAILOVER_MODEL` | str | `""` | — |
+| `AETHEER_ALERT_ERROR_RATE_THRESHOLD_PCT` | float | 5.0 | 0.1 |
+| `AETHEER_ALERT_P95_LATENCY_MS_THRESHOLD` | float | 1500.0 | 1.0 |
+| `AETHEER_ALERT_SATURATION_THRESHOLD` | float | 0.95 | 0.05 |
+| `AETHEER_ALERT_MIN_REQUESTS` | int | 25 | 1 |
+| `AETHEER_ALERT_COOLDOWN_SECONDS` | float | 120.0 | 1.0 |
+| `AETHEER_ALERT_WEBHOOK_URL` | str | `""` | — |
+| `AETHEER_ALERT_WEBHOOK_TIMEOUT_SECONDS` | float | 4.0 | 0.5 |
 | `AETHEER_GZIP_MIN_BYTES` | int | 1024 | — |
 | `AETHEER_INSTANCE_ID` | str | auto-generated | — |
 | `AETHEER_HEALTH_CACHE_TTL_SECONDS` | float | 2.0 | — |
-| `AETHEER_STATUS_CACHE_TTL_SECONDS` | float | 5.0 | — |
+| `AETHEER_STATUS_CACHE_TTL_SECONDS` | float | 1.0 | — |
+| `LOG_JSON` | bool | false | — |
 | `AETHER_WORKERS` / `AETHEER_WORKERS` | int | 1 | 1 |
 | `AETHER_LIMIT_CONCURRENCY` | int | (unset) | — |
 | `AETHER_BACKLOG` | int | 2048 | — |
 | `AETHER_KEEPALIVE_SECONDS` | int | 30 | — |
+| `AETHEER_WORKER_AUTOSCALE` | bool | true | — |
+| `AETHEER_WORKER_MIN_PROCESSES` | int | 1 | 1 |
+| `AETHEER_WORKER_MAX_PROCESSES` | int | cpu_count (max 16) | 1 |
+| `AETHEER_WORKER_TARGET_QUEUE_DEPTH_PER_WORKER` | int | 4 | 1 |
+| `AETHEER_WORKER_SCALE_INTERVAL_SECONDS` | float | 5.0 | 0.5 |
+| `AETHEER_WORKER_SCALE_DOWN_COOLDOWN_SECONDS` | float | 45.0 | 1.0 |
+| `AETHEER_WORKER_PROCESSES` | int | 1 | 1 |
+| `AETHEER_WORKER_MAX_CONCURRENCY` | int | 1 | 1 |
 
 ---
 

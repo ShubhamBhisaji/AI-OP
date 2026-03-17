@@ -78,6 +78,8 @@ class JobRecord:
     error:        str          = ""
     attempts:     int          = 0
     max_retries:  int          = 1
+    owner_user_id: int | None  = None
+    owner_username: str        = ""
     # These are NOT persisted
     _callable:    Callable | None = field(default=None, repr=False, compare=False)
 
@@ -103,6 +105,8 @@ class JobRecord:
             "error":        self.error[:500],
             "attempts":     self.attempts,
             "max_retries":  self.max_retries,
+            "owner_user_id": self.owner_user_id,
+            "owner_username": self.owner_username,
         }
 
     @classmethod
@@ -124,6 +128,10 @@ class JobRecord:
             error=str(d.get("error", "")),
             attempts=int(d.get("attempts", 0)),
             max_retries=int(d.get("max_retries", 1)),
+            owner_user_id=(
+                int(d["owner_user_id"]) if d.get("owner_user_id") is not None else None
+            ),
+            owner_username=str(d.get("owner_username", "")),
         )
 
     def elapsed(self) -> float | None:
@@ -196,6 +204,8 @@ class JobScheduler:
         interval_sec: float = 0.0,
         max_retries: int = 1,
         callable_fn: Callable | None = None,
+        owner_user_id: int | None = None,
+        owner_username: str | None = None,
     ) -> str:
         """
         Enqueue a job and return its job_id.
@@ -225,6 +235,12 @@ class JobScheduler:
         if interval_sec > 0:
             mode = "interval"
 
+        resolved_owner_id: int | None
+        try:
+            resolved_owner_id = int(owner_user_id) if owner_user_id is not None else None
+        except (TypeError, ValueError):
+            resolved_owner_id = None
+
         job = JobRecord(
             job_id=uuid.uuid4().hex,
             name=name,
@@ -236,6 +252,8 @@ class JobScheduler:
             run_at=scheduled_ts,
             interval_sec=interval_sec,
             max_retries=max_retries,
+            owner_user_id=resolved_owner_id,
+            owner_username=str(owner_username or "")[:120],
             _callable=callable_fn,
         )
 

@@ -57,6 +57,12 @@ class RuntimeConfig:
     failover_cooldown_seconds: float = 30.0
     failover_provider: str = ""
     failover_model: str = ""
+    alert_error_rate_threshold_pct: float = 5.0
+    alert_p95_latency_ms_threshold: float = 1500.0
+    alert_saturation_threshold: float = 0.95
+    alert_min_requests: int = 25
+    alert_cooldown_seconds: float = 120.0
+    alert_webhook_url: str = ""
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -82,6 +88,33 @@ class RuntimeConfig:
         fail_cooldown_raw = _env_first("AETHEER_FAILOVER_COOLDOWN_SECONDS", "AETHER_FAILOVER_COOLDOWN_SECONDS")
         fail_provider = _env_first("AETHEER_FAILOVER_PROVIDER", "AETHER_FAILOVER_PROVIDER").lower()
         fail_model = _env_first("AETHEER_FAILOVER_MODEL", "AETHER_FAILOVER_MODEL")
+        alert_error_rate_raw = _env_first(
+            "AETHEER_ALERT_ERROR_RATE_THRESHOLD_PCT",
+            "AETHER_ALERT_ERROR_RATE_THRESHOLD_PCT",
+        )
+        alert_p95_raw = _env_first(
+            "AETHEER_ALERT_P95_LATENCY_MS_THRESHOLD",
+            "AETHER_ALERT_P95_LATENCY_MS_THRESHOLD",
+        )
+        alert_saturation_raw = _env_first(
+            "AETHEER_ALERT_SATURATION_THRESHOLD",
+            "AETHER_ALERT_SATURATION_THRESHOLD",
+        )
+        alert_min_requests_raw = _env_first(
+            "AETHEER_ALERT_MIN_REQUESTS",
+            "AETHER_ALERT_MIN_REQUESTS",
+        )
+        alert_cooldown_raw = _env_first(
+            "AETHEER_ALERT_COOLDOWN_SECONDS",
+            "AETHER_ALERT_COOLDOWN_SECONDS",
+        )
+        alert_webhook_url = _env_first(
+            "AETHEER_ALERT_WEBHOOK_URL",
+            "AETHER_ALERT_WEBHOOK_URL",
+        )
+
+        alert_saturation = _to_float(alert_saturation_raw, 0.95, 0.05)
+        alert_saturation = min(1.0, max(0.05, alert_saturation))
 
         return cls(
             max_concurrent_requests=_to_int(max_concurrency_raw, 64, 1),
@@ -92,6 +125,12 @@ class RuntimeConfig:
             failover_cooldown_seconds=_to_float(fail_cooldown_raw, 30.0, 1.0),
             failover_provider=fail_provider,
             failover_model=fail_model,
+            alert_error_rate_threshold_pct=_to_float(alert_error_rate_raw, 5.0, 0.1),
+            alert_p95_latency_ms_threshold=_to_float(alert_p95_raw, 1500.0, 1.0),
+            alert_saturation_threshold=alert_saturation,
+            alert_min_requests=_to_int(alert_min_requests_raw, 25, 1),
+            alert_cooldown_seconds=_to_float(alert_cooldown_raw, 120.0, 1.0),
+            alert_webhook_url=alert_webhook_url,
         )
 
 
@@ -144,12 +183,16 @@ class ProductionRuntime:
         self._status_totals: Counter[str] = Counter()
         self._path_counts: dict[str, int] = defaultdict(int)
         self._path_latency_ms: dict[str, float] = defaultdict(float)
+        self._latency_samples_ms: deque[float] = deque(maxlen=max(64, config.trace_buffer_size * 5))
 
         self._in_flight = 0
         self._max_in_flight_seen = 0
 
         self._rate_windows: dict[str, deque[float]] = defaultdict(deque)
         self._traces: deque[dict[str, Any]] = deque(maxlen=config.trace_buffer_size)
+        self._recent_alerts: deque[dict[str, Any]] = deque(maxlen=50)
+        self._alerts_total = 0
+        self._last_alert_at = 0.0
 
         self._ai_failure_streak = 0
         self._last_ai_error = ""
@@ -247,13 +290,15 @@ class ProductionRuntime:
         client_id: str,
         error: str | None,
     ) -> None:
+        safe_latency_ms = max(0.0, float(latency_ms))
         self._requests_total += 1
-        self._latency_total_ms += max(0.0, float(latency_ms))
+        self._latency_total_ms += safe_latency_ms
         status_bucket = f"{int(status_code) // 100}xx"
         self._status_totals[status_bucket] += 1
         normalized_path = path or "/"
         self._path_counts[normalized_path] += 1
-        self._path_latency_ms[normalized_path] += max(0.0, float(latency_ms))
+        self._path_latency_ms[normalized_path] += safe_latency_ms
+        self._latency_samples_ms.append(safe_latency_ms)
 
         if int(status_code) >= 500:
             self._errors_total += 1
@@ -266,7 +311,7 @@ class ProductionRuntime:
                 "method": method,
                 "path": normalized_path,
                 "status_code": int(status_code),
-                "latency_ms": round(max(0.0, float(latency_ms)), 3),
+                "latency_ms": round(safe_latency_ms, 3),
                 "error": (error or "")[:300],
             }
         )
@@ -275,18 +320,108 @@ class ProductionRuntime:
         with self._lock:
             request_total = self._requests_total
             avg_latency = self._latency_total_ms / max(1, request_total)
+            error_rate_pct = (self._errors_total / max(1, request_total)) * 100.0
             return {
                 "requests_total": request_total,
                 "errors_total": self._errors_total,
+                "error_rate_pct": round(error_rate_pct, 3),
                 "rejected_total": self._rejected_total,
                 "in_flight": self._in_flight,
                 "max_in_flight_seen": self._max_in_flight_seen,
                 "avg_latency_ms": round(avg_latency, 3),
+                "p95_latency_ms": self._p95_latency_ms_locked(),
                 "rate_limit_rpm": self.config.rate_limit_rpm,
                 "max_concurrent_requests": self.config.max_concurrent_requests,
+                "alerts_total": self._alerts_total,
+                "last_alert_at": self._last_alert_at,
                 "status_totals": dict(self._status_totals),
                 "top_paths": self._build_top_paths_locked(limit=12),
             }
+
+    def evaluate_alerts(self, uptime_seconds: float = 0.0, now: float | None = None) -> dict[str, Any] | None:
+        """Evaluate runtime thresholds and return a newly-triggered alert payload."""
+        t_now = now if now is not None else time.time()
+
+        with self._lock:
+            if self._requests_total < self.config.alert_min_requests:
+                return None
+
+            if (t_now - self._last_alert_at) < self.config.alert_cooldown_seconds:
+                return None
+
+            request_total = self._requests_total
+            error_rate_pct = (self._errors_total / max(1, request_total)) * 100.0
+            p95_latency_ms = self._p95_latency_ms_locked()
+            saturation = self._in_flight / max(1, self.config.max_concurrent_requests)
+
+            reasons: list[dict[str, Any]] = []
+            if error_rate_pct >= self.config.alert_error_rate_threshold_pct:
+                reasons.append(
+                    {
+                        "code": "high_error_rate",
+                        "actual": round(error_rate_pct, 3),
+                        "threshold": self.config.alert_error_rate_threshold_pct,
+                        "unit": "percent",
+                    }
+                )
+            if p95_latency_ms >= self.config.alert_p95_latency_ms_threshold:
+                reasons.append(
+                    {
+                        "code": "high_p95_latency",
+                        "actual": p95_latency_ms,
+                        "threshold": self.config.alert_p95_latency_ms_threshold,
+                        "unit": "ms",
+                    }
+                )
+            if saturation >= self.config.alert_saturation_threshold:
+                reasons.append(
+                    {
+                        "code": "high_saturation",
+                        "actual": round(saturation, 3),
+                        "threshold": self.config.alert_saturation_threshold,
+                        "unit": "ratio",
+                    }
+                )
+
+            if not reasons:
+                return None
+
+            severity = "warning"
+            if any(r["code"] == "high_error_rate" for r in reasons) and error_rate_pct >= (
+                self.config.alert_error_rate_threshold_pct * 1.5
+            ):
+                severity = "critical"
+            elif len(reasons) >= 2:
+                severity = "high"
+
+            alert = {
+                "id": f"rt-{int(t_now * 1000)}-{self._alerts_total + 1}",
+                "ts": round(t_now, 3),
+                "severity": severity,
+                "uptime_seconds": round(max(0.0, float(uptime_seconds)), 3),
+                "reasons": reasons,
+                "metrics": {
+                    "requests_total": request_total,
+                    "errors_total": self._errors_total,
+                    "error_rate_pct": round(error_rate_pct, 3),
+                    "p95_latency_ms": p95_latency_ms,
+                    "in_flight": self._in_flight,
+                    "max_concurrent_requests": self.config.max_concurrent_requests,
+                    "saturation_ratio": round(saturation, 3),
+                },
+            }
+
+            self._alerts_total += 1
+            self._last_alert_at = t_now
+            self._recent_alerts.append(alert)
+            return dict(alert)
+
+    def recent_alerts(self, limit: int = 25) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), self._recent_alerts.maxlen or 50))
+        with self._lock:
+            rows = list(self._recent_alerts)[-safe_limit:]
+        rows.reverse()
+        return rows
 
     def recent_traces(self, limit: int = 100) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit), self.config.trace_buffer_size))
@@ -365,12 +500,21 @@ class ProductionRuntime:
             "# HELP aetheer_request_latency_ms_avg Average request latency in milliseconds.",
             "# TYPE aetheer_request_latency_ms_avg gauge",
             f'aetheer_request_latency_ms_avg{{instance="{escaped_instance}"}} {snap["avg_latency_ms"]}',
+            "# HELP aetheer_request_latency_ms_p95 95th percentile request latency in milliseconds.",
+            "# TYPE aetheer_request_latency_ms_p95 gauge",
+            f'aetheer_request_latency_ms_p95{{instance="{escaped_instance}"}} {snap["p95_latency_ms"]}',
+            "# HELP aetheer_error_rate_pct HTTP error rate percent based on responses with status >= 500.",
+            "# TYPE aetheer_error_rate_pct gauge",
+            f'aetheer_error_rate_pct{{instance="{escaped_instance}"}} {snap["error_rate_pct"]}',
             "# HELP aetheer_requests_in_flight Current in-flight requests.",
             "# TYPE aetheer_requests_in_flight gauge",
             f'aetheer_requests_in_flight{{instance="{escaped_instance}"}} {snap["in_flight"]}',
             "# HELP aetheer_uptime_seconds Process uptime in seconds.",
             "# TYPE aetheer_uptime_seconds gauge",
             f'aetheer_uptime_seconds{{instance="{escaped_instance}"}} {round(max(0.0, uptime_seconds), 3)}',
+            "# HELP aetheer_alerts_total Total runtime alerts triggered by observability thresholds.",
+            "# TYPE aetheer_alerts_total counter",
+            f'aetheer_alerts_total{{instance="{escaped_instance}"}} {snap["alerts_total"]}',
             "# HELP aetheer_failover_activations_total Number of automatic failover activations.",
             "# TYPE aetheer_failover_activations_total counter",
             f'aetheer_failover_activations_total{{instance="{escaped_instance}"}} {fail["activations"]}',
@@ -407,6 +551,14 @@ class ProductionRuntime:
                 }
             )
         return out
+
+    def _p95_latency_ms_locked(self) -> float:
+        if not self._latency_samples_ms:
+            return 0.0
+        samples = sorted(self._latency_samples_ms)
+        idx = int(round((len(samples) - 1) * 0.95))
+        idx = min(max(idx, 0), len(samples) - 1)
+        return round(samples[idx], 3)
 
 
 def _escape_metric_label(value: str) -> str:

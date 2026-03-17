@@ -31,6 +31,7 @@ $VALUES = @{
 
   UPSTASH_REDIS_URL = "rediss://default:replace-password@replace-host:6379"
   UPSTASH_REDIS_QUEUE_NAME = "job_queue"
+  UPSTASH_REDIS_DLQ_NAME = "job_queue_dlq"
   UPSTASH_REDIS_SOCKET_TIMEOUT_SECONDS = "90"
 
   SUPABASE_URL = "https://replace-project-ref.supabase.co"
@@ -41,6 +42,11 @@ $VALUES = @{
   SUPABASE_JOBS_TABLE = "ai_jobs"
   SUPABASE_JOBS_ID_COLUMN = "id"
 
+  AETHEER_JOB_MAX_RETRIES = "3"
+  AETHEER_JOB_RUNNING_TIMEOUT_SECONDS = "1800"
+  AETHEER_STALE_SCAN_INTERVAL_SECONDS = "30"
+  AETHEER_STALE_SCAN_BATCH_SIZE = "50"
+
   AETHEER_DISABLE_VERCEL_DIRECT_GOALS = "1"
 }
 ~~~
@@ -48,8 +54,19 @@ $VALUES = @{
 ## 3) Set Production Vars
 
 ~~~powershell
+function Set-VercelEnvNoNewline {
+  param(
+    [string]$Name,
+    [string]$Value,
+    [string]$Target
+  )
+
+  # Avoid hidden newline characters in stored secrets.
+  cmd /c "<nul set /p =$Value| vercel env add $Name $Target --force --yes"
+}
+
 $VALUES.GetEnumerator() | ForEach-Object {
-  $_.Value | vercel env add $_.Key production
+  Set-VercelEnvNoNewline -Name $_.Key -Value $_.Value -Target "production"
 }
 ~~~
 
@@ -57,7 +74,7 @@ $VALUES.GetEnumerator() | ForEach-Object {
 
 ~~~powershell
 $VALUES.GetEnumerator() | ForEach-Object {
-  $_.Value | vercel env add $_.Key preview
+  Set-VercelEnvNoNewline -Name $_.Key -Value $_.Value -Target "preview"
 }
 ~~~
 
@@ -79,5 +96,5 @@ If a var already exists, remove then re-add.
 
 ~~~powershell
 vercel env rm SUPABASE_SERVICE_ROLE_KEY production
-$VALUES.SUPABASE_SERVICE_ROLE_KEY | vercel env add SUPABASE_SERVICE_ROLE_KEY production
+Set-VercelEnvNoNewline -Name "SUPABASE_SERVICE_ROLE_KEY" -Value $VALUES.SUPABASE_SERVICE_ROLE_KEY -Target "production"
 ~~~

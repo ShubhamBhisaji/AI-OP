@@ -19,8 +19,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from api.auth import get_current_user
+from api.database import User, get_db
+from api.job_security import enforce_job_api_rate_limit, enforce_job_create_quota, record_job_create_usage
 
 logger = logging.getLogger("aetheer.api.v2")
 
@@ -31,6 +36,34 @@ router = APIRouter(tags=["v2"])
 def _kernel():
     from api.server import _get_kernel
     return _get_kernel()
+
+
+def _job_owner_user_id(job: dict[str, Any]) -> int | None:
+    raw_owner = job.get("owner_user_id")
+    try:
+        return int(raw_owner) if raw_owner is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _job_is_visible(job: dict[str, Any], current_user: User) -> bool:
+    if current_user.is_admin:
+        return True
+    owner_user_id = _job_owner_user_id(job)
+    return owner_user_id is not None and owner_user_id == current_user.id
+
+
+def _job_stats_for_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_status: dict[str, int] = {}
+    for row in rows:
+        status = str(row.get("status") or "unknown")
+        by_status[status] = by_status.get(status, 0) + 1
+
+    return {
+        "total": len(rows),
+        "by_status": by_status,
+        "scope": "user",
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -126,7 +159,11 @@ class JobRequest(BaseModel):
 
 
 @router.post("/api/jobs", summary="Schedule an agent job", status_code=201)
-def schedule_job(req: JobRequest):
+def schedule_job(
+    req: JobRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Enqueue an agent task immediately, at a specific time, or on a recurring interval.
 
@@ -134,6 +171,9 @@ def schedule_job(req: JobRequest):
     - Set `interval_sec > 0` to create a recurring job.
     - `priority` 0 = highest, 100 = lowest.
     """
+    enforce_job_api_rate_limit(current_user, bucket="write")
+    enforce_job_create_quota(db, current_user)
+
     k = _kernel()
     run_at = None
     if req.run_at_iso:
@@ -151,40 +191,71 @@ def schedule_job(req: JobRequest):
             run_at=run_at,
             interval_sec=req.interval_sec,
             max_retries=req.max_retries,
+            owner_user_id=current_user.id,
+            owner_username=current_user.username,
         )
     except Exception as exc:
         logger.error("schedule_job failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
+    try:
+        record_job_create_usage(
+            db,
+            current_user=current_user,
+            source="scheduler_api",
+            job_id=job_id,
+        )
+    except Exception as exc:
+        logger.warning("Failed to record scheduler usage for %s: %s", job_id, exc)
+
     return {"success": True, "data": {"job_id": job_id}}
 
 
 @router.get("/api/jobs", summary="List all jobs")
-def list_jobs(status: str | None = None, limit: int = 100):
+def list_jobs(
+    status: str | None = None,
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
+):
     """Return all jobs, optionally filtered by status (pending/running/completed/failed/cancelled)."""
+    enforce_job_api_rate_limit(current_user, bucket="read")
+
     k = _kernel()
     jobs = k.list_jobs(status=status, limit=limit)
-    stats = k.scheduler_stats()
-    return {"success": True, "data": jobs, "stats": stats}
+    visible_jobs = jobs if current_user.is_admin else [row for row in jobs if _job_is_visible(row, current_user)]
+    stats = k.scheduler_stats() if current_user.is_admin else _job_stats_for_rows(visible_jobs)
+    return {"success": True, "data": visible_jobs, "stats": stats}
 
 
 @router.get("/api/jobs/{job_id}", summary="Get a job by ID")
-def get_job(job_id: str):
+def get_job(job_id: str, current_user: User = Depends(get_current_user)):
+    enforce_job_api_rate_limit(current_user, bucket="read")
+
     k = _kernel()
     # Allow partial ID prefix match
     all_jobs = k.list_jobs(limit=5000)
-    matches = [j for j in all_jobs if j["job_id"] == job_id or j["job_id"].startswith(job_id)]
+    matches = [
+        j
+        for j in all_jobs
+        if (j["job_id"] == job_id or j["job_id"].startswith(job_id)) and _job_is_visible(j, current_user)
+    ]
     if not matches:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return {"success": True, "data": matches[0]}
 
 
 @router.delete("/api/jobs/{job_id}", summary="Cancel a pending job")
-def cancel_job(job_id: str):
+def cancel_job(job_id: str, current_user: User = Depends(get_current_user)):
+    enforce_job_api_rate_limit(current_user, bucket="write")
+
     k = _kernel()
     # Allow partial match
     all_jobs = k.list_jobs(limit=5000)
-    matches = [j for j in all_jobs if j["job_id"] == job_id or j["job_id"].startswith(job_id)]
+    matches = [
+        j
+        for j in all_jobs
+        if (j["job_id"] == job_id or j["job_id"].startswith(job_id)) and _job_is_visible(j, current_user)
+    ]
     if not matches:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     full_id = matches[0]["job_id"]
@@ -195,9 +266,15 @@ def cancel_job(job_id: str):
 
 
 @router.get("/api/jobs/stats/summary", summary="Job queue statistics")
-def job_stats():
+def job_stats(current_user: User = Depends(get_current_user)):
+    enforce_job_api_rate_limit(current_user, bucket="read")
+
     k = _kernel()
-    return {"success": True, "data": k.scheduler_stats()}
+    if current_user.is_admin:
+        return {"success": True, "data": k.scheduler_stats()}
+
+    jobs = [row for row in k.list_jobs(limit=5000) if _job_is_visible(row, current_user)]
+    return {"success": True, "data": _job_stats_for_rows(jobs)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

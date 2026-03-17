@@ -48,6 +48,12 @@ class TestRuntimeConfigDefaults(unittest.TestCase):
         self.assertEqual(cfg.failover_cooldown_seconds, 30.0)
         self.assertEqual(cfg.failover_provider, "")
         self.assertEqual(cfg.failover_model, "")
+        self.assertEqual(cfg.alert_error_rate_threshold_pct, 5.0)
+        self.assertEqual(cfg.alert_p95_latency_ms_threshold, 1500.0)
+        self.assertEqual(cfg.alert_saturation_threshold, 0.95)
+        self.assertEqual(cfg.alert_min_requests, 25)
+        self.assertEqual(cfg.alert_cooldown_seconds, 120.0)
+        self.assertEqual(cfg.alert_webhook_url, "")
 
     def test_frozen(self):
         cfg = RuntimeConfig()
@@ -65,6 +71,12 @@ class TestRuntimeConfigFromEnv(unittest.TestCase):
         "AETHEER_FAILOVER_COOLDOWN_SECONDS": "60",
         "AETHEER_FAILOVER_PROVIDER": "Anthropic",
         "AETHEER_FAILOVER_MODEL": "claude-3-5-sonnet",
+        "AETHEER_ALERT_ERROR_RATE_THRESHOLD_PCT": "9.5",
+        "AETHEER_ALERT_P95_LATENCY_MS_THRESHOLD": "3200",
+        "AETHEER_ALERT_SATURATION_THRESHOLD": "0.8",
+        "AETHEER_ALERT_MIN_REQUESTS": "80",
+        "AETHEER_ALERT_COOLDOWN_SECONDS": "300",
+        "AETHEER_ALERT_WEBHOOK_URL": "https://example.com/hook",
     }, clear=False)
     def test_reads_env_vars(self):
         cfg = RuntimeConfig.from_env()
@@ -76,6 +88,12 @@ class TestRuntimeConfigFromEnv(unittest.TestCase):
         self.assertAlmostEqual(cfg.failover_cooldown_seconds, 60.0)
         self.assertEqual(cfg.failover_provider, "anthropic")  # lowercased
         self.assertEqual(cfg.failover_model, "claude-3-5-sonnet")
+        self.assertAlmostEqual(cfg.alert_error_rate_threshold_pct, 9.5)
+        self.assertAlmostEqual(cfg.alert_p95_latency_ms_threshold, 3200.0)
+        self.assertAlmostEqual(cfg.alert_saturation_threshold, 0.8)
+        self.assertEqual(cfg.alert_min_requests, 80)
+        self.assertAlmostEqual(cfg.alert_cooldown_seconds, 300.0)
+        self.assertEqual(cfg.alert_webhook_url, "https://example.com/hook")
 
     @patch.dict(os.environ, {
         "AETHEER_MAX_CONCURRENT_REQUESTS": "not_a_number",
@@ -219,6 +237,8 @@ class TestProductionRuntimeRequests(unittest.TestCase):
         self.assertEqual(snap["requests_total"], 1)
         self.assertEqual(snap["errors_total"], 0)
         self.assertAlmostEqual(snap["avg_latency_ms"], 12.5)
+        self.assertAlmostEqual(snap["error_rate_pct"], 0.0)
+        self.assertGreaterEqual(snap["p95_latency_ms"], 0.0)
 
     def test_500_counts_as_error(self):
         self.rt.end_request(
@@ -432,6 +452,9 @@ class TestPrometheusExport(unittest.TestCase):
         self.assertIn("aetheer_requests_total", text)
         self.assertIn("aetheer_errors_total", text)
         self.assertIn("aetheer_uptime_seconds", text)
+        self.assertIn("aetheer_request_latency_ms_p95", text)
+        self.assertIn("aetheer_error_rate_pct", text)
+        self.assertIn("aetheer_alerts_total", text)
         self.assertIn('instance="node-1"', text)
         self.assertIn("123.456", text)
 
@@ -480,6 +503,92 @@ class TestTopPaths(unittest.TestCase):
         self.assertEqual(paths[0]["count"], 3)
         self.assertEqual(paths[1]["path"], "/b")
         self.assertEqual(paths[1]["count"], 1)
+
+
+# ---------------------------------------------------------------------------
+# ProductionRuntime – observability alerts
+# ---------------------------------------------------------------------------
+
+class TestObservabilityAlerts(unittest.TestCase):
+    def test_alert_triggers_on_error_rate_threshold(self):
+        cfg = RuntimeConfig(
+            alert_error_rate_threshold_pct=30.0,
+            alert_p95_latency_ms_threshold=99999.0,
+            alert_saturation_threshold=1.0,
+            alert_min_requests=5,
+            alert_cooldown_seconds=1.0,
+        )
+        rt = ProductionRuntime(cfg)
+
+        for i in range(5):
+            status = 500 if i < 2 else 200
+            rt.end_request(
+                method="GET",
+                path="/api/test",
+                status_code=status,
+                latency_ms=10,
+                request_id=f"r{i}",
+                client_id="c",
+                error="boom" if status >= 500 else None,
+            )
+
+        alert = rt.evaluate_alerts(uptime_seconds=12.0, now=100.0)
+        self.assertIsNotNone(alert)
+        self.assertEqual(alert["severity"], "warning")
+        self.assertEqual(alert["metrics"]["requests_total"], 5)
+        reason_codes = {row["code"] for row in alert["reasons"]}
+        self.assertIn("high_error_rate", reason_codes)
+
+    def test_alert_cooldown_prevents_spam(self):
+        cfg = RuntimeConfig(
+            alert_error_rate_threshold_pct=1.0,
+            alert_p95_latency_ms_threshold=1.0,
+            alert_saturation_threshold=0.01,
+            alert_min_requests=1,
+            alert_cooldown_seconds=60.0,
+        )
+        rt = ProductionRuntime(cfg)
+        rt.end_request(
+            method="GET",
+            path="/api/test",
+            status_code=500,
+            latency_ms=5000,
+            request_id="r1",
+            client_id="c",
+            error="boom",
+        )
+
+        first = rt.evaluate_alerts(now=100.0)
+        second = rt.evaluate_alerts(now=110.0)
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+
+    def test_recent_alerts_latest_first(self):
+        cfg = RuntimeConfig(
+            alert_error_rate_threshold_pct=1.0,
+            alert_p95_latency_ms_threshold=1.0,
+            alert_saturation_threshold=0.01,
+            alert_min_requests=1,
+            alert_cooldown_seconds=1.0,
+        )
+        rt = ProductionRuntime(cfg)
+        rt.end_request(
+            method="GET",
+            path="/api/a",
+            status_code=500,
+            latency_ms=2000,
+            request_id="r1",
+            client_id="c",
+            error="boom",
+        )
+        rt.evaluate_alerts(now=100.0)
+        rt.evaluate_alerts(now=100.5)  # cooldown active
+        rt.evaluate_alerts(now=102.0)
+
+        alerts = rt.recent_alerts(limit=5)
+        self.assertGreaterEqual(len(alerts), 2)
+        self.assertGreaterEqual(alerts[0]["ts"], alerts[1]["ts"])
 
 
 if __name__ == "__main__":

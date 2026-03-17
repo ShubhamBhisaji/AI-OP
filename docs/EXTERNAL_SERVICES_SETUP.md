@@ -29,9 +29,22 @@ The wrappers are implemented under `AetheerAI/integrations/` and can be used dir
 
 - `UPSTASH_REDIS_URL` (required, use Redis `rediss://...` URL)
 - `UPSTASH_REDIS_QUEUE_NAME` (default: `job_queue`)
+- `UPSTASH_REDIS_DLQ_NAME` (default: `job_queue_dlq`)
 - `UPSTASH_REDIS_POP_TIMEOUT_SECONDS` (default: `30`)
 - `UPSTASH_REDIS_SOCKET_TIMEOUT_SECONDS` (default: `90`)
+- `AETHEER_JOB_MAX_RETRIES` (default: `3`)
+- `AETHEER_JOB_RUNNING_TIMEOUT_SECONDS` (default: `1800`)
+- `AETHEER_STALE_SCAN_INTERVAL_SECONDS` (default: `30`)
+- `AETHEER_STALE_SCAN_BATCH_SIZE` (default: `50`)
 - `AETHEER_DISABLE_VERCEL_DIRECT_GOALS` (default: `1`, blocks direct long-running `/api/goals` calls when `VERCEL=1`)
+- `AETHEER_WORKER_AUTOSCALE` (default: `1`, enables queue-depth based worker autoscaling)
+- `AETHEER_WORKER_MIN_PROCESSES` (default: `1`, minimum worker replicas)
+- `AETHEER_WORKER_MAX_PROCESSES` (default: CPU cores capped at `16`, maximum worker replicas)
+- `AETHEER_WORKER_TARGET_QUEUE_DEPTH_PER_WORKER` (default: `4`, queue depth target per worker)
+- `AETHEER_WORKER_SCALE_INTERVAL_SECONDS` (default: `5.0`, autoscale sampling interval)
+- `AETHEER_WORKER_SCALE_DOWN_COOLDOWN_SECONDS` (default: `45.0`, queue-empty cooldown before scale-down)
+- `AETHEER_WORKER_PROCESSES` (default: `1`, fixed replicas when autoscaling is disabled)
+- `AETHEER_WORKER_MAX_CONCURRENCY` (default: `1`, thread concurrency per worker process)
 
 ### Async Job Table Schema (Supabase)
 
@@ -45,6 +58,15 @@ Expected columns for `ai_jobs`:
 - `error` text nullable
 - `metadata` json/jsonb nullable
 - `created_at`, `updated_at`, `started_at`, `completed_at` timestamptz
+
+The worker stores retry/dead-letter lifecycle details in `metadata`, including:
+
+- `retry_count`
+- `max_retries`
+- `last_failure_reason`
+- `dead_lettered`
+- `dead_letter_queue`
+- `dead_lettered_at`
 
 ### Infobip
 
@@ -114,11 +136,23 @@ set RUN_LIVE_EXAMPLES=1
 python examples/external_services_demo.py
 ```
 
-6. Run the persistent queue worker (for long-running jobs):
+6. Run the persistent queue worker supervisor (for long-running jobs):
 
 ```bash
 cd AetheerAI
 python start_worker.py
+```
+
+Force fixed replicas (autoscaling off):
+
+```bash
+python start_worker.py --no-autoscale --workers 3
+```
+
+Tune autoscaling behavior:
+
+```bash
+python start_worker.py --autoscale --min-workers 1 --max-workers 8 --target-queue-depth-per-worker 3
 ```
 
 Optional one-shot smoke test:
@@ -134,6 +168,12 @@ python workers/upstash_job_worker.py --once
 
 - `GET /api/queue/jobs/{job_id}`
 : Polls Supabase for the latest status (`queued`, `running`, `completed`, `failed`) and result/error payload.
+
+Worker reliability behavior:
+
+- On execution failure, jobs are requeued until `AETHEER_JOB_MAX_RETRIES` is exhausted.
+- When retries are exhausted, the job is published to `UPSTASH_REDIS_DLQ_NAME` and marked `failed` with dead-letter metadata.
+- Running jobs older than `AETHEER_JOB_RUNNING_TIMEOUT_SECONDS` are treated as stale and automatically recovered by retry/DLQ logic.
 
 Example create payload:
 
@@ -217,6 +257,7 @@ clients = factory.create()
 - `AetheerAI/api/async_jobs.py`
 - `AetheerAI/api/queue_router.py`
 - `AetheerAI/workers/upstash_job_worker.py`
+- `AetheerAI/start_worker.py`
 - `AetheerAI/integrations/infobip_client.py`
 - `AetheerAI/integrations/payu_client.py`
 - `AetheerAI/integrations/meta_api_client.py`

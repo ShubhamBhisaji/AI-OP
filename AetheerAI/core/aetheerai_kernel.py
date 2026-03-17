@@ -4279,6 +4279,8 @@ class AetheerAiKernel:
         run_at=None,
         interval_sec: float = 0.0,
         max_retries: int = 1,
+        owner_user_id: int | None = None,
+        owner_username: str | None = None,
     ) -> str:
         """
         Schedule or enqueue an agent task.
@@ -4303,6 +4305,8 @@ class AetheerAiKernel:
             run_at=run_at,
             interval_sec=interval_sec,
             max_retries=max_retries,
+            owner_user_id=owner_user_id,
+            owner_username=owner_username,
         )
 
     def cancel_job(self, job_id: str) -> bool:

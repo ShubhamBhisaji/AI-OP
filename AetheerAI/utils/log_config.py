@@ -58,6 +58,41 @@ _USE_COLOUR = sys.stderr.isatty() and os.name != "nt" or (
     or os.environ.get("FORCE_COLOR") in ("1", "true", "yes")
 )
 
+_LOG_RECORD_RESERVED = {
+    "name",
+    "msg",
+    "args",
+    "levelname",
+    "levelno",
+    "pathname",
+    "filename",
+    "module",
+    "exc_info",
+    "exc_text",
+    "stack_info",
+    "lineno",
+    "funcName",
+    "created",
+    "msecs",
+    "relativeCreated",
+    "thread",
+    "threadName",
+    "processName",
+    "process",
+    "message",
+    "asctime",
+}
+
+
+def _json_safe(value):
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
 
 class _ColourFormatter(logging.Formatter):
     """Console formatter: ``HH:MM:SS.mmm  LEVEL  logger.name  message``."""
@@ -100,6 +135,13 @@ class _JsonFormatter(logging.Formatter):
             "file": f"{record.filename}:{record.lineno}",
             "msg": record.getMessage(),
         }
+        context = {
+            key: _json_safe(value)
+            for key, value in record.__dict__.items()
+            if key not in _LOG_RECORD_RESERVED and not key.startswith("_")
+        }
+        if context:
+            payload["context"] = context
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False)

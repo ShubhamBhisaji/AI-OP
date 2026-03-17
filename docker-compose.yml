@@ -42,6 +42,32 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── AetheerAI Queue Worker Supervisor ───────────────────────────────────
+  aetheerai-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: aetheerai:latest
+    container_name: aetheerai-worker
+    restart: unless-stopped
+    command: ["python", "start_worker.py"]
+    env_file:
+      - AetheerAI/.env
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - AETHEER_WORKER_AUTOSCALE=${AETHEER_WORKER_AUTOSCALE:-1}
+      - AETHEER_WORKER_MIN_PROCESSES=${AETHEER_WORKER_MIN_PROCESSES:-1}
+      - AETHEER_WORKER_MAX_PROCESSES=${AETHEER_WORKER_MAX_PROCESSES:-4}
+      - AETHEER_WORKER_TARGET_QUEUE_DEPTH_PER_WORKER=${AETHEER_WORKER_TARGET_QUEUE_DEPTH_PER_WORKER:-4}
+      - AETHEER_WORKER_MAX_CONCURRENCY=${AETHEER_WORKER_MAX_CONCURRENCY:-1}
+    volumes:
+      - aetheer_memory:/app/memory
+      - aetheer_logs:/app/logs
+    depends_on:
+      aetheerai:
+        condition: service_healthy
+
   # ── Optional: Nginx reverse proxy ────────────────────────────────────────
   # Uncomment to expose AetheerAI behind Nginx with TLS termination.
   # nginx:
