@@ -1,0 +1,56 @@
+######################################################################
+# models/configs/model_registry.yaml
+#
+# Central registry that maps a logical model name to its provider,
+# identifier and optional local path.  AetheerAI's ModelRouter reads
+# this file at startup when the env-var
+#   AETHEERAI_MODEL_REGISTRY=models/configs/model_registry.yaml
+# is set.
+######################################################################
+
+models:
+  # ── OpenAI ────────────────────────────────────────────────────────
+  - name: gpt-4o
+    provider: openai
+    model_id: gpt-4o
+    max_tokens: 128000
+    supports_vision: true
+
+  - name: gpt-4o-mini
+    provider: openai
+    model_id: gpt-4o-mini
+    max_tokens: 128000
+
+  # ── Anthropic ─────────────────────────────────────────────────────
+  - name: claude-3-5-sonnet
+    provider: anthropic
+    model_id: claude-3-5-sonnet-20241022
+    max_tokens: 200000
+    supports_vision: true
+
+  - name: claude-3-haiku
+    provider: anthropic
+    model_id: claude-3-haiku-20240307
+    max_tokens: 200000
+
+  # ── Google ────────────────────────────────────────────────────────
+  - name: gemini-1-5-pro
+    provider: google
+    model_id: gemini-1.5-pro-latest
+    max_tokens: 1000000
+
+  # ── Local / Ollama ────────────────────────────────────────────────
+  - name: llama3
+    provider: ollama
+    model_id: llama3
+    local: true
+
+  - name: mistral
+    provider: ollama
+    model_id: mistral
+    local: true
+
+defaults:
+  primary: gpt-4o
+  fallback: claude-3-5-sonnet
+  local: llama3

@@ -85,6 +85,9 @@ class HealingRecord:
 
 def _parse_diagnosis(response: str) -> tuple[str, str]:
     """Extract (root_cause, patch) from structured AI response."""
+    if not isinstance(response, str) or not response.strip():
+        logger.warning("SelfHealer: received empty or non-string AI response.")
+        return ("Unknown error pattern", "Retry the original task as-is.")
     root_cause = ""
     patch_lines: list[str] = []
     in_patch = False
@@ -117,6 +120,13 @@ class SelfHealingDebugger:
         memory=None,
         max_healing_cycles: int = MAX_HEALING_CYCLES,
     ) -> None:
+        if ai_adapter is None:
+            raise ValueError("SelfHealingDebugger: ai_adapter must not be None.")
+        if not isinstance(max_healing_cycles, int) or max_healing_cycles < 1:
+            raise ValueError(
+                "SelfHealingDebugger: max_healing_cycles must be a positive integer, "
+                f"got {max_healing_cycles!r}."
+            )
         self._ai = ai_adapter
         self._memory = memory
         self._max = max_healing_cycles
@@ -144,8 +154,25 @@ class SelfHealingDebugger:
 
         Returns the healed result, or the final error after max cycles.
         """
+        if agent is None:
+            raise ValueError("SelfHealingDebugger.heal: agent must not be None.")
+        if not hasattr(agent, "name") or not hasattr(agent, "role"):
+            raise ValueError(
+                "SelfHealingDebugger.heal: agent must expose 'name' and 'role' attributes."
+            )
+        if not isinstance(task, str) or not task.strip():
+            raise ValueError("SelfHealingDebugger.heal: task must be a non-empty string.")
+        if not callable(execute_fn):
+            raise TypeError("SelfHealingDebugger.heal: execute_fn must be callable.")
+        if not callable(is_error_fn):
+            raise TypeError("SelfHealingDebugger.heal: is_error_fn must be callable.")
+
         record = HealingRecord(agent_name=agent.name, task=task)
-        current_error = execute_fn(agent, task)
+        try:
+            current_error = execute_fn(agent, task)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("SelfHealer: initial execute_fn raised: %s", exc)
+            current_error = str(exc)
 
         for cycle in range(1, self._max + 1):
             if not is_error_fn(current_error):
@@ -164,7 +191,11 @@ class SelfHealingDebugger:
             record.add(error=current_error, root_cause=root_cause, patch=patch)
 
             patched_task = self._build_patched_task(task, cycle, root_cause, patch)
-            current_error = execute_fn(agent, patched_task)
+            try:
+                current_error = execute_fn(agent, patched_task)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("SelfHealer: execute_fn raised on cycle %d: %s", cycle, exc)
+                current_error = str(exc)
 
         self._persist(record, succeeded=not is_error_fn(current_error))
         return current_error
@@ -181,8 +212,25 @@ class SelfHealingDebugger:
         is_error_fn: Callable[[str], bool],
     ) -> str:
         """Async version of heal()."""
+        if agent is None:
+            raise ValueError("SelfHealingDebugger.heal_async: agent must not be None.")
+        if not hasattr(agent, "name") or not hasattr(agent, "role"):
+            raise ValueError(
+                "SelfHealingDebugger.heal_async: agent must expose 'name' and 'role' attributes."
+            )
+        if not isinstance(task, str) or not task.strip():
+            raise ValueError("SelfHealingDebugger.heal_async: task must be a non-empty string.")
+        if not callable(execute_fn):
+            raise TypeError("SelfHealingDebugger.heal_async: execute_fn must be callable.")
+        if not callable(is_error_fn):
+            raise TypeError("SelfHealingDebugger.heal_async: is_error_fn must be callable.")
+
         record = HealingRecord(agent_name=agent.name, task=task)
-        current_error = await execute_fn(agent, task)
+        try:
+            current_error = await execute_fn(agent, task)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("SelfHealer[async]: initial execute_fn raised: %s", exc)
+            current_error = str(exc)
 
         for cycle in range(1, self._max + 1):
             if not is_error_fn(current_error):
@@ -201,7 +249,11 @@ class SelfHealingDebugger:
             record.add(error=current_error, root_cause=root_cause, patch=patch)
 
             patched_task = self._build_patched_task(task, cycle, root_cause, patch)
-            current_error = await execute_fn(agent, patched_task)
+            try:
+                current_error = await execute_fn(agent, patched_task)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("SelfHealer[async]: execute_fn raised on cycle %d: %s", cycle, exc)
+                current_error = str(exc)
 
         self._persist(record, succeeded=not is_error_fn(current_error))
         return current_error
@@ -217,7 +269,11 @@ class SelfHealingDebugger:
             task=task[:800],
             error=error[:2000],
         )
-        response = self._ai.chat(messages=[{"role": "user", "content": prompt}])
+        try:
+            response = self._ai.chat(messages=[{"role": "user", "content": prompt}])
+        except Exception as exc:  # noqa: BLE001
+            logger.error("SelfHealer: AI diagnosis call failed: %s", exc)
+            return ("AI diagnosis unavailable", "Retry the original task as-is.")
         return _parse_diagnosis(response)
 
     async def _diagnose_async(self, agent, task: str, error: str) -> tuple[str, str]:
@@ -227,7 +283,11 @@ class SelfHealingDebugger:
             task=task[:800],
             error=error[:2000],
         )
-        response = await self._ai.async_chat(messages=[{"role": "user", "content": prompt}])
+        try:
+            response = await self._ai.async_chat(messages=[{"role": "user", "content": prompt}])
+        except Exception as exc:  # noqa: BLE001
+            logger.error("SelfHealer[async]: AI diagnosis call failed: %s", exc)
+            return ("AI diagnosis unavailable", "Retry the original task as-is.")
         return _parse_diagnosis(response)
 
     @staticmethod

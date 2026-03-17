@@ -1,0 +1,64 @@
+# ── AetheerAI docker-compose.yml ─────────────────────────────────────────────
+# Usage:
+#   docker compose up --build            # start all services
+#   docker compose up -d                 # detached mode
+#   docker compose logs -f aetheerai     # follow logs
+#   docker compose down                  # stop and remove containers
+
+version: "3.9"
+
+services:
+
+  # ── AetheerAI API ────────────────────────────────────────────────────────
+  aetheerai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: aetheerai:latest
+    container_name: aetheerai-api
+    restart: unless-stopped
+    ports:
+      - "${AETHER_PORT:-8000}:8000"
+    env_file:
+      - AetheerAI/.env
+    environment:
+      # Override these or set them in AetheerAI/.env
+      - AETHER_HOST=0.0.0.0
+      - AETHER_PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/memory/aetheer.db}
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:8000}
+    volumes:
+      # Persist database, uploads, and logs between container restarts
+      - aetheer_memory:/app/memory
+      - aetheer_uploads:/app/data/uploads
+      - aetheer_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── Optional: Nginx reverse proxy ────────────────────────────────────────
+  # Uncomment to expose AetheerAI behind Nginx with TLS termination.
+  # nginx:
+  #   image: nginx:1.25-alpine
+  #   container_name: aetheerai-nginx
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  #     - ./certs:/etc/nginx/certs:ro
+  #   depends_on:
+  #     - aetheerai
+
+volumes:
+  aetheer_memory:
+  aetheer_uploads:
+  aetheer_logs:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -11,19 +12,25 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator
 
 # Ensure local package imports work when running the module directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 
 from agents.ceo_agent import CEOAgent, ProjectResult
 from core.aetheerai_kernel import AetheerAiKernel
 from core.env_loader import load_env
+from api.database import init_db
+from api.auth import router as auth_router
+from api.predict import router as predict_router
+from api.reports import router as reports_router
 
 
 logger = logging.getLogger("aetheer.api")
@@ -70,6 +77,7 @@ def _get_ceo() -> CEOAgent:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("AetheerAI API startup")
+    init_db()
     _get_ceo()
     yield
     logger.info("AetheerAI API shutdown")
@@ -84,14 +92,69 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+# Serve built-in Web UI static files
+_UI_DIR = Path(__file__).resolve().parents[1] / "ui"
+if _UI_DIR.is_dir():
+    app.mount("/ui", StaticFiles(directory=str(_UI_DIR)), name="ui")
+
+origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Feature routers ────────────────────────────────────────────────────────
+app.include_router(auth_router)
+app.include_router(predict_router)
+app.include_router(reports_router)
+
+
+# ── API Key Authentication Middleware ────────────────────────────────────────
+_AUTH_EXEMPT = {"/", "/docs", "/redoc", "/openapi.json", "/api/health", "/api/health/"}
+
+
+class APIKeyMiddleware(BaseHTTPMiddleware):
+    """Optional API key gate — only active when AETHER_API_KEYS is set."""
+
+    async def dispatch(self, request: Request, call_next):
+        configured = os.getenv("AETHER_API_KEYS", "").strip()
+        if configured:
+            path = request.url.path
+            exempt = (
+                path in _AUTH_EXEMPT
+                or path.startswith("/ui")
+                or path.startswith("/docs")
+                or path.startswith("/redoc")
+            )
+            if not exempt:
+                api_key = request.headers.get("X-API-Key", "")
+                allowed = {k.strip() for k in configured.split(",") if k.strip()}
+                if not api_key or api_key not in allowed:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"success": False, "error": "Unauthorized — invalid or missing X-API-Key header."},
+                    )
+        return await call_next(request)
+
+
+app.add_middleware(APIKeyMiddleware)
+
+
+# ── Snapshots directory ──────────────────────────────────────────────────────
+_SNAPSHOTS_DIR = Path(__file__).resolve().parents[1] / "memory" / "snapshots"
+_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.get("/", include_in_schema=False)
+def serve_ui():
+    """Serve the built-in Web UI."""
+    index = _UI_DIR / "index.html"
+    if index.is_file():
+        return FileResponse(str(index), media_type="text/html")
+    return JSONResponse({"message": "AetheerAI API is running. See /docs for endpoints."})
 
 
 @app.exception_handler(Exception)
@@ -625,6 +688,228 @@ def delete_memory_key(key: str, namespace: str = "global"):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Key '{key}' not found in namespace '{namespace}'.")
     return APIResponse(message=f"Key '{key}' deleted from namespace '{namespace}'.")
+
+
+# ── Real-time: SSE stream for goal progress ──────────────────────────────────
+@app.get("/api/goals/{goal_id}/stream", tags=["Goals"], include_in_schema=True)
+async def stream_goal_sse(goal_id: str, request: Request):
+    """Server-Sent Events endpoint — streams live goal progress until done."""
+
+    async def _generate() -> AsyncGenerator[str, None]:
+        last_sig: str | None = None
+        while True:
+            if await request.is_disconnected():
+                break
+
+            with _projects_lock:
+                project = _projects.get(goal_id)
+
+            if project is None:
+                yield f"event: error\ndata: {{\"error\": \"Goal not found\"}}\n\n"
+                break
+
+            sig = f"{project.get('status')}:{project.get('completed_tasks',0)}:{project.get('total_tasks',0)}"
+            if sig != last_sig:
+                last_sig = sig
+                payload = json.dumps({
+                    "id": goal_id,
+                    "status": project.get("status"),
+                    "progress": project.get("progress", {}),
+                    "completed_tasks": project.get("completed_tasks", 0),
+                    "total_tasks": project.get("total_tasks", 0),
+                    "failed_tasks": project.get("failed_tasks", 0),
+                    "spent_usd": project.get("spent_usd", 0),
+                    "plan_summary": project.get("plan_summary"),
+                    "events": (project.get("events") or [])[-20:],
+                })
+                yield f"data: {payload}\n\n"
+
+            if project.get("status") in ("completed", "failed", "partial", "cancelled"):
+                yield f"event: done\ndata: {{\"__done__\": true, \"status\": \"{project.get('status')}\"}}\n\n"
+                break
+
+            await asyncio.sleep(0.8)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ── Real-time: WebSocket stream for goal progress ────────────────────────────
+@app.websocket("/ws/goals/{goal_id}")
+async def ws_goal_stream(websocket: WebSocket, goal_id: str):
+    """WebSocket — pushes goal progress diffs until the goal reaches a terminal state."""
+    await websocket.accept()
+    try:
+        last_sig: str | None = None
+        while True:
+            with _projects_lock:
+                project = _projects.get(goal_id)
+
+            if project is None:
+                await websocket.send_json({"error": "Goal not found"})
+                break
+
+            sig = f"{project.get('status')}:{project.get('completed_tasks',0)}:{project.get('total_tasks',0)}"
+            if sig != last_sig:
+                last_sig = sig
+                await websocket.send_json({
+                    "id": goal_id,
+                    "status": project.get("status"),
+                    "progress": project.get("progress", {}),
+                    "completed_tasks": project.get("completed_tasks", 0),
+                    "total_tasks": project.get("total_tasks", 0),
+                    "failed_tasks": project.get("failed_tasks", 0),
+                    "spent_usd": project.get("spent_usd", 0),
+                    "plan_summary": project.get("plan_summary"),
+                })
+
+            if project.get("status") in ("completed", "failed", "partial", "cancelled"):
+                await websocket.send_json({"__done__": True, "status": project.get("status")})
+                break
+
+            await asyncio.sleep(0.8)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ── State: save / load / list snapshots ─────────────────────────────────────
+class SaveStateRequest(BaseModel):
+    name: str = Field(default="snapshot", min_length=1, max_length=60)
+
+
+@app.post("/api/state/save", tags=["State"], response_model=APIResponse)
+def save_state(req: SaveStateRequest):
+    """Serialise agents + global memory to a JSON snapshot on disk."""
+    kernel = _get_kernel()
+    _SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    safe_name = "".join(c for c in req.name if c.isalnum() or c in "-_")[:50] or "snapshot"
+    filename = f"{safe_name}_{ts}.json"
+    filepath = _SNAPSHOTS_DIR / filename
+
+    try:
+        agents = kernel.registry.list_all()
+        try:
+            memory = kernel.memory.all(namespace="global")
+        except Exception:
+            memory = {}
+        state = {
+            "version": "2.0",
+            "saved_at": time.time(),
+            "name": safe_name,
+            "agents": agents,
+            "memory": memory,
+            "provider": os.getenv("AI_PROVIDER", "openai"),
+            "model": os.getenv("AI_MODEL", "gpt-4o"),
+        }
+        filepath.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
+        return APIResponse(
+            data={"filename": filename, "agents": len(agents), "memory_keys": len(memory)},
+            message=f"State saved → {filename}",
+        )
+    except Exception as exc:
+        logger.error("save_state failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/state/snapshots", tags=["State"], response_model=APIResponse)
+def list_snapshots():
+    """List all available state snapshots."""
+    _SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    snapshots: list[dict] = []
+    for f in sorted(_SNAPSHOTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            meta = json.loads(f.read_text(encoding="utf-8"))
+            snapshots.append({
+                "filename": f.name,
+                "name": meta.get("name", f.stem),
+                "saved_at": meta.get("saved_at"),
+                "agent_count": len(meta.get("agents", [])),
+                "memory_keys": len(meta.get("memory", {})),
+                "provider": meta.get("provider"),
+                "model": meta.get("model"),
+                "version": meta.get("version"),
+            })
+        except Exception:
+            snapshots.append({"filename": f.name, "name": f.stem, "saved_at": None})
+    return APIResponse(data=snapshots)
+
+
+@app.post("/api/state/load", tags=["State"], response_model=APIResponse)
+def load_state(filename: str):
+    """Restore agents from a named snapshot (agents not already registered are re-created)."""
+    # Prevent path traversal
+    safe_filename = Path(filename).name
+    if not safe_filename.endswith(".json"):
+        raise HTTPException(status_code=400, detail="Filename must end with .json")
+    filepath = _SNAPSHOTS_DIR / safe_filename
+    if not filepath.is_file():
+        raise HTTPException(status_code=404, detail=f"Snapshot '{safe_filename}' not found.")
+
+    try:
+        state = json.loads(filepath.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid or corrupt snapshot file.")
+
+    kernel = _get_kernel()
+    loaded = 0
+    skipped = 0
+    for agent_data in state.get("agents", []):
+        name = agent_data.get("name")
+        if not name:
+            continue
+        if kernel.registry.get(name):
+            skipped += 1
+            continue
+        try:
+            agent = kernel.factory.create(
+                name=name,
+                role=agent_data.get("role"),
+                tools=agent_data.get("tools") or None,
+                permission_level=agent_data.get("permission_level", 1),
+            )
+            if hasattr(agent, "attach_runtime"):
+                agent.attach_runtime(
+                    ai_adapter=kernel.ai_adapter,
+                    workflow_engine=kernel.workflow_engine,
+                    tool_manager=kernel.tool_manager,
+                )
+            if hasattr(agent, "attach_memory"):
+                agent.attach_memory(kernel.memory)
+            loaded += 1
+        except Exception as exc:
+            logger.warning("load_state: could not restore agent '%s': %s", name, exc)
+
+    return APIResponse(
+        data={"loaded_agents": loaded, "skipped_agents": skipped, "filename": safe_filename},
+        message=f"Restored {loaded} agents from '{safe_filename}' ({skipped} already existed).",
+    )
+
+
+@app.delete("/api/state/snapshots/{filename}", tags=["State"], response_model=APIResponse)
+def delete_snapshot(filename: str):
+    """Delete a state snapshot by filename."""
+    safe_filename = Path(filename).name
+    if not safe_filename.endswith(".json"):
+        raise HTTPException(status_code=400, detail="Filename must end with .json")
+    filepath = _SNAPSHOTS_DIR / safe_filename
+    if not filepath.is_file():
+        raise HTTPException(status_code=404, detail=f"Snapshot '{safe_filename}' not found.")
+    filepath.unlink()
+    return APIResponse(message=f"Snapshot '{safe_filename}' deleted.")
 
 
 if __name__ == "__main__":
