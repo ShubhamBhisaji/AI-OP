@@ -3,15 +3,19 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 import datetime
 import logging
+import multiprocessing as mp
 import os
+import queue as queue_module
 import random
 import socket
 import signal
 import sys
 import threading
 import time
+import traceback
 from typing import Any, Callable
 import uuid
 
@@ -26,6 +30,8 @@ from integrations.upstash_redis_queue import UpstashRedisQueue
 from utils.log_config import setup_logging
 
 logger = logging.getLogger("aetheer.worker.upstash")
+
+_WINDOWS_JOB_HANDLE: Any | None = None
 
 
 def _env_int(name: str, default: int, minimum: int | None = None) -> int:
@@ -55,6 +61,307 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "on"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+@dataclass(frozen=True)
+class JobSandboxConfig:
+    enabled: bool
+    strict: bool
+    max_runtime_seconds: int
+    max_memory_mb: int
+    max_cpu_seconds: int
+
+    def with_task_overrides(self, task_data: dict[str, Any]) -> "JobSandboxConfig":
+        payload = task_data if isinstance(task_data, dict) else {}
+        nested = payload.get("sandbox") if isinstance(payload.get("sandbox"), dict) else {}
+
+        def _pick(name: str, default: Any) -> Any:
+            if name in nested:
+                return nested.get(name)
+            if name in payload:
+                return payload.get(name)
+            return default
+
+        enabled = _coerce_bool(_pick("sandbox_enabled", self.enabled), self.enabled)
+        strict = _coerce_bool(_pick("sandbox_strict", self.strict), self.strict)
+        max_runtime_seconds = _coerce_int(
+            _pick("max_runtime_seconds", self.max_runtime_seconds),
+            self.max_runtime_seconds,
+            minimum=1,
+        )
+        max_memory_mb = _coerce_int(
+            _pick("max_memory_mb", self.max_memory_mb),
+            self.max_memory_mb,
+            minimum=0,
+        )
+        max_cpu_seconds = _coerce_int(
+            _pick("max_cpu_seconds", self.max_cpu_seconds),
+            self.max_cpu_seconds,
+            minimum=0,
+        )
+
+        return JobSandboxConfig(
+            enabled=enabled,
+            strict=strict,
+            max_runtime_seconds=max_runtime_seconds,
+            max_memory_mb=max_memory_mb,
+            max_cpu_seconds=max_cpu_seconds,
+        )
+
+
+def _apply_unix_resource_limits(*, max_memory_mb: int, max_cpu_seconds: int) -> bool:
+    try:
+        import resource  # type: ignore
+    except Exception:
+        return False
+
+    applied = False
+    if max_memory_mb > 0 and hasattr(resource, "RLIMIT_AS"):
+        limit_bytes = int(max_memory_mb) * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
+        applied = True
+
+    if max_cpu_seconds > 0 and hasattr(resource, "RLIMIT_CPU"):
+        cpu_limit = max(1, int(max_cpu_seconds))
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
+        applied = True
+
+    return applied
+
+
+def _apply_windows_job_limits(*, max_memory_mb: int, max_cpu_seconds: int) -> bool:
+    if max_memory_mb <= 0 and max_cpu_seconds <= 0:
+        return False
+
+    import ctypes
+    from ctypes import wintypes
+
+    class LARGE_INTEGER(ctypes.Structure):
+        _fields_ = [("QuadPart", ctypes.c_longlong)]
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", LARGE_INTEGER),
+            ("PerJobUserTimeLimit", LARGE_INTEGER),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_job_object = kernel32.CreateJobObjectW
+    create_job_object.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    create_job_object.restype = wintypes.HANDLE
+
+    set_information = kernel32.SetInformationJobObject
+    set_information.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    set_information.restype = wintypes.BOOL
+
+    assign_process = kernel32.AssignProcessToJobObject
+    assign_process.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    assign_process.restype = wintypes.BOOL
+
+    get_current_process = kernel32.GetCurrentProcess
+    get_current_process.argtypes = []
+    get_current_process.restype = wintypes.HANDLE
+
+    JOB_OBJECT_LIMIT_PROCESS_TIME = 0x00000002
+    JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    JobObjectExtendedLimitInformation = 9
+
+    info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+
+    if max_memory_mb > 0:
+        info.ProcessMemoryLimit = int(max_memory_mb) * 1024 * 1024
+        flags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY
+
+    if max_cpu_seconds > 0:
+        info.BasicLimitInformation.PerProcessUserTimeLimit.QuadPart = int(max_cpu_seconds) * 10_000_000
+        flags |= JOB_OBJECT_LIMIT_PROCESS_TIME
+
+    info.BasicLimitInformation.LimitFlags = flags
+
+    job = create_job_object(None, None)
+    if not job:
+        raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+
+    if not set_information(
+        job,
+        JobObjectExtendedLimitInformation,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+    ):
+        raise OSError(ctypes.get_last_error(), "SetInformationJobObject failed")
+
+    if not assign_process(job, get_current_process()):
+        raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
+
+    global _WINDOWS_JOB_HANDLE
+    _WINDOWS_JOB_HANDLE = job
+    return True
+
+
+def _apply_process_resource_limits(
+    *,
+    max_memory_mb: int,
+    max_cpu_seconds: int,
+    strict: bool,
+) -> None:
+    requested = max_memory_mb > 0 or max_cpu_seconds > 0
+    if not requested:
+        return
+
+    applied = False
+    if os.name == "nt":
+        try:
+            applied = _apply_windows_job_limits(
+                max_memory_mb=max_memory_mb,
+                max_cpu_seconds=max_cpu_seconds,
+            )
+        except Exception as exc:
+            if strict:
+                raise RuntimeError(f"Sandbox resource limits unavailable on Windows: {exc}") from exc
+            logger.warning("Sandbox limits degraded on Windows (non-strict): %s", exc)
+            return
+    else:
+        try:
+            applied = _apply_unix_resource_limits(
+                max_memory_mb=max_memory_mb,
+                max_cpu_seconds=max_cpu_seconds,
+            )
+        except Exception as exc:
+            if strict:
+                raise RuntimeError(f"Sandbox resource limits unavailable on POSIX: {exc}") from exc
+            logger.warning("Sandbox limits degraded on POSIX (non-strict): %s", exc)
+            return
+
+    if strict and not applied:
+        raise RuntimeError("Sandbox resource limits were requested but could not be applied.")
+
+
+def _sandbox_job_entrypoint(
+    task_type: str,
+    task_data: dict[str, Any],
+    result_queue: Any,
+    *,
+    max_memory_mb: int,
+    max_cpu_seconds: int,
+    strict: bool,
+) -> None:
+    try:
+        _apply_process_resource_limits(
+            max_memory_mb=max_memory_mb,
+            max_cpu_seconds=max_cpu_seconds,
+            strict=strict,
+        )
+        runner = AIJobRunner()
+        result = runner.execute(task_type=task_type, task_data=task_data)
+        result_queue.put({"ok": True, "result": result})
+    except BaseException as exc:  # noqa: BLE001
+        try:
+            result_queue.put(
+                {
+                    "ok": False,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "traceback": traceback.format_exc(limit=8),
+                }
+            )
+        except Exception:
+            pass
+
+
+def _run_job_in_sandbox(
+    *,
+    task_type: str,
+    task_data: dict[str, Any],
+    config: JobSandboxConfig,
+) -> Any:
+    context = mp.get_context("spawn")
+    result_queue = context.Queue(maxsize=1)
+    process = context.Process(
+        target=_sandbox_job_entrypoint,
+        args=(task_type, task_data, result_queue),
+        kwargs={
+            "max_memory_mb": max(0, int(config.max_memory_mb)),
+            "max_cpu_seconds": max(0, int(config.max_cpu_seconds)),
+            "strict": bool(config.strict),
+        },
+        daemon=True,
+    )
+    process.start()
+
+    timeout_seconds = max(1, int(config.max_runtime_seconds))
+    process.join(timeout=timeout_seconds)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=3)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=2)
+        raise TimeoutError(f"Sandbox runtime limit exceeded ({timeout_seconds}s)")
+
+    payload: dict[str, Any] | None = None
+    try:
+        maybe_payload = result_queue.get_nowait()
+        if isinstance(maybe_payload, dict):
+            payload = maybe_payload
+    except queue_module.Empty:
+        payload = None
+    finally:
+        try:
+            result_queue.close()
+        except Exception:
+            pass
+
+    if isinstance(payload, dict):
+        if bool(payload.get("ok", False)):
+            return payload.get("result")
+        error_type = str(payload.get("error_type") or "RuntimeError")
+        error_message = str(payload.get("error") or "sandbox execution failed")
+        raise RuntimeError(f"Sandbox child failed ({error_type}): {error_message}")
+
+    if process.exitcode == 0:
+        raise RuntimeError("Sandbox child exited without returning a result payload")
+
+    raise RuntimeError(
+        f"Sandbox process terminated (exitcode={process.exitcode}) due to resource governance"
+    )
 
 
 def _supported_shutdown_signals() -> tuple[int, ...]:
@@ -100,6 +407,20 @@ def _coerce_int(value: Any, default: int, minimum: int = 0) -> int:
 def _classify_failure(exc: BaseException) -> dict[str, Any]:
     text = f"{type(exc).__name__}: {exc}".lower()
 
+    if "sandbox runtime limit exceeded" in text or "resource governance" in text or "resource limit" in text:
+        return {
+            "reason": "resource_limit_exceeded",
+            "classification": "resource_limit_exceeded",
+            "retryable": False,
+        }
+
+    if "budget" in text and ("blocked" in text or "exceeded" in text or "limit" in text):
+        return {
+            "reason": "budget_exceeded",
+            "classification": "budget_exceeded",
+            "retryable": False,
+        }
+
     if isinstance(exc, KeyboardInterrupt):
         return {
             "reason": "worker_interrupt",
@@ -108,6 +429,12 @@ def _classify_failure(exc: BaseException) -> dict[str, Any]:
         }
 
     if isinstance(exc, TimeoutError):
+        if "sandbox" in text:
+            return {
+                "reason": "resource_limit_exceeded",
+                "classification": "resource_limit_exceeded",
+                "retryable": False,
+            }
         return {
             "reason": "external_timeout",
             "classification": "external_timeout",
@@ -548,17 +875,123 @@ class AIJobRunner:
             )
         return self._ceo
 
+    def _budget_limit_usd(self, task_data: dict[str, Any]) -> float:
+        raw_limit = task_data.get("max_cost_usd")
+        if raw_limit is None:
+            raw_limit = task_data.get("budget_usd")
+        if raw_limit is None:
+            raw_limit = os.getenv("AETHEER_JOB_MAX_COST_USD", "0")
+
+        try:
+            limit = float(raw_limit)
+        except (TypeError, ValueError):
+            limit = 0.0
+        return max(0.0, limit)
+
+    def _enforce_monthly_budget_enabled(self, task_data: dict[str, Any]) -> bool:
+        if "enforce_monthly_budget" in task_data:
+            return _coerce_bool(task_data.get("enforce_monthly_budget"), True)
+        return _env_bool("AETHEER_JOB_BUDGET_ENFORCE_MONTHLY", True)
+
+    def _estimate_execution_cost_usd(self, task_type: str, task_data: dict[str, Any]) -> float:
+        kernel = self._kernel_instance()
+        finops = getattr(kernel, "finops", None)
+        if finops is None:
+            return 0.0
+
+        provider = str(getattr(kernel.ai_adapter, "provider", "openai") or "openai")
+        model = str(getattr(kernel.ai_adapter, "model", "gpt-4o") or "gpt-4o")
+        model_key = model if "/" in model else f"{provider}/{model}"
+
+        seed_text = ""
+        if task_type == "goal":
+            seed_text = str(task_data.get("goal") or "")
+        elif task_type == "agent_task":
+            seed_text = str(task_data.get("task") or "")
+        elif task_type == "chat":
+            msg = str(task_data.get("message") or "")
+            history = task_data.get("history") if isinstance(task_data.get("history"), list) else []
+            seed_text = f"{msg}\n{history}"
+
+        default_tokens = _env_int("AETHEER_JOB_COST_ESTIMATE_TOKENS", 2500, minimum=400)
+        inferred_tokens = max(400, min(20000, int(len(seed_text) * 1.35))) if seed_text else default_tokens
+
+        prompt_tokens = int(inferred_tokens * 0.7)
+        completion_tokens = max(80, inferred_tokens - prompt_tokens)
+        return float(
+            finops._calculate_cost(  # noqa: SLF001
+                model_key,
+                prompt_tokens,
+                completion_tokens,
+            )
+        )
+
+    def _budget_precheck(self, task_type: str, task_data: dict[str, Any]) -> float:
+        kernel = self._kernel_instance()
+        finops = getattr(kernel, "finops", None)
+        if finops is None:
+            return 0.0
+
+        status = finops.status()
+        used_before = float(status.get("used_usd") or 0.0)
+        estimate = self._estimate_execution_cost_usd(task_type, task_data)
+        limit_usd = self._budget_limit_usd(task_data)
+
+        if limit_usd > 0 and estimate > limit_usd:
+            raise RuntimeError(
+                "Budget blocked: projected task cost exceeds per-job budget "
+                f"(estimated=${estimate:.6f}, limit=${limit_usd:.6f})"
+            )
+
+        if self._enforce_monthly_budget_enabled(task_data) and not finops.can_spend(estimate):
+            remaining = status.get("remaining_usd")
+            remaining_text = "unlimited" if remaining is None else f"${float(remaining):.6f}"
+            raise RuntimeError(
+                "Budget blocked: projected task cost exceeds remaining monthly budget "
+                f"(estimated=${estimate:.6f}, remaining={remaining_text})"
+            )
+
+        return used_before
+
+    def _budget_postcheck(self, task_data: dict[str, Any], used_before: float) -> None:
+        kernel = self._kernel_instance()
+        finops = getattr(kernel, "finops", None)
+        if finops is None:
+            return
+
+        status_after = finops.status()
+        used_after = float(status_after.get("used_usd") or 0.0)
+        actual_cost = max(0.0, used_after - float(used_before))
+        limit_usd = self._budget_limit_usd(task_data)
+
+        if limit_usd > 0 and actual_cost > limit_usd:
+            raise RuntimeError(
+                "Budget exceeded: task spent above per-job budget "
+                f"(spent=${actual_cost:.6f}, limit=${limit_usd:.6f})"
+            )
+
+        if self._enforce_monthly_budget_enabled(task_data) and bool(status_after.get("over_budget")):
+            raise RuntimeError("Budget exceeded: monthly budget has been exhausted")
+
     def execute(self, *, task_type: str, task_data: dict[str, Any]) -> Any:
         normalized = (task_type or "").strip().lower()
         if not normalized:
             normalized = "goal"
 
+        used_before = self._budget_precheck(normalized, task_data)
+
         if normalized == "goal":
-            return self._execute_goal(task_data)
+            result = self._execute_goal(task_data)
+            self._budget_postcheck(task_data, used_before)
+            return result
         if normalized == "agent_task":
-            return self._execute_agent_task(task_data)
+            result = self._execute_agent_task(task_data)
+            self._budget_postcheck(task_data, used_before)
+            return result
         if normalized == "chat":
-            return self._execute_chat(task_data)
+            result = self._execute_chat(task_data)
+            self._budget_postcheck(task_data, used_before)
+            return result
 
         raise ValueError(f"Unsupported task_type '{task_type}'.")
 
@@ -602,7 +1035,30 @@ class AIJobRunner:
             raise ValueError("chat task requires task_data.message")
 
         history = task_data.get("history") if isinstance(task_data.get("history"), list) else []
-        reply = self._kernel_instance().chat(message=message, history=history)
+        kernel = self._kernel_instance()
+        reply = kernel.chat(message=message, history=history)
+
+        finops = getattr(kernel, "finops", None)
+        if finops is not None:
+            try:
+                usage = getattr(kernel.ai_adapter, "usage", {}) or {}
+                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+                if prompt_tokens + completion_tokens > 0:
+                    provider = str(getattr(kernel.ai_adapter, "provider", "openai") or "openai")
+                    model = str(getattr(kernel.ai_adapter, "model", "gpt-4o") or "gpt-4o")
+                    model_key = model if "/" in model else f"{provider}/{model}"
+                    finops.record_spend(
+                        agent="queue_chat",
+                        task=message,
+                        model=model_key,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        project="queue_worker_chat",
+                    )
+            except Exception as exc:
+                logger.debug("Could not record chat FinOps spend: %s", exc)
+
         return {
             "message": message,
             "reply": reply,
@@ -943,6 +1399,40 @@ def _parse_args() -> argparse.Namespace:
         help="Redis list name used for dead-lettered jobs.",
     )
     parser.add_argument(
+        "--sandbox-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=_env_bool("AETHEER_JOB_SANDBOX_ENABLED", True),
+        help="Run each job in an isolated subprocess sandbox.",
+    )
+    parser.add_argument(
+        "--sandbox-strict",
+        action=argparse.BooleanOptionalAction,
+        default=_env_bool("AETHEER_JOB_SANDBOX_STRICT", True),
+        help="Fail jobs when hard CPU/memory limits cannot be enforced.",
+    )
+    parser.add_argument(
+        "--job-max-runtime-seconds",
+        type=int,
+        default=_env_int(
+            "AETHEER_JOB_MAX_RUNTIME_SECONDS",
+            _env_int("MAX_RUNTIME_SECONDS", 600, minimum=10),
+            minimum=1,
+        ),
+        help="Hard wall-clock limit for each job sandbox process.",
+    )
+    parser.add_argument(
+        "--job-max-memory-mb",
+        type=int,
+        default=_env_int("AETHEER_JOB_MAX_MEMORY_MB", 1024, minimum=0),
+        help="Hard memory cap per job subprocess in MB (0 disables memory cap).",
+    )
+    parser.add_argument(
+        "--job-max-cpu-seconds",
+        type=int,
+        default=_env_int("AETHEER_JOB_MAX_CPU_SECONDS", 300, minimum=0),
+        help="Hard CPU time cap per job subprocess in seconds (0 disables CPU cap).",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.getenv("LOG_LEVEL", "INFO"),
         help="Worker log level.",
@@ -969,6 +1459,11 @@ def run_worker(
     metrics_log_interval_seconds: float = 30.0,
     retention_hours: int = 168,
     dlq_queue_name: str = "job_queue_dlq",
+    sandbox_enabled: bool = True,
+    sandbox_strict: bool = True,
+    job_max_runtime_seconds: int = 600,
+    job_max_memory_mb: int = 1024,
+    job_max_cpu_seconds: int = 300,
 ) -> None:
     queue = UpstashRedisQueue()
     store = SupabaseJobStore()
@@ -986,6 +1481,13 @@ def run_worker(
     metrics_log_interval_seconds = max(0.0, float(metrics_log_interval_seconds))
     retention_hours = max(1, int(retention_hours))
     dlq_queue_name = str(dlq_queue_name).strip() or "job_queue_dlq"
+    sandbox_config = JobSandboxConfig(
+        enabled=bool(sandbox_enabled),
+        strict=bool(sandbox_strict),
+        max_runtime_seconds=max(1, int(job_max_runtime_seconds)),
+        max_memory_mb=max(0, int(job_max_memory_mb)),
+        max_cpu_seconds=max(0, int(job_max_cpu_seconds)),
+    )
     priority_queue_names = tuple(
         str(name)
         for name in getattr(queue, "priority_queue_names", (queue.queue_name,))
@@ -997,6 +1499,14 @@ def run_worker(
     worker_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
     def _run_job(task_type: str, task_data: dict[str, Any]) -> Any:
+        job_sandbox = sandbox_config.with_task_overrides(task_data)
+        if job_sandbox.enabled:
+            return _run_job_in_sandbox(
+                task_type=task_type,
+                task_data=task_data,
+                config=job_sandbox,
+            )
+
         runner = getattr(runner_local, "runner", None)
         if runner is None:
             runner = AIJobRunner()
@@ -1039,7 +1549,8 @@ def run_worker(
         (
             "Worker online: queues=%s pop_timeout=%ss max_concurrency=%s batch_size=%s "
             "run_once=%s shutdown_grace_seconds=%s max_retries=%s retry_backoff=%ss..%ss "
-            "claim_lease=%ss timeout=%ss cleanup_interval=%ss metrics_interval=%ss retention=%sh dlq=%s worker_id=%s"
+            "claim_lease=%ss timeout=%ss cleanup_interval=%ss metrics_interval=%ss retention=%sh dlq=%s "
+            "sandbox=%s strict=%s job_runtime=%ss job_mem=%sMB job_cpu=%ss worker_id=%s"
         ),
         ",".join(priority_queue_names),
         pop_timeout,
@@ -1056,6 +1567,11 @@ def run_worker(
         metrics_log_interval_seconds,
         retention_hours,
         dlq_queue_name,
+        sandbox_config.enabled,
+        sandbox_config.strict,
+        sandbox_config.max_runtime_seconds,
+        sandbox_config.max_memory_mb,
+        sandbox_config.max_cpu_seconds,
         worker_id,
     )
 
@@ -1250,6 +1766,11 @@ def main() -> None:
         metrics_log_interval_seconds=max(0.0, float(args.metrics_log_interval_seconds)),
         retention_hours=max(1, int(args.retention_hours)),
         dlq_queue_name=str(args.dlq_queue).strip() or "job_queue_dlq",
+        sandbox_enabled=bool(args.sandbox_enabled),
+        sandbox_strict=bool(args.sandbox_strict),
+        job_max_runtime_seconds=max(1, int(args.job_max_runtime_seconds)),
+        job_max_memory_mb=max(0, int(args.job_max_memory_mb)),
+        job_max_cpu_seconds=max(0, int(args.job_max_cpu_seconds)),
     )
 
 

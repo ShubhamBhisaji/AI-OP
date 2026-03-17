@@ -72,6 +72,11 @@ class WorkerSupervisorConfig:
     pop_timeout: int
     idle_sleep: float
     max_concurrency: int
+    sandbox_enabled: bool
+    sandbox_strict: bool
+    job_max_runtime_seconds: int
+    job_max_memory_mb: int
+    job_max_cpu_seconds: int
     log_level: str
 
 
@@ -178,6 +183,36 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Thread concurrency per worker process.",
     )
     parser.add_argument(
+        "--sandbox-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=_env_bool("AETHEER_JOB_SANDBOX_ENABLED", default=True),
+        help="Run each queue job in an isolated subprocess sandbox.",
+    )
+    parser.add_argument(
+        "--sandbox-strict",
+        action=argparse.BooleanOptionalAction,
+        default=_env_bool("AETHEER_JOB_SANDBOX_STRICT", default=True),
+        help="Fail jobs when hard CPU/memory limits cannot be enforced.",
+    )
+    parser.add_argument(
+        "--job-max-runtime-seconds",
+        type=int,
+        default=_env_int("AETHEER_JOB_MAX_RUNTIME_SECONDS", default=600, minimum=1),
+        help="Hard runtime cap for each job subprocess.",
+    )
+    parser.add_argument(
+        "--job-max-memory-mb",
+        type=int,
+        default=_env_int("AETHEER_JOB_MAX_MEMORY_MB", default=1024, minimum=0),
+        help="Hard memory cap in MB per job subprocess (0 disables).",
+    )
+    parser.add_argument(
+        "--job-max-cpu-seconds",
+        type=int,
+        default=_env_int("AETHEER_JOB_MAX_CPU_SECONDS", default=300, minimum=0),
+        help="Hard CPU-time cap in seconds per job subprocess (0 disables).",
+    )
+    parser.add_argument(
         "--log-level",
         default=(os.getenv("LOG_LEVEL") or "INFO"),
         help="Log level for supervisor and spawned worker processes.",
@@ -202,6 +237,11 @@ def _build_config(args: argparse.Namespace) -> WorkerSupervisorConfig:
         pop_timeout=max(1, int(args.pop_timeout)),
         idle_sleep=max(0.05, float(args.idle_sleep)),
         max_concurrency=max(1, int(args.max_concurrency)),
+        sandbox_enabled=bool(args.sandbox_enabled),
+        sandbox_strict=bool(args.sandbox_strict),
+        job_max_runtime_seconds=max(1, int(args.job_max_runtime_seconds)),
+        job_max_memory_mb=max(0, int(args.job_max_memory_mb)),
+        job_max_cpu_seconds=max(0, int(args.job_max_cpu_seconds)),
         log_level=str(args.log_level or "INFO").upper(),
     )
 
@@ -218,6 +258,14 @@ def _build_worker_command(config: WorkerSupervisorConfig) -> list[str]:
         str(config.idle_sleep),
         "--max-concurrency",
         str(config.max_concurrency),
+        "--sandbox-enabled" if config.sandbox_enabled else "--no-sandbox-enabled",
+        "--sandbox-strict" if config.sandbox_strict else "--no-sandbox-strict",
+        "--job-max-runtime-seconds",
+        str(config.job_max_runtime_seconds),
+        "--job-max-memory-mb",
+        str(config.job_max_memory_mb),
+        "--job-max-cpu-seconds",
+        str(config.job_max_cpu_seconds),
         "--log-level",
         config.log_level,
     ]

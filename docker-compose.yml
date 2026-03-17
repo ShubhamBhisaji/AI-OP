@@ -27,6 +27,7 @@ services:
       - AETHER_HOST=0.0.0.0
       - AETHER_PORT=8000
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_JSON=${LOG_JSON:-1}
       - DATABASE_URL=${DATABASE_URL:-sqlite:////app/memory/aetheer.db}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:8000}
     volumes:
@@ -56,6 +57,7 @@ services:
       - AetheerAI/.env
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_JSON=${LOG_JSON:-1}
       - AETHEER_WORKER_AUTOSCALE=${AETHEER_WORKER_AUTOSCALE:-1}
       - AETHEER_WORKER_MIN_PROCESSES=${AETHEER_WORKER_MIN_PROCESSES:-1}
       - AETHEER_WORKER_MAX_PROCESSES=${AETHEER_WORKER_MAX_PROCESSES:-4}
@@ -67,6 +69,71 @@ services:
     depends_on:
       aetheerai:
         condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: aetheerai-prometheus
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=14d"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./ops/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      aetheerai:
+        condition: service_healthy
+
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: aetheerai-loki
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - "-config.file=/etc/loki/config.yaml"
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./ops/observability/loki-config.yml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+
+  promtail:
+    image: grafana/promtail:3.2.1
+    container_name: aetheerai-promtail
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - "-config.file=/etc/promtail/config.yml"
+    volumes:
+      - ./ops/observability/promtail-config.yml:/etc/promtail/config.yml:ro
+      - aetheer_logs:/var/log/aetheerai:ro
+    depends_on:
+      loki:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: aetheerai-grafana
+    restart: unless-stopped
+    profiles: ["observability"]
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANONYMOUS_ENABLED:-false}
+    volumes:
+      - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
 
   # ── Optional: Nginx reverse proxy ────────────────────────────────────────
   # Uncomment to expose AetheerAI behind Nginx with TLS termination.
@@ -87,3 +154,6 @@ volumes:
   aetheer_memory:
   aetheer_uploads:
   aetheer_logs:
+  prometheus_data:
+  loki_data:
+  grafana_data:

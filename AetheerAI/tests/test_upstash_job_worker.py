@@ -163,6 +163,7 @@ class WorkerConcurrencyTests(unittest.TestCase):
                 idle_sleep=0.001,
                 run_once=False,
                 max_concurrency=3,
+                sandbox_enabled=False,
             )
 
         completed_ids = {job_id for job_id, _ in fake_store.completed}
@@ -193,6 +194,7 @@ class WorkerConcurrencyTests(unittest.TestCase):
                 idle_sleep=0.001,
                 run_once=True,
                 max_concurrency=4,
+                sandbox_enabled=False,
             )
 
         self.assertEqual(len(fake_store.completed) + len(fake_store.failed), 1)

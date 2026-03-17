@@ -123,6 +123,7 @@ class WorkerShutdownTests(unittest.TestCase):
                 stale_scan_interval_seconds=60,
                 stale_scan_batch_size=10,
                 dlq_queue_name="job_queue_dlq",
+                sandbox_enabled=False,
             )
 
         self.assertGreaterEqual(len(store.failed), 1)

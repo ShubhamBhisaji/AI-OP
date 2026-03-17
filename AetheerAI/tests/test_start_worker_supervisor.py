@@ -109,6 +109,11 @@ class StartWorkerSupervisorTests(unittest.TestCase):
             pop_timeout=20,
             idle_sleep=0.1,
             max_concurrency=2,
+            sandbox_enabled=True,
+            sandbox_strict=True,
+            job_max_runtime_seconds=600,
+            job_max_memory_mb=1024,
+            job_max_cpu_seconds=300,
             log_level="INFO",
         )
 
@@ -143,6 +148,11 @@ class StartWorkerSupervisorTests(unittest.TestCase):
             pop_timeout=20,
             idle_sleep=0.1,
             max_concurrency=1,
+            sandbox_enabled=True,
+            sandbox_strict=True,
+            job_max_runtime_seconds=600,
+            job_max_memory_mb=1024,
+            job_max_cpu_seconds=300,
             log_level="INFO",
         )
 
