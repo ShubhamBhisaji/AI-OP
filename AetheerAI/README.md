@@ -4,23 +4,24 @@
 / /_\ \  ___ | |_| |__   ___  ___ _ __/ _ \  | |
 |  _  | / _ \| __| '_ \ / _ \/ _ \ '__/ ___ \ | |
 | | | ||  __/| |_| | | |  __/  __/ | / /   \_\|___|
-\_| |_/ \___| \__|_| |_|\___|\___|_|/_/   (v2.1)
+\_| |_/ \___| \__|_| |_|\___|\___|_|/_/   (v2.0)
 ```
 
 <div align="center">
 
-**Autonomous Multi-Agent AI Operating System**
+**An AI Master — Autonomous Multi-Agent AI Operating System**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111%2B-009688?style=flat-square)](https://fastapi.tiangolo.com)
-[![WebSocket](https://img.shields.io/badge/WebSocket-live--streaming-6366f1?style=flat-square)](#real-time-streaming)
-[![Multi-User](https://img.shields.io/badge/Auth-API--Key-f43f5e?style=flat-square)](#multi-user--api-key-auth)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.35%2B-FF4B4B?style=flat-square)](https://streamlit.io)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-[![Agents](https://img.shields.io/badge/Agents-45%2B_tools-8b5cf6?style=flat-square)](#tools-45)
 
 </div>
 
 ---
+
+An autonomous, multi-agent AI Operating System written in Python 3.10+.  
+It manages AI agents the way an OS manages processes — with scheduling, security, memory, tools, and self-improvement built in.
 
 > **Most AI today is Reactive** — it waits for you.  
 > **AetheerAI is Proactive** — it builds systems that work *for* you.  
@@ -28,48 +29,26 @@
 
 ---
 
-## ⚡ Quick Start (3 commands)
-
-```bash
-git clone https://github.com/your-org/AetheerAI.git && cd AetheerAI
-cp .env.example .env          # add your AI provider key
-python start_api.py           # open http://localhost:8000
-```
-
-The built-in web UI opens at **`http://localhost:8000`** — no React build, no Node.js required.
-
----
-
-## What's New in v2.1
-
-| Feature | Details |
-|---|---|
-| **Real-time streaming** | WebSocket (`/ws/goals/{id}`) + SSE (`/api/goals/{id}/stream`) — live progress in the UI |
-| **API-key authentication** | Set `AETHER_API_KEYS=key1,key2` to restrict access; the UI persists your key automatically |
-| **State snapshots** | `POST /api/state/save` / `load` — export & restore the full agent roster + memory to JSON |
-| **Mobile-responsive UI** | Hamburger sidebar, fluid grid, touch-friendly inputs — works on any screen size |
-
----
-
 ## Table of Contents
 
 1. [What is AetheerAI?](#what-is-aetheerai)
-2. [Screenshots & Demo](#screenshots--demo)
-3. [Prerequisites](#prerequisites)
-4. [Installation](#installation)
-5. [Configuration](#configuration)
-6. [How to Run](#how-to-run)
-7. [Usage & Input / Output](#usage--input--output)
-8. [Architecture](#architecture)
-9. [AI Providers](#ai-providers)
-10. [Key Features](#key-features)
-11. [Security](#security)
-12. [Tools (45+)](#tools-45)
-13. [Self-Improvement Loop](#self-improvement-loop)
-14. [Project Layout](#project-layout)
-15. [Running Tests](#running-tests)
-16. [Contributing](#contributing)
-17. [License](#license)
+2. [Use Cases — What Problem Does It Solve?](#use-cases--what-problem-does-it-solve)
+3. [Screenshots & Demo](#screenshots--demo)
+4. [Prerequisites](#prerequisites)
+5. [Installation](#installation)
+6. [Configuration](#configuration)
+7. [How to Run](#how-to-run)
+8. [Usage & Input / Output](#usage--input--output)
+9. [Architecture](#architecture)
+10. [AI Providers](#ai-providers)
+11. [Key Features](#key-features)
+12. [Security](#security)
+13. [Tools (45+)](#tools-45)
+14. [Self-Improvement Loop](#self-improvement-loop)
+15. [Project Layout](#project-layout)
+16. [Running Tests](#running-tests)
+17. [Contributing](#contributing)
+18. [License](#license)
 
 ---
 
@@ -124,6 +103,99 @@ A standard AI is a **solo pianist** — it can play a great song, but it's just 
 | Engineers | The "Digital Assembly Line" — focus on workflow |
 | Non-Techies | The "Smart City" — focus on movement and apps |
 | Investors | The "Orchestra" — focus on the beauty of coordination |
+
+---
+
+## Use Cases — What Problem Does It Solve?
+
+### The core problem
+
+Every AI tool available today — ChatGPT, Copilot, Gemini — is a **single-turn assistant**.  
+You ask one question, it answers, and then it **forgets everything** and waits for you to ask again.
+
+This means **you** are still the project manager. You still have to:
+- break the goal into steps,
+- copy output from one tool to another,
+- notice when something fails and retry it,
+- keep track of what has and hasn't been done.
+
+**AetheerAI removes you from that loop entirely.**  
+You give it a goal. It plans, assigns, executes, monitors, and delivers — by itself.
+
+---
+
+### Real-world problems it solves
+
+#### Problem 1 — "I need a full feature, not a code snippet"
+
+> *"Write me a user authentication system with JWT, a login endpoint, password hashing, and a Dockerfile."*
+
+| Without AetheerAI | With AetheerAI |
+|---|---|
+| Prompt ChatGPT for the route → copy → prompt for JWT → copy → prompt for Docker → copy → fix conflicts manually | One `orchestrate` command. CEO agent plans 4 tasks, assigns them to DeveloperAgent, monitors, and saves all files to `workspace/`. |
+
+---
+
+#### Problem 2 — "Research takes hours before I can even start building"
+
+> *"Before building, I need to know the best practices, the competitor landscape, and what tech stack to use."*
+
+| Without AetheerAI | With AetheerAI |
+|---|---|
+| Open 10 browser tabs, read docs, take notes, summarise manually | ResearchAgent runs web searches in parallel, fact-checks sources, and delivers a structured report — while DeveloperAgent is already starting the scaffold in the background. |
+
+---
+
+#### Problem 3 — "I run the same multi-step workflow every week"
+
+> *"Every Monday: pull last week's sales CSV, clean it, analyse trends, write a summary, email it to the team."*
+
+| Without AetheerAI | With AetheerAI |
+|---|---|
+| Open spreadsheet, run scripts, write summary, manually send email — 2 hours every week | Define the pipeline once. `run_pipeline dataTeam "run weekly sales report"` — runs in under 2 minutes, unattended. |
+
+---
+
+#### Problem 4 — "I'm a solo founder — I can't afford five specialists"
+
+> *"I need a researcher, a developer, a marketer, an ops engineer, and a support agent — but I'm one person."*
+
+| Without AetheerAI | With AetheerAI |
+|---|---|
+| Juggle every role yourself, context-switch constantly, burn out | Spin up a full team of specialist agents in seconds. Delegate like a CEO. Each agent has the right tools and the right permissions. |
+
+---
+
+#### Problem 5 — "AI ideas that break in production due to zero safety controls"
+
+> *"I gave an AI access to my file system and it deleted the wrong folder."*
+
+| Without AetheerAI | With AetheerAI |
+|---|---|
+| No guardrails — model can call any tool, write anywhere, run any command | Every destructive tool (`file_writer`, `code_runner`, `terminal`) requires explicit human approval via `ApprovalGate`. RBAC enforces per-agent permission levels. Full audit trail in `memory/audit_log.jsonl`. |
+
+---
+
+### Who is it for?
+
+| Persona | Pain point solved |
+|---|---|
+| **Solo founders / indie hackers** | Replace a whole team with a managed agent crew |
+| **Software engineers** | Automate repetitive multi-step workflows (CI tasks, code review, doc generation) |
+| **Data analysts** | Build pipelines that fetch, clean, analyse, and report — unattended |
+| **Marketing teams** | Research → write → publish content pipelines |
+| **DevOps / SRE teams** | Self-healing automation that detects failure and retries or re-routes |
+| **Researchers** | Multi-source web research, fact-checking, and structured report generation |
+| **Enterprises** | Governed, audited, budget-capped AI execution with RBAC and approval gates |
+
+---
+
+### What it is NOT
+
+- **Not a chatbot** — it does not wait for you to type the next message.
+- **Not a single-model wrapper** — it orchestrates *multiple* agents with *different* roles, tools, and permissions.
+- **Not a no-code toy** — it is a Python framework with a full REST API, security layer, and plugin tool system.
+- **Not vendor-locked** — swap between OpenAI, Claude, Gemini, Ollama, or GitHub Models with one config change.
 
 ---
 
@@ -480,8 +552,6 @@ Build & export
 | `POST` | `/api/goals` | Submit a high-level goal |
 | `GET`  | `/api/goals/{id}` | Monitor goal end-to-end |
 | `GET`  | `/api/goals/{id}/tasks` | Task-level progress |
-| `GET`  | `/api/goals/{id}/stream` | **SSE** — live progress stream |
-| `WS`   | `/ws/goals/{id}` | **WebSocket** — live progress stream |
 | `POST` | `/api/projects` | Submit goal → CEO runs it |
 | `GET`  | `/api/projects/{id}` | Results + task breakdown |
 | `POST` | `/api/agents` | Create a custom agent |
@@ -489,42 +559,19 @@ Build & export
 | `GET`  | `/api/system/status` | Runtime health check |
 | `POST` | `/api/chat` | Direct AI chat (no CEO planning) |
 | `GET`  | `/api/health` | Health check |
-| `POST` | `/api/state/save` | Save agent + memory snapshot |
-| `GET`  | `/api/state/snapshots` | List all saved snapshots |
-| `POST` | `/api/state/load?filename=` | Restore agents from a snapshot |
 
 **Example — submit a project via curl:**
 
 ```bash
 curl -X POST http://localhost:8000/api/projects \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-key-here" \
   -d '{
     "name": "My SaaS Landing Page",
     "goal": "Build a professional landing page for TaskFlow",
     "collaboration_mode": true,
-    "background": true
+    "offline_local_mode": false,
+    "background": false
   }'
-```
-
-**Example — stream live progress (SSE):**
-
-```bash
-curl -N http://localhost:8000/api/goals/<id>/stream
-# → data: {"status":"running","progress":{"percent":40},"completed_tasks":2,...}
-# → event: done
-# → data: {"__done__":true,"status":"completed"}
-```
-
-**Example — connect via WebSocket (JavaScript):**
-
-```js
-const ws = new WebSocket('ws://localhost:8000/ws/goals/<id>');
-ws.onmessage = ({ data }) => {
-  const d = JSON.parse(data);
-  console.log(d.status, d.progress?.percent + '%');
-  if (d.__done__) ws.close();
-};
 ```
 
 **Example response:**
@@ -537,90 +584,9 @@ ws.onmessage = ({ data }) => {
   "total_tasks": 5,
   "cost_usd": 0.07,
   "runtime_seconds": 8.2,
-  "summary": "Landing page built and saved to workspace/..."
+  "summary": "Landing page built and saved to workspace/...",
+  "files": ["workspace/index.html", "workspace/styles.css", "workspace/copy.md"]
 }
-```
-
----
-
-## Real-time Streaming
-
-AetheerAI v2.1 ships two live-progress transports — choose either or both:
-
-| Transport | Endpoint | Best for |
-|---|---|---|
-| **SSE** | `GET /api/goals/{id}/stream` | Dashboards, browser `EventSource`, curl |
-| **WebSocket** | `ws://host/ws/goals/{id}` | React apps, mobile clients, bidirectional later |
-
-Both emit incremental diffs at ~800 ms intervals and send a terminal `done` event when the goal finishes.  
-The built-in web UI automatically connects SSE when you open a running goal's detail panel — look for the red **Live** indicator.
-
----
-
-## Multi-user & API Key Auth
-
-By default AetheerAI runs in open dev mode (no auth required).  
-Set this env var to enforce authentication on all non-public endpoints:
-
-```ini
-# .env
-AETHER_API_KEYS=sk-aether-prod-abc123,sk-aether-staging-xyz789
-```
-
-Clients pass the key as an HTTP header:
-
-```
-X-API-Key: sk-aether-prod-abc123
-```
-
-The built-in UI stores your key in `localStorage` and injects it automatically.  
-In CI / headless mode, the key is passed on every request.
-
-Public routes always available without a key: `/`, `/docs`, `/redoc`, `/api/health`, `/ui/*`.
-
----
-
-## State Snapshots (Save / Load)
-
-Preserve and restore your entire agent roster + global memory:
-
-```bash
-# Save
-curl -X POST http://localhost:8000/api/state/save \
-  -H "Content-Type: application/json" \
-  -d '{"name": "production-v1"}'
-
-# List
-curl http://localhost:8000/api/state/snapshots
-
-# Load (restores agents not already registered)
-curl -X POST "http://localhost:8000/api/state/load?filename=production-v1_20260317_120000.json"
-```
-
-Snapshots are stored as plain JSON in `AetheerAI/memory/snapshots/` — fully auditable and version-controllable.
-
----
-
-## Docker / Container deployment
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY AetheerAI/ ./AetheerAI/
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-ENV AETHER_HOST=0.0.0.0 AETHER_PORT=8000
-EXPOSE 8000
-CMD ["python", "AetheerAI/start_api.py"]
-```
-
-```bash
-docker build -t aetheerai:latest .
-docker run -p 8000:8000 \
-  -e AI_PROVIDER=openai \
-  -e OPENAI_API_KEY=sk-... \
-  -e AETHER_API_KEYS=sk-prod-key \
-  aetheerai:latest
 ```
 
 ---
@@ -628,14 +594,7 @@ docker run -p 8000:8000 \
 ## Architecture
 
 ```
-User / CLI / Web UI / Mobile
-    │
-    ▼
-FastAPI Server  (start_api.py)
-    ├── REST endpoints      ← /api/goals, /api/agents, /api/chat, /api/state…
-    ├── SSE streaming       ← GET /api/goals/{id}/stream
-    ├── WebSocket           ← ws://host/ws/goals/{id}
-    └── API Key Middleware  ← X-API-Key header (opt-in via AETHER_API_KEYS)
+User / CLI
     │
     ▼
 AetheerAiKernel          ← Central boot & orchestration
@@ -647,7 +606,6 @@ AetheerAiKernel          ← Central boot & orchestration
     ├── ToolManager       ← 45+ tools, RBAC enforcement
     ├── MemoryManager     ← Namespaced KV store + ChromaDB vector search
     ├── SkillEngine       ← Tiered skill catalogs, AI-driven upgrades
-    ├── StateCheckpoint   ← Save / load / time-travel snapshots
     └── Security layer
             ├── PolicyEngine   ← tool authorisation (deny-by-default)
             ├── ApprovalGate   ← HITL gate for destructive/high-risk tools
@@ -754,25 +712,18 @@ export_system MyAI agent1,agent2       # multi-agent bundle w/ Docker + launcher
 ## Project Layout
 
 ```
-AetheerAI/
-├── main.py              CLI entry point
-├── app.py               Streamlit dashboard
-├── launcher.py          Background launcher + splash
-├── agents/              BaseAgent class
-├── ai/                  AIAdapter (litellm)
-├── cli/                 CommandInterface REPL, AgentWindow, ApiKeyManager
-├── core/                Kernel, WorkflowEngine, Orchestrator, Exporter, SelfImprove…
-├── evals/               BenchmarkRunner, FailureClustering, QualityGate
-├── factory/             AgentFactory (8 presets + custom)
-├── memory/              MemoryManager + ChromaDB store
-├── registry/            AgentRegistry + registry_store.json
-├── security/            ApprovalGate, PolicyEngine, AuditLogger
-├── skills/              SkillEngine
-├── templates/           Jinja2 export templates
-├── tests/               pytest test suite
-├── tools/               45+ tool implementations
-└── utils/               JSON parser, path resolver
+AI-OP/
+├── app/                 Runtime entry wrappers (CLI, dashboard, server)
+├── src/                 Canonical package namespace (src-layout)
+├── models/              Data pipelines, configs, and trained artifacts
+├── api/                 Top-level API entry point (`api.server:app`)
+├── ui/                  Top-level static UI assets (`ui/index.html`)
+├── main.py              Unified root entry point
+└── AetheerAI/           Legacy implementation modules (kept for compatibility)
 ```
+
+The runtime remains backward-compatible: the `AetheerAI/` implementation stays
+intact while clean top-level architecture is exposed at repository root.
 
 ---
 

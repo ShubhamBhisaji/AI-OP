@@ -58,7 +58,8 @@ from security.intent_manifest import ManifestGuard, IntentManifest, ManifestViol
 from security.audit_logger import AuditLogger
 from utils.json_parser import extract_json, ParseError
 
-logging.basicConfig(level=logging.INFO, format="[AetheerAI] %(levelname)s: %(message)s")
+# setup_logging() is called once at process startup (main.py / start_api.py).
+# This module only acquires a named logger — it never reconfigures the root.
 logger = logging.getLogger(__name__)
 
 
@@ -2000,7 +2001,7 @@ class AetheerAiKernel:
             from core.aetheerai_kernel import AetheerAiKernel
             from agents.base_agent import BaseAgent as _BA
 
-            logging.basicConfig(level=logging.INFO, format="[server] %(levelname)s: %(message)s")
+            # Root logger already configured by process entry point; just get a named logger.
             logger = logging.getLogger(__name__)
 
             # ── Boot kernel & load agent profile ─────────────────────────

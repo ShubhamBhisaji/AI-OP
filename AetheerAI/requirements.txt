@@ -4,7 +4,6 @@
 # --- FastAPI backend (AETHER OS REST API) ---
 fastapi>=0.111.0               # FastAPI framework
 uvicorn[standard]>=0.29.0      # ASGI server (use: uvicorn api.server:app --reload)
-python-multipart>=0.0.9        # Required for StaticFiles (Web UI serving)
 
 # --- Core AI providers ---
 # litellm is the unified interface  it calls the provider SDKs listed below
@@ -42,6 +41,13 @@ pandas>=2.0.0                  # csv_tool, analytics_tool
 numpy>=1.26.0                  # analytics_tool
 pillow>=10.0.0                 # media_tool, image handling
 
+# --- Real ML / NLP stack ---
+scikit-learn>=1.5.0            # core/ml_engine.py (train/predict pipelines + .pkl models)
+joblib>=1.4.0                  # sklearn model persistence backend
+transformers>=4.44.0           # tools/nlp_tool.py (sentiment, NER, summarize, QA, classify)
+sentence-transformers>=3.0.0   # semantic embeddings for NLP 'embed' action
+torch>=2.4.0                   # default backend for transformers/sentence-transformers
+
 # --- Code quality tools ---
 pylint>=3.0.0                  # linter_tool
 black>=24.0.0                  # code_formatter
@@ -61,14 +67,10 @@ cryptography>=42.0.0           # security_tool
 # --- github_tool ---
 # PyGithub>=2.3.0
 
-# --- Database (always installed — powers /api/predict, /api/history, auth) ---
-sqlalchemy>=2.0.0              # ORM for SQLite / PostgreSQL / MySQL
-# psycopg2-binary>=2.9.0       # PostgreSQL driver (uncomment if using Postgres)
-# pymysql>=1.1.0               # MySQL driver (uncomment if using MySQL)
-
-# --- Authentication ---
-python-jose[cryptography]>=3.3.0  # JWT token creation & verification
-passlib[bcrypt]>=1.7.4            # Secure password hashing
+# --- sql_db_tool ---
+# sqlalchemy>=2.0.0
+# psycopg2-binary>=2.9.0         # PostgreSQL driver
+# pymysql>=1.1.0                 # MySQL driver
 
 # --- playwright_tool / browser automation ---
 # playwright>=1.44.0

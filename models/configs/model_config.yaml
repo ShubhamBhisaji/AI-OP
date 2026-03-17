@@ -1,0 +1,80 @@
+######################################################################
+# models/configs/model_config.yaml
+#
+# Runtime defaults for AetheerAI's AI layer.
+# Loaded automatically when the env-var is set:
+#   AETHEERAI_MODEL_CONFIG=models/configs/model_config.yaml
+#
+# Values here are overridden by matching environment variables, which
+# are themselves overridden by per-request parameters passed in the API
+# body or CLI flags.
+#
+# Priority order (highest wins):
+#   request param > env var > this file > built-in code defaults
+######################################################################
+
+# ── Default provider & model ──────────────────────────────────────────────
+defaults:
+  provider: github          # github | openai | claude | gemini | ollama | huggingface
+  model: gpt-4.1            # overridden by AI_MODEL env var
+
+  # Free zero-cost option — only needs a GitHub PAT (no billing required)
+  # Swap to "openai" / "gpt-4o" once you add OPENAI_API_KEY to your .env
+  free_tier_provider: github
+  free_tier_model: gpt-4.1
+
+# ── Inference parameters ──────────────────────────────────────────────────
+inference:
+  temperature: 0.7          # 0.0 = deterministic, 2.0 = very creative
+  max_tokens: 2048          # maximum tokens per response
+  timeout_seconds: 120      # per-call timeout before hard abort
+  stream: true              # stream tokens as they arrive (WebSocket / SSE)
+  top_p: 1.0
+  frequency_penalty: 0.0
+  presence_penalty: 0.0
+
+# ── Retry / resilience ────────────────────────────────────────────────────
+retry:
+  max_attempts: 3           # attempts before giving up on a single model
+  backoff_seconds: 2        # seconds between retries (exponential backoff base)
+  fallback_on_error: true   # switch to the next model in the routing table on failure
+
+# ── ModelRouter settings ──────────────────────────────────────────────────
+router:
+  enabled: true             # set to false to skip intelligent routing (always use defaults)
+  prefer_local: true        # prefer Ollama for SIMPLE tasks even when cloud keys exist
+  use_ai_scoring: false     # spend ~50 tokens to ask the AI to rate complexity
+                            # (more accurate; leave false for cost-free heuristic)
+
+  # Complexity thresholds — token counts beyond which the router escalates the tier
+  escalate_moderate_at_tokens: 800
+  escalate_complex_at_tokens: 2000
+
+# ── ModelOptimizer / performance tracking ────────────────────────────────
+optimizer:
+  enabled: true
+  checkpoint_path: memory/model_optimizer.pkl   # relative to project root
+  report_path: memory/model_optimizer_report.json
+  tune_interval_calls: 50   # re-rank routing table every N recorded calls
+  weight_success: 0.65      # how much success rate counts vs. latency
+  weight_latency: 0.35
+
+# ── Budget / FinOps guardrails ────────────────────────────────────────────
+finops:
+  max_cost_usd_per_goal: 5.00       # hard cap per orchestrated goal
+  max_cost_usd_per_session: 20.00   # hard cap for an entire CLI / UI session
+  warn_at_fraction: 0.80            # emit a warning when 80 % of budget is spent
+  currency: USD
+
+# ── Local model (Ollama) ──────────────────────────────────────────────────
+ollama:
+  base_url: http://localhost:11434
+  default_model: llama3.2:3b        # pulled automatically on first use if Ollama is running
+  timeout_seconds: 300              # local inference can be slower
+
+# ── Logging ───────────────────────────────────────────────────────────────
+logging:
+  level: INFO               # DEBUG | INFO | WARNING | ERROR
+  log_prompts: false        # set true during development to log full prompts
+  log_responses: false      # set true during development to log full responses
+  log_token_usage: true     # always track token counts for cost monitoring

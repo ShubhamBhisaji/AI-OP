@@ -72,8 +72,15 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
 
+    # ── Initialise structured logging before importing anything else ──────
+    from utils.log_config import setup_logging
+    setup_logging(level=args.log_level.upper())
+
+    import logging
+    _log = logging.getLogger("aetheer.start_api")
+
     if args.reload and args.workers > 1:
-        print("[warning] --reload is incompatible with --workers > 1; workers ignored.")
+        _log.warning("--reload is incompatible with --workers > 1; workers ignored.")
         args.workers = 1
 
     try:
@@ -84,16 +91,13 @@ def main() -> None:
             "        Run:  pip install uvicorn[standard]"
         )
 
-    print("=" * 60)
-    print("  AetheerAI REST API")
-    print(f"  Listening : http://{args.host}:{args.port}")
-    print(f"  Docs      : http://{args.host}:{args.port}/docs")
-    print(f"  ReDoc     : http://{args.host}:{args.port}/redoc")
-    print(f"  Health    : http://{args.host}:{args.port}/api/health")
-    print(f"  Reload    : {args.reload}")
-    print(f"  Workers   : {args.workers}")
-    print(f"  Log level : {args.log_level}")
-    print("=" * 60)
+    _log.info("AetheerAI REST API starting up")
+    _log.info("  Listening : http://%s:%s", args.host, args.port)
+    _log.info("  Docs      : http://%s:%s/docs", args.host, args.port)
+    _log.info("  ReDoc     : http://%s:%s/redoc", args.host, args.port)
+    _log.info("  Health    : http://%s:%s/api/health", args.host, args.port)
+    _log.info("  Reload    : %s  Workers: %s  Log level: %s",
+              args.reload, args.workers, args.log_level)
 
     uvicorn.run(
         "api.server:app",

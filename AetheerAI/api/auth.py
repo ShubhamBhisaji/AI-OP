@@ -24,32 +24,34 @@ from sqlalchemy.orm import Session
 
 from api.database import ActivityLog, User, get_db
 
-# ── Optional deps (python-jose, passlib) — graceful fallback ──────────────
+# ── JWT backend: python-jose (preferred) → fallback unsigned token ─────────
 try:
     from jose import JWTError, jwt as _jwt
-
     _HAS_JOSE = True
 except ImportError:  # pragma: no cover
     _HAS_JOSE = False
 
-try:
-    from passlib.context import CryptContext
 
-    _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    _HAS_PASSLIB = True
-except ImportError:  # pragma: no cover
-    import hashlib
-
-    class _pwd_ctx:  # type: ignore[no-redef]
-        @staticmethod
-        def hash(pw: str) -> str:
+# ── Password hashing: bcrypt (direct) → sha-256 fallback ──────────────────
+# Use bcrypt directly to avoid passlib/bcrypt 4.x version-detection bugs.
+class _pwd_ctx:
+    @staticmethod
+    def hash(pw: str) -> str:
+        try:
+            import bcrypt  # type: ignore
+            return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        except Exception:
+            import hashlib
             return hashlib.sha256(pw.encode()).hexdigest()
 
-        @staticmethod
-        def verify(pw: str, hashed: str) -> bool:
+    @staticmethod
+    def verify(pw: str, hashed: str) -> bool:
+        try:
+            import bcrypt  # type: ignore
+            return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
+        except Exception:
+            import hashlib
             return hashlib.sha256(pw.encode()).hexdigest() == hashed
-
-    _HAS_PASSLIB = False
 
 
 # ── Config ─────────────────────────────────────────────────────────────────

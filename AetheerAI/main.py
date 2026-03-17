@@ -34,6 +34,10 @@ _ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 _load_env(_ENV_PATH)
 _check_env_file(_ENV_PATH)
 
+# ── Structured logging (must come before any module that calls getLogger) ─
+from utils.log_config import setup_logging as _setup_logging
+_setup_logging()
+
 from core.aetheerai_kernel import AetheerAiKernel
 from cli.command_interface import CommandInterface
 

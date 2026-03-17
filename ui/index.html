@@ -456,7 +456,6 @@ pre {
     <button class="nav-item" data-page="collaborate"><span class="icon">👥</span> Collaborate</button>
     <button class="nav-item" data-page="memory"><span class="icon">🧠</span> Memory</button>
     <button class="nav-item" data-page="logs"><span class="icon">📋</span> Audit Logs</button>
-    <button class="nav-item" data-page="database"><span class="icon">🗄️</span> Database</button>
   </div>
 
   <div class="nav-section">
@@ -907,56 +906,6 @@ pre {
     </div>
 
     <!-- ── Settings ───────────────────────────────────────────── -->
-    <div class="page" id="page-database">
-      <div class="page-header">
-        <h1>Database</h1>
-        <p>SQLite persistence for goal runs, tasks, and system logs.</p>
-      </div>
-
-      <div class="grid grid-4" id="db-stats-grid">
-        <div class="card"><div class="card-title">Goal Runs</div><div class="stat-value" id="db-stat-goals">—</div></div>
-        <div class="card"><div class="card-title">Tasks</div><div class="stat-value" id="db-stat-tasks">—</div></div>
-        <div class="card"><div class="card-title">System Logs</div><div class="stat-value" id="db-stat-logs">—</div></div>
-        <div class="card"><div class="card-title">Failed Goals</div><div class="stat-value" id="db-stat-failed" style="color:var(--red)">—</div></div>
-      </div>
-
-      <div class="card mt16">
-        <div class="flex items-center gap8" style="margin-bottom:10px">
-          <div class="card-title" style="margin:0">Goal Runs</div>
-          <button class="btn btn-secondary btn-sm ml-auto" onclick="loadDatabase()">↻ Reload</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Progress</th><th>Tasks</th><th>Cost</th><th>Started</th></tr></thead>
-            <tbody id="db-goals-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="grid grid-2 mt16">
-        <div class="card">
-          <div class="card-title">Recent Tasks</div>
-          <div class="table-wrap mt12">
-            <table>
-              <thead><tr><th>Goal</th><th>Task</th><th>Agent</th><th>Status</th><th>Attempts</th></tr></thead>
-              <tbody id="db-tasks-tbody"></tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">System Logs</div>
-          <div class="table-wrap mt12">
-            <table>
-              <thead><tr><th>Level</th><th>Logger</th><th>Message</th><th>Created</th></tr></thead>
-              <tbody id="db-logs-tbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Settings ───────────────────────────────────────────── -->
     <div class="page" id="page-settings">
       <div class="page-header">
         <h1>Settings</h1>
@@ -1044,7 +993,7 @@ function nav(page) {
   const titles = {
     dashboard: 'Dashboard', goals: 'Goals & Projects', agents: 'Agents',
     chat: 'Chat', collaborate: 'Collaborate', memory: 'Memory OS',
-    logs: 'Audit Logs', database: 'Database', settings: 'Settings',
+    logs: 'Audit Logs', settings: 'Settings',
     playground: '⚡ Playground',
     predict: 'AI Predict', upload: 'Upload Files',
     history: 'Prediction History', insights: 'Insights & Analytics',
@@ -1057,7 +1006,6 @@ function nav(page) {
   if (page === 'agents')      loadAgents();
   if (page === 'memory')      loadMemory();
   if (page === 'logs')        loadLogs();
-  if (page === 'database')    loadDatabase();
   if (page === 'collaborate') loadCollaborations();
   if (page === 'settings')    loadSettings();
   if (page === 'predict')     loadModelPicker();
@@ -1590,82 +1538,6 @@ function filterLogs() {
   const q = document.getElementById('log-filter').value.toLowerCase();
   if (!q) { renderLogs(_allLogs); return; }
   renderLogs(_allLogs.filter(e => JSON.stringify(e).toLowerCase().includes(q)));
-}
-
-/* ══ Database ═══════════════════════════════════════════════════════ */
-async function loadDatabase() {
-  try {
-    const [statsR, goalsR, tasksR, logsR] = await Promise.all([
-      apiFetch('/api/db/stats'),
-      apiFetch('/api/db/goals?limit=25'),
-      apiFetch('/api/db/tasks?limit=25'),
-      apiFetch('/api/db/logs?limit=25'),
-    ]);
-
-    const stats = statsR.data || {};
-    document.getElementById('db-stat-goals').textContent = stats.goal_runs?.total ?? 0;
-    document.getElementById('db-stat-tasks').textContent = stats.tasks?.total ?? 0;
-    document.getElementById('db-stat-logs').textContent  = stats.system_logs?.total ?? 0;
-    document.getElementById('db-stat-failed').textContent = stats.goal_runs?.failed ?? 0;
-
-    renderDbGoals(goalsR.data?.items || []);
-    renderDbTasks(tasksR.data?.items || []);
-    renderDbSystemLogs(logsR.data?.items || []);
-  } catch (e) {
-    toast('Database load failed: ' + e.message, 'error');
-  }
-}
-
-function renderDbGoals(items) {
-  const tbody = document.getElementById('db-goals-tbody');
-  if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="color:var(--text3)">No persisted goal runs yet.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = items.map(g => {
-    const pct = g.progress?.percent ?? 0;
-    return `<tr>
-      <td style="font-family:monospace;font-size:11px;color:var(--text3)">${escHtml((g.id||'').slice(0,10))}…</td>
-      <td>${escHtml(g.name || '—')}</td>
-      <td><span class="badge ${statusBadgeClass(g.status)}">${escHtml(g.status || 'unknown')}</span></td>
-      <td>${pct}%</td>
-      <td>${g.completed_tasks || 0}/${g.total_tasks || 0}</td>
-      <td>${fmtCost(g.spent_usd)}</td>
-      <td style="font-size:12px;color:var(--text2)">${escHtml(g.started_at || '—')}</td>
-    </tr>`;
-  }).join('');
-}
-
-function renderDbTasks(items) {
-  const tbody = document.getElementById('db-tasks-tbody');
-  if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text3)">No tasks persisted yet.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = items.map(t => `
-    <tr>
-      <td style="font-family:monospace;font-size:11px;color:var(--text3)">${escHtml((t.goal_id||'').slice(0,8))}…</td>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.title || 'Task')}</td>
-      <td>${escHtml(t.agent_type || '—')}</td>
-      <td><span class="badge ${statusBadgeClass(t.status)}">${escHtml(t.status || 'pending')}</span></td>
-      <td>${t.attempts ?? 0}</td>
-    </tr>`).join('');
-}
-
-function renderDbSystemLogs(items) {
-  const tbody = document.getElementById('db-logs-tbody');
-  if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text3)">No system logs captured yet.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = items.map(l => `
-    <tr>
-      <td><span class="badge ${statusBadgeClass((l.level||'').toLowerCase() === 'error' ? 'failed' : (l.level||'').toLowerCase() === 'warning' ? 'pending' : 'running')}">${escHtml(l.level || 'INFO')}</span></td>
-      <td style="font-family:monospace;font-size:11px;color:var(--text3)">${escHtml(l.logger_name || '—')}</td>
-      <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(l.message || '')}</td>
-      <td style="font-size:12px;color:var(--text2)">${escHtml(l.created_at || '—')}</td>
-    </tr>`).join('');
 }
 
 /* ══ Settings ════════════════════════════════════════════════════════ */

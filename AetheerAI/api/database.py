@@ -7,6 +7,9 @@ users           login accounts (hashed passwords)
 predictions     AI prediction records with confidence scores
 uploaded_files  metadata for user-uploaded files
 activity_logs   immutable audit trail of every API action
+goal_runs       persisted goal/project execution records (survives restart)
+tasks           individual agent tasks belonging to a goal run
+system_logs     structured server-side log entries (INFO / WARNING / ERROR)
 """
 
 from __future__ import annotations
@@ -172,6 +175,136 @@ class ActivityLog(Base):
             "detail":     self.detail,
             "ip_address": self.ip_address,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ── GoalRun ────────────────────────────────────────────────────────────────
+
+class GoalRun(Base):
+    """Persisted record of a complete goal/project execution."""
+
+    __tablename__ = "goal_runs"
+
+    id               = Column(String(64),  primary_key=True, index=True)   # UUID from server
+    name             = Column(String(256), nullable=False, index=True)
+    goal             = Column(Text,        nullable=False)
+    status           = Column(String(32),  nullable=False, default="pending", index=True)
+    plan_summary     = Column(Text,        nullable=True)
+    total_tasks      = Column(Integer,     nullable=False, default=0)
+    completed_tasks  = Column(Integer,     nullable=False, default=0)
+    failed_tasks     = Column(Integer,     nullable=False, default=0)
+    spent_usd        = Column(Float,       nullable=True)
+    elapsed_seconds  = Column(Float,       nullable=True)
+    error            = Column(Text,        nullable=True)
+    replanned        = Column(Boolean,     default=False, nullable=False)
+    started_at       = Column(DateTime,    nullable=True,  index=True)
+    completed_at     = Column(DateTime,    nullable=True)
+    created_at       = Column(DateTime,    default=datetime.datetime.utcnow, nullable=False)
+
+    tasks = relationship("Task", back_populates="goal_run", cascade="all, delete-orphan",
+                         order_by="Task.task_index")
+
+    def to_dict(self, *, include_tasks: bool = False) -> dict:
+        d = {
+            "id":              self.id,
+            "name":            self.name,
+            "goal":            self.goal,
+            "status":          self.status,
+            "plan_summary":    self.plan_summary,
+            "total_tasks":     self.total_tasks,
+            "completed_tasks": self.completed_tasks,
+            "failed_tasks":    self.failed_tasks,
+            "spent_usd":       self.spent_usd,
+            "elapsed_seconds": self.elapsed_seconds,
+            "error":           self.error,
+            "replanned":       self.replanned,
+            "started_at":      self.started_at.isoformat()   if self.started_at   else None,
+            "completed_at":    self.completed_at.isoformat() if self.completed_at else None,
+            "created_at":      self.created_at.isoformat()   if self.created_at   else None,
+            "progress": {
+                "completed": self.completed_tasks,
+                "failed":    self.failed_tasks,
+                "total":     self.total_tasks,
+                "percent":   round(
+                    (self.completed_tasks / max(1, self.total_tasks)) * 100, 2
+                ),
+            },
+        }
+        if include_tasks:
+            d["tasks"] = [t.to_dict() for t in (self.tasks or [])]
+        return d
+
+
+# ── Task ───────────────────────────────────────────────────────────────────
+
+class Task(Base):
+    """An individual agent task that belongs to a GoalRun."""
+
+    __tablename__ = "tasks"
+
+    id          = Column(Integer,     primary_key=True, index=True)
+    task_uuid   = Column(String(64),  nullable=True,  index=True)   # task_id from CEOAgent
+    goal_id     = Column(String(64),  ForeignKey("goal_runs.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    task_index  = Column(Integer,     nullable=False, default=0)
+    title       = Column(String(512), nullable=False, default="")
+    description = Column(Text,        nullable=True)
+    agent_type  = Column(String(128), nullable=True,  index=True)
+    role_description = Column(Text,   nullable=True)
+    priority    = Column(Integer,     nullable=False, default=1)
+    depends_on  = Column(JSON,        nullable=True)
+    require_approval = Column(Boolean, default=False, nullable=False)
+    status      = Column(String(32),  nullable=False, default="pending", index=True)
+    result      = Column(Text,        nullable=True)
+    error       = Column(Text,        nullable=True)
+    attempts    = Column(Integer,     nullable=False, default=0)
+    created_at  = Column(DateTime,    default=datetime.datetime.utcnow, nullable=False, index=True)
+
+    goal_run = relationship("GoalRun", back_populates="tasks")
+
+    def to_dict(self) -> dict:
+        return {
+            "id":               self.id,
+            "task_uuid":        self.task_uuid,
+            "goal_id":          self.goal_id,
+            "task_index":       self.task_index,
+            "title":            self.title,
+            "description":      self.description,
+            "agent_type":       self.agent_type,
+            "role_description": self.role_description,
+            "priority":         self.priority,
+            "depends_on":       self.depends_on or [],
+            "require_approval": self.require_approval,
+            "status":           self.status,
+            "result":           self.result,
+            "error":            self.error,
+            "attempts":         self.attempts,
+            "created_at":       self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ── SystemLog ──────────────────────────────────────────────────────────────
+
+class SystemLog(Base):
+    """Structured server-side log entries written by the SQLite log handler."""
+
+    __tablename__ = "system_logs"
+
+    id          = Column(Integer,     primary_key=True, index=True)
+    level       = Column(String(16),  nullable=False, default="INFO", index=True)
+    logger_name = Column(String(128), nullable=True,  index=True)
+    message     = Column(Text,        nullable=False)
+    context     = Column(JSON,        nullable=True)   # extra kwargs / exc_info
+    created_at  = Column(DateTime,    default=datetime.datetime.utcnow, nullable=False, index=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id":          self.id,
+            "level":       self.level,
+            "logger_name": self.logger_name,
+            "message":     self.message,
+            "context":     self.context,
+            "created_at":  self.created_at.isoformat() if self.created_at else None,
         }
 
 
