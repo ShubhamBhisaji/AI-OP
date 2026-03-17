@@ -62,9 +62,14 @@ class StartWorkerSupervisorTests(unittest.TestCase):
                 "AETHEER_WORKER_MIN_PROCESSES": "2",
                 "AETHEER_WORKER_MAX_PROCESSES": "5",
                 "AETHEER_WORKER_TARGET_QUEUE_DEPTH_PER_WORKER": "3",
+                "AETHEER_WORKER_SCALE_UP_STEP": "3",
+                "AETHEER_WORKER_SCALE_DOWN_STEP": "2",
+                "AETHEER_WORKER_QUEUE_DEPTH_EMA_ALPHA": "0.35",
+                "AETHEER_WORKER_QUEUE_DEPTH_HIGH_WATERMARK": "99",
                 "AETHEER_WORKER_SCALE_INTERVAL_SECONDS": "2.5",
                 "AETHEER_WORKER_SCALE_DOWN_COOLDOWN_SECONDS": "12",
                 "AETHEER_WORKER_MAX_CONCURRENCY": "4",
+                "AETHEER_JOB_CLAIM_HEARTBEAT_SECONDS": "15",
             },
             clear=False,
         ):
@@ -74,9 +79,41 @@ class StartWorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(args.min_workers, 2)
         self.assertEqual(args.max_workers, 5)
         self.assertEqual(args.target_queue_depth_per_worker, 3)
+        self.assertEqual(args.scale_up_step, 3)
+        self.assertEqual(args.scale_down_step, 2)
+        self.assertAlmostEqual(args.queue_depth_ema_alpha, 0.35)
+        self.assertEqual(args.queue_depth_high_watermark, 99)
         self.assertAlmostEqual(args.scale_interval_seconds, 2.5)
         self.assertAlmostEqual(args.scale_down_cooldown_seconds, 12.0)
         self.assertEqual(args.max_concurrency, 4)
+        self.assertAlmostEqual(args.claim_heartbeat_seconds, 15.0)
+
+    def test_apply_scale_step_limit_caps_single_cycle_change(self):
+        self.assertEqual(
+            start_worker._apply_scale_step_limit(
+                current_count=2,
+                proposed_count=8,
+                scale_up_step=2,
+                scale_down_step=1,
+            ),
+            4,
+        )
+        self.assertEqual(
+            start_worker._apply_scale_step_limit(
+                current_count=6,
+                proposed_count=1,
+                scale_up_step=2,
+                scale_down_step=2,
+            ),
+            4,
+        )
+
+    def test_smooth_queue_depth_uses_ema(self):
+        first = start_worker._smooth_queue_depth(None, 10, alpha=0.4)
+        second = start_worker._smooth_queue_depth(first, 2, alpha=0.4)
+
+        self.assertAlmostEqual(first, 10.0)
+        self.assertAlmostEqual(second, 6.8)
 
     def test_build_config_clamps_max_workers_and_fixed_mode(self):
         args = start_worker._parse_args(
@@ -104,11 +141,16 @@ class StartWorkerSupervisorTests(unittest.TestCase):
             min_workers=1,
             max_workers=3,
             target_queue_depth_per_worker=4,
+            scale_up_step=2,
+            scale_down_step=1,
+            queue_depth_ema_alpha=0.4,
+            queue_depth_high_watermark=0,
             scale_interval_seconds=5.0,
             scale_down_cooldown_seconds=30.0,
             pop_timeout=20,
             idle_sleep=0.1,
             max_concurrency=2,
+            claim_heartbeat_seconds=30.0,
             sandbox_enabled=True,
             sandbox_strict=True,
             job_max_runtime_seconds=600,
@@ -143,11 +185,16 @@ class StartWorkerSupervisorTests(unittest.TestCase):
             min_workers=1,
             max_workers=3,
             target_queue_depth_per_worker=4,
+            scale_up_step=2,
+            scale_down_step=1,
+            queue_depth_ema_alpha=0.4,
+            queue_depth_high_watermark=0,
             scale_interval_seconds=5.0,
             scale_down_cooldown_seconds=30.0,
             pop_timeout=20,
             idle_sleep=0.1,
             max_concurrency=1,
+            claim_heartbeat_seconds=30.0,
             sandbox_enabled=True,
             sandbox_strict=True,
             job_max_runtime_seconds=600,

@@ -210,5 +210,39 @@ class WorkerConcurrencyTests(unittest.TestCase):
         self.assertEqual(args.max_concurrency, 5)
 
 
+class WorkerGovernanceTests(unittest.TestCase):
+    def test_sandbox_override_rejects_memory_above_hard_cap(self):
+        config = upstash_job_worker.JobSandboxConfig(
+            enabled=True,
+            strict=True,
+            max_runtime_seconds=600,
+            max_memory_mb=1024,
+            max_cpu_seconds=300,
+        )
+
+        with patch.dict(os.environ, {"AETHEER_JOB_MEMORY_CAP_MB": "1024"}, clear=False):
+            with self.assertRaises(RuntimeError):
+                config.with_task_overrides({"max_memory_mb": 2048})
+
+    def test_budget_limit_rejects_requested_budget_above_hard_cap(self):
+        runner = upstash_job_worker.AIJobRunner()
+        with patch.dict(
+            os.environ,
+            {
+                "AETHEER_JOB_DEFAULT_MAX_COST_USD": "5",
+                "AETHEER_JOB_HARD_MAX_COST_USD": "5",
+            },
+            clear=False,
+        ):
+            with self.assertRaises(RuntimeError):
+                runner._budget_limit_usd({"max_cost_usd": 10.0})
+
+    def test_classify_failure_marks_connection_errors_retryable(self):
+        failure = upstash_job_worker._classify_failure(ConnectionError("connection reset by peer"))
+
+        self.assertTrue(failure["retryable"])
+        self.assertEqual(failure["classification"], "external_transient")
+
+
 if __name__ == "__main__":
     unittest.main()

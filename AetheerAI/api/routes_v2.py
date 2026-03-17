@@ -15,17 +15,25 @@ Mount this router from api/server.py:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
-from api.database import User, get_db
-from api.job_security import enforce_job_api_rate_limit, enforce_job_create_quota, record_job_create_usage
+from api.database import ActivityLog, User, get_db
+from api.job_security import (
+    enforce_job_api_rate_limit,
+    enforce_job_create_quota,
+    enforce_job_submission_abuse_controls,
+    record_job_create_usage,
+)
 
 logger = logging.getLogger("aetheer.api.v2")
 
@@ -38,6 +46,69 @@ def _kernel():
     return _get_kernel()
 
 
+def _tenant_id_for_user(current_user: User) -> str:
+    prefix = (os.getenv("JOB_API_TENANT_PREFIX") or "user").strip().lower() or "user"
+    return f"{prefix}:{int(current_user.id)}"
+
+
+def _request_ip(request: Request | None) -> str | None:
+    if request is None:
+        return None
+
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or None
+
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None)
+    return str(host).strip() if host else None
+
+
+def _audit_job_activity(
+    db: Any,
+    *,
+    current_user: User | None,
+    action: str,
+    detail: dict[str, Any] | None,
+    source_ip: str | None,
+) -> None:
+    if not (hasattr(db, "add") and hasattr(db, "commit")):
+        return
+
+    user_id: int | None
+    try:
+        user_id = int(current_user.id) if current_user is not None else None
+    except (TypeError, ValueError):
+        user_id = None
+
+    try:
+        db.add(
+            ActivityLog(
+                user_id=user_id,
+                action=str(action or "scheduler_event")[:128],
+                detail=dict(detail or {}),
+                ip_address=source_ip,
+            )
+        )
+        db.commit()
+    except Exception as exc:
+        logger.warning("Scheduler audit logging failed for action=%s: %s", action, exc)
+
+
+def _scheduler_job_fingerprint(req: "JobRequest") -> str:
+    payload = {
+        "name": str(req.name or "").strip().lower(),
+        "agent_name": str(req.agent_name or "").strip().lower(),
+        "task": str(req.task or "").strip(),
+        "priority": int(req.priority),
+        "run_at_iso": str(req.run_at_iso or "").strip(),
+        "interval_sec": float(req.interval_sec),
+        "max_retries": int(req.max_retries),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _job_owner_user_id(job: dict[str, Any]) -> int | None:
     raw_owner = job.get("owner_user_id")
     try:
@@ -46,11 +117,22 @@ def _job_owner_user_id(job: dict[str, Any]) -> int | None:
         return None
 
 
+def _job_owner_tenant_id(job: dict[str, Any]) -> str | None:
+    raw_tenant = str(job.get("owner_tenant_id") or "").strip().lower()
+    return raw_tenant or None
+
+
 def _job_is_visible(job: dict[str, Any], current_user: User) -> bool:
     if current_user.is_admin:
         return True
     owner_user_id = _job_owner_user_id(job)
-    return owner_user_id is not None and owner_user_id == current_user.id
+    if owner_user_id is None or owner_user_id != int(current_user.id):
+        return False
+
+    owner_tenant_id = _job_owner_tenant_id(job)
+    if owner_tenant_id is None:
+        return True
+    return owner_tenant_id == _tenant_id_for_user(current_user)
 
 
 def _job_stats_for_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -163,6 +245,7 @@ def schedule_job(
     req: JobRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request | None = None,
 ):
     """
     Enqueue an agent task immediately, at a specific time, or on a recurring interval.
@@ -171,8 +254,22 @@ def schedule_job(
     - Set `interval_sec > 0` to create a recurring job.
     - `priority` 0 = highest, 100 = lowest.
     """
-    enforce_job_api_rate_limit(current_user, bucket="write")
+    tenant_id = _tenant_id_for_user(current_user)
+    source_ip = _request_ip(request)
+
+    enforce_job_api_rate_limit(
+        current_user,
+        bucket="write",
+        tenant_id=tenant_id,
+        source_ip=source_ip,
+    )
     enforce_job_create_quota(db, current_user)
+    enforce_job_submission_abuse_controls(
+        current_user,
+        fingerprint=_scheduler_job_fingerprint(req),
+        tenant_id=tenant_id,
+        source_ip=source_ip,
+    )
 
     k = _kernel()
     run_at = None
@@ -193,9 +290,22 @@ def schedule_job(
             max_retries=req.max_retries,
             owner_user_id=current_user.id,
             owner_username=current_user.username,
+            owner_tenant_id=tenant_id,
         )
     except Exception as exc:
         logger.error("schedule_job failed: %s", exc)
+        _audit_job_activity(
+            db,
+            current_user=current_user,
+            action="scheduler_job_create_rejected",
+            detail={
+                "name": req.name,
+                "agent_name": req.agent_name,
+                "reason": str(exc),
+                "tenant_id": tenant_id,
+            },
+            source_ip=source_ip,
+        )
         raise HTTPException(status_code=500, detail=str(exc))
 
     try:
@@ -208,6 +318,19 @@ def schedule_job(
     except Exception as exc:
         logger.warning("Failed to record scheduler usage for %s: %s", job_id, exc)
 
+    _audit_job_activity(
+        db,
+        current_user=current_user,
+        action="scheduler_job_created",
+        detail={
+            "job_id": job_id,
+            "name": req.name,
+            "agent_name": req.agent_name,
+            "tenant_id": tenant_id,
+        },
+        source_ip=source_ip,
+    )
+
     return {"success": True, "data": {"job_id": job_id}}
 
 
@@ -216,65 +339,179 @@ def list_jobs(
     status: str | None = None,
     limit: int = 100,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request | None = None,
 ):
     """Return all jobs, optionally filtered by status (pending/running/completed/failed/cancelled)."""
-    enforce_job_api_rate_limit(current_user, bucket="read")
+    tenant_id = _tenant_id_for_user(current_user)
+    source_ip = _request_ip(request)
+    enforce_job_api_rate_limit(
+        current_user,
+        bucket="read",
+        tenant_id=tenant_id,
+        source_ip=source_ip,
+    )
 
     k = _kernel()
-    jobs = k.list_jobs(status=status, limit=limit)
+    safe_limit = max(1, min(int(limit), 500))
+    jobs = k.list_jobs(status=status, limit=safe_limit)
     visible_jobs = jobs if current_user.is_admin else [row for row in jobs if _job_is_visible(row, current_user)]
     stats = k.scheduler_stats() if current_user.is_admin else _job_stats_for_rows(visible_jobs)
+    _audit_job_activity(
+        db,
+        current_user=current_user,
+        action="scheduler_jobs_list",
+        detail={
+            "status": status,
+            "requested_limit": int(limit),
+            "effective_limit": safe_limit,
+            "returned": len(visible_jobs),
+            "tenant_id": tenant_id,
+        },
+        source_ip=source_ip,
+    )
     return {"success": True, "data": visible_jobs, "stats": stats}
 
 
 @router.get("/api/jobs/{job_id}", summary="Get a job by ID")
-def get_job(job_id: str, current_user: User = Depends(get_current_user)):
-    enforce_job_api_rate_limit(current_user, bucket="read")
+def get_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request | None = None,
+):
+    tenant_id = _tenant_id_for_user(current_user)
+    source_ip = _request_ip(request)
+    enforce_job_api_rate_limit(
+        current_user,
+        bucket="read",
+        tenant_id=tenant_id,
+        source_ip=source_ip,
+    )
 
     k = _kernel()
+    scan_limit = max(100, min(5000, int(os.getenv("JOB_API_JOB_LOOKUP_SCAN_LIMIT", "2000"))))
     # Allow partial ID prefix match
-    all_jobs = k.list_jobs(limit=5000)
+    all_jobs = k.list_jobs(limit=scan_limit)
     matches = [
         j
         for j in all_jobs
         if (j["job_id"] == job_id or j["job_id"].startswith(job_id)) and _job_is_visible(j, current_user)
     ]
     if not matches:
+        _audit_job_activity(
+            db,
+            current_user=current_user,
+            action="scheduler_job_get_denied",
+            detail={"job_id": job_id, "tenant_id": tenant_id},
+            source_ip=source_ip,
+        )
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+
+    _audit_job_activity(
+        db,
+        current_user=current_user,
+        action="scheduler_job_get",
+        detail={"job_id": matches[0].get("job_id"), "tenant_id": tenant_id},
+        source_ip=source_ip,
+    )
     return {"success": True, "data": matches[0]}
 
 
 @router.delete("/api/jobs/{job_id}", summary="Cancel a pending job")
-def cancel_job(job_id: str, current_user: User = Depends(get_current_user)):
-    enforce_job_api_rate_limit(current_user, bucket="write")
+def cancel_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request | None = None,
+):
+    tenant_id = _tenant_id_for_user(current_user)
+    source_ip = _request_ip(request)
+    enforce_job_api_rate_limit(
+        current_user,
+        bucket="write",
+        tenant_id=tenant_id,
+        source_ip=source_ip,
+    )
 
     k = _kernel()
+    scan_limit = max(100, min(5000, int(os.getenv("JOB_API_JOB_LOOKUP_SCAN_LIMIT", "2000"))))
     # Allow partial match
-    all_jobs = k.list_jobs(limit=5000)
+    all_jobs = k.list_jobs(limit=scan_limit)
     matches = [
         j
         for j in all_jobs
         if (j["job_id"] == job_id or j["job_id"].startswith(job_id)) and _job_is_visible(j, current_user)
     ]
     if not matches:
+        _audit_job_activity(
+            db,
+            current_user=current_user,
+            action="scheduler_job_cancel_denied",
+            detail={"job_id": job_id, "tenant_id": tenant_id},
+            source_ip=source_ip,
+        )
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     full_id = matches[0]["job_id"]
     ok = k.cancel_job(full_id)
     if not ok:
+        _audit_job_activity(
+            db,
+            current_user=current_user,
+            action="scheduler_job_cancel_conflict",
+            detail={"job_id": full_id, "tenant_id": tenant_id},
+            source_ip=source_ip,
+        )
         raise HTTPException(status_code=409, detail="Job is not in a cancellable state.")
+
+    _audit_job_activity(
+        db,
+        current_user=current_user,
+        action="scheduler_job_cancelled",
+        detail={"job_id": full_id, "tenant_id": tenant_id},
+        source_ip=source_ip,
+    )
     return {"success": True, "message": f"Job '{full_id[:12]}' cancelled."}
 
 
 @router.get("/api/jobs/stats/summary", summary="Job queue statistics")
-def job_stats(current_user: User = Depends(get_current_user)):
-    enforce_job_api_rate_limit(current_user, bucket="read")
+def job_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request | None = None,
+):
+    tenant_id = _tenant_id_for_user(current_user)
+    source_ip = _request_ip(request)
+    enforce_job_api_rate_limit(
+        current_user,
+        bucket="read",
+        tenant_id=tenant_id,
+        source_ip=source_ip,
+    )
 
     k = _kernel()
     if current_user.is_admin:
-        return {"success": True, "data": k.scheduler_stats()}
+        payload = {"success": True, "data": k.scheduler_stats()}
+        _audit_job_activity(
+            db,
+            current_user=current_user,
+            action="scheduler_job_stats",
+            detail={"scope": "admin"},
+            source_ip=source_ip,
+        )
+        return payload
 
-    jobs = [row for row in k.list_jobs(limit=5000) if _job_is_visible(row, current_user)]
-    return {"success": True, "data": _job_stats_for_rows(jobs)}
+    scan_limit = max(100, min(5000, int(os.getenv("JOB_API_JOB_LOOKUP_SCAN_LIMIT", "2000"))))
+    jobs = [row for row in k.list_jobs(limit=scan_limit) if _job_is_visible(row, current_user)]
+    payload = {"success": True, "data": _job_stats_for_rows(jobs)}
+    _audit_job_activity(
+        db,
+        current_user=current_user,
+        action="scheduler_job_stats",
+        detail={"scope": "tenant", "total": len(jobs), "tenant_id": tenant_id},
+        source_ip=source_ip,
+    )
+    return payload
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

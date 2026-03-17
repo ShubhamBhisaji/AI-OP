@@ -1,0 +1,73 @@
+groups:
+  - name: aetheer-runtime-alerts
+    interval: 30s
+    rules:
+      - alert: AetheerApiErrorRateHigh
+        expr: (increase(aetheer_errors_total[5m]) / clamp_min(increase(aetheer_requests_total[5m]), 1)) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: API error rate above 5% in the last 5 minutes
+          description: "Instance {{ $labels.instance }} is above 5% HTTP 5xx error rate."
+
+      - alert: AetheerApiP95LatencyHigh
+        expr: aetheer_request_latency_ms_p95 > 1500
+        for: 10m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: API p95 latency is elevated
+          description: "Instance {{ $labels.instance }} p95 latency is {{ $value }}ms (threshold 1500ms)."
+
+      - alert: AetheerQueueBacklogHigh
+        expr: aetheer_queue_depth_total > 200
+        for: 10m
+        labels:
+          severity: warning
+          component: queue
+        annotations:
+          summary: Queue backlog is high
+          description: "Instance {{ $labels.instance }} queue depth is {{ $value }} (threshold 200)."
+
+      - alert: AetheerQueueDLQHasItems
+        expr: aetheer_queue_dlq_depth > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: queue
+        annotations:
+          summary: DLQ contains failed jobs
+          description: "DLQ {{ $labels.queue }} on {{ $labels.instance }} has {{ $value }} items."
+
+      - alert: AetheerQueueStaleRunningHigh
+        expr: aetheer_queue_stale_running > 0
+        for: 10m
+        labels:
+          severity: critical
+          component: queue
+        annotations:
+          summary: Running jobs exceeded timeout threshold
+          description: "Instance {{ $labels.instance }} reports {{ $value }} stale running jobs."
+
+      - alert: AetheerQueueWaitP95High
+        expr: aetheer_queue_wait_ms_p95 > 30000
+        for: 10m
+        labels:
+          severity: warning
+          component: queue
+        annotations:
+          summary: Queue wait p95 is high
+          description: "Instance {{ $labels.instance }} queue wait p95 is {{ $value }}ms (threshold 30000ms)."
+
+      - alert: AetheerQueueMetricsScrapeFailed
+        expr: aetheer_queue_metrics_scrape_success < 1
+        for: 5m
+        labels:
+          severity: critical
+          component: observability
+        annotations:
+          summary: Queue metrics export is failing
+          description: "Prometheus cannot collect queue metrics from instance {{ $labels.instance }}."

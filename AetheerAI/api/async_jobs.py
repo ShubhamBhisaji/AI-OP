@@ -232,6 +232,58 @@ class SupabaseJobStore:
         claim = metadata.get("execution_claim") if isinstance(metadata.get("execution_claim"), dict) else {}
         return str(claim.get("worker_id") or "").strip() == normalized_worker_id
 
+    def extend_execution_claim(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> bool:
+        lease = _coerce_int(lease_seconds, 1800, minimum=30)
+        normalized_worker_id = str(worker_id or "").strip()
+        if not normalized_worker_id:
+            return False
+
+        row = self.get_job(job_id)
+        if not isinstance(row, dict):
+            return False
+        if str(row.get("status") or "") != "running":
+            return False
+
+        metadata = dict(row.get("metadata") or {}) if isinstance(row.get("metadata"), dict) else {}
+        claim = metadata.get("execution_claim") if isinstance(metadata.get("execution_claim"), dict) else {}
+        claimed_worker_id = str(claim.get("worker_id") or "").strip()
+        if claimed_worker_id and claimed_worker_id != normalized_worker_id:
+            return False
+
+        now = _utc_now()
+        now_iso = now.isoformat()
+        claim_expires_at = (now + datetime.timedelta(seconds=lease)).isoformat()
+
+        metadata["execution_claim"] = {
+            "worker_id": normalized_worker_id,
+            "claimed_at": str(claim.get("claimed_at") or now_iso),
+            "claim_expires_at": claim_expires_at,
+            "lease_seconds": lease,
+            "last_renewed_at": now_iso,
+            "renewal_count": _coerce_int(claim.get("renewal_count"), 0, minimum=0) + 1,
+        }
+        metadata["last_claim_heartbeat_at"] = now_iso
+
+        response = self.supabase.update_rows(
+            table=self.table_name,
+            values={
+                "updated_at": now_iso,
+                "metadata": metadata,
+            },
+            filters={
+                self.id_column: f"eq.{job_id}",
+                "status": "eq.running",
+            },
+            use_service_role=True,
+        )
+        return bool(_rows_from_response(response))
+
     def mark_running(self, job_id: str, *, retry_count: int | None = None, max_retries: int | None = None) -> None:
         now = _utc_now_iso()
         metadata_updates: dict[str, Any] = {
@@ -267,6 +319,8 @@ class SupabaseJobStore:
                     job_id,
                     {
                         "last_completed_at": now,
+                        "execution_claim": None,
+                        "last_claim_released_at": now,
                     },
                 ),
             },
@@ -285,6 +339,8 @@ class SupabaseJobStore:
                     job_id,
                     {
                         "last_failed_at": now,
+                        "execution_claim": None,
+                        "last_claim_released_at": now,
                     },
                 ),
             },
@@ -318,6 +374,8 @@ class SupabaseJobStore:
                         "last_failed_at": now,
                         "last_queued_at": now,
                         "dead_lettered": False,
+                        "execution_claim": None,
+                        "last_claim_released_at": now,
                     },
                 ),
             },
@@ -350,6 +408,8 @@ class SupabaseJobStore:
                         "dead_lettered_at": now,
                         "dead_letter_reason": reason,
                         "dead_letter_queue": str(dlq_queue or "").strip(),
+                        "execution_claim": None,
+                        "last_claim_released_at": now,
                     },
                 ),
             },

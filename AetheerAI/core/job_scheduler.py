@@ -80,6 +80,7 @@ class JobRecord:
     max_retries:  int          = 1
     owner_user_id: int | None  = None
     owner_username: str        = ""
+    owner_tenant_id: str       = ""
     # These are NOT persisted
     _callable:    Callable | None = field(default=None, repr=False, compare=False)
 
@@ -107,6 +108,7 @@ class JobRecord:
             "max_retries":  self.max_retries,
             "owner_user_id": self.owner_user_id,
             "owner_username": self.owner_username,
+            "owner_tenant_id": self.owner_tenant_id,
         }
 
     @classmethod
@@ -132,6 +134,7 @@ class JobRecord:
                 int(d["owner_user_id"]) if d.get("owner_user_id") is not None else None
             ),
             owner_username=str(d.get("owner_username", "")),
+            owner_tenant_id=str(d.get("owner_tenant_id", "")),
         )
 
     def elapsed(self) -> float | None:
@@ -206,6 +209,7 @@ class JobScheduler:
         callable_fn: Callable | None = None,
         owner_user_id: int | None = None,
         owner_username: str | None = None,
+        owner_tenant_id: str | None = None,
     ) -> str:
         """
         Enqueue a job and return its job_id.
@@ -254,6 +258,7 @@ class JobScheduler:
             max_retries=max_retries,
             owner_user_id=resolved_owner_id,
             owner_username=str(owner_username or "")[:120],
+            owner_tenant_id=str(owner_tenant_id or "")[:120],
             _callable=callable_fn,
         )
 

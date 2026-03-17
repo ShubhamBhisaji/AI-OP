@@ -1,5 +1,6 @@
 """Tests for graceful shutdown handling in the Upstash worker."""
 
+import os
 import sys
 import time
 import unittest
@@ -23,6 +24,7 @@ class _NoopQueue:
 
 class _ProcessStore:
     def __init__(self):
+        self.rows = {}
         self.running = []
         self.completed = []
         self.failed = []
@@ -30,24 +32,62 @@ class _ProcessStore:
         self.dead_lettered = []
 
     def get_job(self, job_id):
-        return {"id": job_id, "status": "queued", "metadata": {}}
+        return self.rows.setdefault(job_id, {"id": job_id, "status": "queued", "metadata": {}})
 
-    def create_job(self, **_kwargs):
-        return {}
+    def create_job(self, **kwargs):
+        row = {
+            "id": kwargs.get("job_id"),
+            "status": "queued",
+            "task_type": kwargs.get("task_type"),
+            "task_payload": dict(kwargs.get("task_payload") or {}),
+            "metadata": dict(kwargs.get("metadata") or {}),
+        }
+        self.rows[str(row["id"])] = row
+        return row
 
     def mark_running(self, job_id, retry_count=0, max_retries=0):
+        row = self.rows.setdefault(job_id, {"id": job_id, "status": "queued", "metadata": {}})
+        metadata = dict(row.get("metadata") or {})
+        metadata["retry_count"] = int(retry_count)
+        metadata["max_retries"] = int(max_retries)
+        row["metadata"] = metadata
+        row["status"] = "running"
         self.running.append((job_id, retry_count, max_retries))
 
     def mark_completed(self, job_id, result):
+        row = self.rows.setdefault(job_id, {"id": job_id, "status": "queued", "metadata": {}})
+        row["status"] = "completed"
+        row["result"] = result
         self.completed.append((job_id, result))
 
     def mark_failed(self, job_id, message):
+        row = self.rows.setdefault(job_id, {"id": job_id, "status": "queued", "metadata": {}})
+        row["status"] = "failed"
+        row["error"] = message
         self.failed.append((job_id, message))
 
     def mark_requeued_for_retry(self, job_id, *, error_message, retry_count, max_retries, reason):
+        row = self.rows.setdefault(job_id, {"id": job_id, "status": "queued", "metadata": {}})
+        metadata = dict(row.get("metadata") or {})
+        metadata["retry_count"] = int(retry_count)
+        metadata["max_retries"] = int(max_retries)
+        metadata["last_failure_reason"] = str(reason)
+        row["metadata"] = metadata
+        row["status"] = "queued"
+        row["error"] = str(error_message)
         self.requeued.append((job_id, error_message, retry_count, max_retries, reason))
 
     def mark_dead_lettered(self, job_id, *, error_message, retry_count, max_retries, reason, dlq_queue):
+        row = self.rows.setdefault(job_id, {"id": job_id, "status": "queued", "metadata": {}})
+        metadata = dict(row.get("metadata") or {})
+        metadata["retry_count"] = int(retry_count)
+        metadata["max_retries"] = int(max_retries)
+        metadata["dead_lettered"] = True
+        metadata["dead_letter_reason"] = str(reason)
+        metadata["dead_letter_queue"] = str(dlq_queue)
+        row["metadata"] = metadata
+        row["status"] = "failed"
+        row["error"] = str(error_message)
         self.dead_lettered.append((job_id, error_message, retry_count, max_retries, reason, dlq_queue))
 
 
@@ -83,6 +123,7 @@ class WorkerShutdownTests(unittest.TestCase):
             run_job=lambda _task_type, _task_data: (_ for _ in ()).throw(KeyboardInterrupt()),
             worker_id="test-worker",
             claim_lease_seconds=60,
+            claim_heartbeat_seconds=1.0,
             max_retries=1,
             retry_backoff_base_seconds=0.0,
             retry_backoff_max_seconds=0.0,
@@ -130,6 +171,30 @@ class WorkerShutdownTests(unittest.TestCase):
         self.assertEqual(store.failed[0][0], "job-1")
         self.assertIn("interrupt", store.failed[0][1].lower())
 
+    def test_process_job_payload_non_retryable_errors_move_to_dlq(self):
+        store = _ProcessStore()
+
+        with patch.dict(os.environ, {"AETHEER_JOB_DLQ_NON_RETRYABLE": "1"}, clear=False):
+            ok = upstash_job_worker._process_job_payload(
+                payload={"jobId": "job-nonretry", "taskType": "goal", "task": {"goal": "bad payload"}},
+                queue=_NoopQueue(),
+                store=store,
+                run_job=lambda _task_type, _task_data: (_ for _ in ()).throw(ValueError("bad request")),
+                worker_id="test-worker",
+                claim_lease_seconds=60,
+                claim_heartbeat_seconds=1.0,
+                max_retries=2,
+                retry_backoff_base_seconds=0.0,
+                retry_backoff_max_seconds=0.0,
+                dlq_queue_name="job_queue_dlq",
+            )
+
+        self.assertFalse(ok)
+        self.assertEqual(len(store.requeued), 0)
+        self.assertEqual(len(store.dead_lettered), 1)
+        self.assertEqual(store.dead_lettered[0][0], "job-nonretry")
+        self.assertEqual(store.dead_lettered[0][4], "external_non_retryable")
+
     def test_process_job_payload_skips_when_claim_not_acquired(self):
         class _ClaimRejectingStore:
             def get_job(self, job_id):
@@ -161,6 +226,7 @@ class WorkerShutdownTests(unittest.TestCase):
             run_job=_run_job,
             worker_id="test-worker",
             claim_lease_seconds=60,
+            claim_heartbeat_seconds=1.0,
             max_retries=1,
             retry_backoff_base_seconds=0.0,
             retry_backoff_max_seconds=0.0,

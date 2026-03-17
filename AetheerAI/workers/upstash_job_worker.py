@@ -10,6 +10,7 @@ import multiprocessing as mp
 import os
 import queue as queue_module
 import random
+import re
 import socket
 import signal
 import sys
@@ -108,6 +109,38 @@ class JobSandboxConfig:
             self.max_cpu_seconds,
             minimum=0,
         )
+
+        hard_runtime_seconds = _env_int("AETHEER_JOB_RUNTIME_CAP_SECONDS", self.max_runtime_seconds, minimum=1)
+        hard_memory_mb = _env_int("AETHEER_JOB_MEMORY_CAP_MB", self.max_memory_mb, minimum=0)
+        hard_cpu_seconds = _env_int("AETHEER_JOB_CPU_CAP_SECONDS", self.max_cpu_seconds, minimum=0)
+
+        runtime_override_requested = ("max_runtime_seconds" in payload) or ("max_runtime_seconds" in nested)
+        memory_override_requested = ("max_memory_mb" in payload) or ("max_memory_mb" in nested)
+        cpu_override_requested = ("max_cpu_seconds" in payload) or ("max_cpu_seconds" in nested)
+
+        if hard_runtime_seconds > 0:
+            if runtime_override_requested and max_runtime_seconds > hard_runtime_seconds:
+                raise RuntimeError(
+                    "Resource governance blocked: max_runtime_seconds exceeds hard cap "
+                    f"({max_runtime_seconds} > {hard_runtime_seconds})"
+                )
+            max_runtime_seconds = min(max_runtime_seconds, hard_runtime_seconds)
+
+        if hard_memory_mb > 0:
+            if memory_override_requested and max_memory_mb > hard_memory_mb:
+                raise RuntimeError(
+                    "Resource governance blocked: max_memory_mb exceeds hard cap "
+                    f"({max_memory_mb} > {hard_memory_mb})"
+                )
+            max_memory_mb = min(max_memory_mb, hard_memory_mb)
+
+        if hard_cpu_seconds > 0:
+            if cpu_override_requested and max_cpu_seconds > hard_cpu_seconds:
+                raise RuntimeError(
+                    "Resource governance blocked: max_cpu_seconds exceeds hard cap "
+                    f"({max_cpu_seconds} > {hard_cpu_seconds})"
+                )
+            max_cpu_seconds = min(max_cpu_seconds, hard_cpu_seconds)
 
         return JobSandboxConfig(
             enabled=enabled,
@@ -404,6 +437,41 @@ def _coerce_int(value: Any, default: int, minimum: int = 0) -> int:
     return max(minimum, parsed)
 
 
+def _parse_iso_datetime(value: Any) -> datetime.datetime | None:
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
+
+
+def _has_active_execution_claim(job_row: dict[str, Any]) -> bool:
+    metadata = job_row.get("metadata") if isinstance(job_row.get("metadata"), dict) else {}
+    claim = metadata.get("execution_claim") if isinstance(metadata.get("execution_claim"), dict) else {}
+    worker_id = str(claim.get("worker_id") or "").strip()
+    if not worker_id:
+        return False
+
+    claim_expires_at = _parse_iso_datetime(claim.get("claim_expires_at"))
+    if claim_expires_at is None:
+        return False
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return claim_expires_at > now
+
+
 def _classify_failure(exc: BaseException) -> dict[str, Any]:
     text = f"{type(exc).__name__}: {exc}".lower()
 
@@ -425,6 +493,13 @@ def _classify_failure(exc: BaseException) -> dict[str, Any]:
         return {
             "reason": "worker_interrupt",
             "classification": "worker_interrupted",
+            "retryable": True,
+        }
+
+    if isinstance(exc, ConnectionError):
+        return {
+            "reason": "external_api_failure",
+            "classification": "external_transient",
             "retryable": True,
         }
 
@@ -464,6 +539,8 @@ def _classify_failure(exc: BaseException) -> dict[str, Any]:
         "remote disconnected",
         "gateway timeout",
         "bad gateway",
+        "request timeout",
+        "408",
         "502",
         "503",
         "504",
@@ -508,11 +585,112 @@ def _classify_failure(exc: BaseException) -> dict[str, Any]:
     }
 
 
+def _retry_limit_for_classification(*, max_retries: int, failure_classification: str) -> int:
+    normalized = str(failure_classification or "").strip().lower()
+    env_map = {
+        "external_rate_limited": "AETHEER_JOB_MAX_RETRIES_RATE_LIMITED",
+        "external_timeout": "AETHEER_JOB_MAX_RETRIES_TIMEOUT",
+        "external_transient": "AETHEER_JOB_MAX_RETRIES_TRANSIENT",
+        "running_timeout": "AETHEER_JOB_MAX_RETRIES_RUNNING_TIMEOUT",
+        "worker_interrupted": "AETHEER_JOB_MAX_RETRIES_INTERRUPTED",
+    }
+    scoped_key = env_map.get(normalized)
+    scoped = _env_int(scoped_key, max_retries, minimum=0) if scoped_key else max_retries
+    hard_cap = _env_int("AETHEER_JOB_MAX_RETRIES_HARD_CAP", max_retries, minimum=0)
+    return max(0, min(int(max_retries), int(scoped), int(hard_cap)))
+
+
+def _extract_retry_after_seconds(error_message: str) -> float | None:
+    text = str(error_message or "").strip()
+    if not text:
+        return None
+
+    patterns = (
+        r"retry\s*[-_ ]?after\s*[:=]?\s*(\d+(?:\.\d+)?)",
+        r"retry in\s*(\d+(?:\.\d+)?)\s*(?:seconds|secs|s)?",
+        r"\b(\d+(?:\.\d+)?)\s*(?:seconds|secs|s)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        try:
+            return max(0.0, float(match.group(1)))
+        except (TypeError, ValueError):
+            continue
+
+    return None
+
+
+def _retry_backoff_seconds(
+    *,
+    attempt: int,
+    base_seconds: float,
+    max_seconds: float,
+    failure_classification: str,
+    error_message: str,
+) -> float:
+    backoff = _compute_backoff_seconds(
+        attempt,
+        base_seconds=base_seconds,
+        max_seconds=max_seconds,
+    )
+
+    classification = str(failure_classification or "").strip().lower()
+    if classification == "external_rate_limited":
+        hinted = _extract_retry_after_seconds(error_message)
+        if hinted is not None:
+            backoff = max(backoff, hinted)
+
+    return max(0.0, backoff)
+
+
+def _retry_at_iso(backoff_seconds: float) -> str:
+    delay = max(0.0, float(backoff_seconds))
+    when = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=delay)
+    return when.isoformat()
+
+
+def _job_state_allows_terminal_update(
+    *,
+    store: SupabaseJobStore,
+    job_id: str,
+    worker_id: str,
+) -> tuple[bool, str, str]:
+    try:
+        row = store.get_job(job_id)
+    except Exception as exc:
+        logger.warning("Unable to verify execution claim for %s; continuing fail-open: %s", job_id, exc)
+        return True, "claim_check_failed", "running"
+
+    if not isinstance(row, dict):
+        return False, "job_row_missing", "missing"
+
+    status = str(row.get("status") or "unknown")
+    if status != "running":
+        return False, "job_not_running", status
+
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    claim = metadata.get("execution_claim") if isinstance(metadata.get("execution_claim"), dict) else None
+    if claim is None:
+        return True, "ok", status
+
+    owner = str(claim.get("worker_id") or "").strip()
+    if owner and owner != str(worker_id or "").strip():
+        return False, "claim_owned_by_another_worker", status
+
+    return True, "ok", status
+
+
 def _compute_backoff_seconds(attempt: int, *, base_seconds: float, max_seconds: float) -> float:
     capped_attempt = max(1, int(attempt))
     exp_delay = float(base_seconds) * (2 ** (capped_attempt - 1))
-    jitter = random.uniform(0.0, float(base_seconds))
-    return max(0.0, min(float(max_seconds), exp_delay + jitter))
+    capped = max(0.0, min(float(max_seconds), exp_delay))
+    if capped <= 0:
+        return 0.0
+
+    floor = min(capped, max(0.0, float(base_seconds) * 0.25))
+    return random.uniform(floor, capped)
 
 
 def _append_stream_event_if_enabled(
@@ -535,6 +713,58 @@ def _append_stream_event_if_enabled(
         append_event(job_id, event_type=event_type, status=status, payload=payload)
     except Exception:
         logger.debug("Unable to append stream event %s for %s", event_type, job_id, exc_info=True)
+
+
+def _start_claim_heartbeat(
+    *,
+    store: SupabaseJobStore,
+    job_id: str,
+    worker_id: str,
+    claim_lease_seconds: int,
+    heartbeat_interval_seconds: float,
+) -> tuple[threading.Event, threading.Thread] | None:
+    extend_claim = getattr(store, "extend_execution_claim", None)
+    if not callable(extend_claim):
+        return None
+
+    interval = max(1.0, float(heartbeat_interval_seconds))
+    stop_event = threading.Event()
+
+    def _heartbeat_loop() -> None:
+        while not stop_event.wait(interval):
+            try:
+                refreshed = bool(
+                    extend_claim(
+                        job_id,
+                        worker_id=worker_id,
+                        lease_seconds=claim_lease_seconds,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Execution claim heartbeat failed for %s: %s", job_id, exc)
+                continue
+
+            if not refreshed:
+                logger.warning("Execution claim heartbeat lost for %s", job_id)
+                return
+
+    thread = threading.Thread(
+        target=_heartbeat_loop,
+        name=f"claim-heartbeat-{job_id[:8] or 'job'}",
+        daemon=True,
+    )
+    thread.start()
+    return stop_event, thread
+
+
+def _stop_claim_heartbeat(heartbeat: tuple[threading.Event, threading.Thread] | None) -> None:
+    if heartbeat is None:
+        return
+
+    stop_event, thread = heartbeat
+    stop_event.set()
+    if thread.is_alive():
+        thread.join(timeout=2.0)
 
 
 def _blocking_pop_many_with_priority(
@@ -642,24 +872,31 @@ def _requeue_or_dead_letter(
     retry_backoff_base_seconds: float,
     retry_backoff_max_seconds: float,
     dlq_queue_name: str,
+    force_dead_letter: bool = False,
 ) -> str:
+    effective_max_retries = _retry_limit_for_classification(
+        max_retries=max_retries,
+        failure_classification=failure_classification,
+    )
     next_retry_count = retry_count + 1
     normalized_error = str(error_message or "Unknown worker error")
 
-    if next_retry_count <= max_retries:
-        backoff_seconds = _compute_backoff_seconds(
-            next_retry_count,
+    if not force_dead_letter and next_retry_count <= effective_max_retries:
+        backoff_seconds = _retry_backoff_seconds(
+            attempt=next_retry_count,
             base_seconds=retry_backoff_base_seconds,
             max_seconds=retry_backoff_max_seconds,
+            failure_classification=failure_classification,
+            error_message=normalized_error,
         )
         retry_payload = build_queue_payload(job_id, task_type, task_data)
         retry_payload["priority"] = UpstashRedisQueue.normalize_priority(priority)
         retry_payload["retryCount"] = next_retry_count
-        retry_payload["maxRetries"] = max_retries
+        retry_payload["maxRetries"] = effective_max_retries
         retry_payload["retryReason"] = reason
         retry_payload["failureClassification"] = failure_classification
         retry_payload["lastError"] = normalized_error
-        retry_payload["retryAt"] = _utc_now_iso()
+        retry_payload["retryAt"] = _retry_at_iso(backoff_seconds)
         retry_payload["retryBackoffSeconds"] = round(backoff_seconds, 3)
 
         try:
@@ -671,15 +908,16 @@ def _requeue_or_dead_letter(
                 job_id,
                 error_message=normalized_error,
                 retry_count=next_retry_count,
-                max_retries=max_retries,
+                max_retries=effective_max_retries,
                 reason=reason,
             )
             logger.warning(
-                "Job %s requeued (retry %s/%s, reason=%s)",
+                "Job %s requeued (retry %s/%s, reason=%s, class=%s)",
                 job_id,
                 next_retry_count,
-                max_retries,
+                effective_max_retries,
                 reason,
+                failure_classification,
             )
             return "requeued"
         except Exception as exc:
@@ -696,7 +934,7 @@ def _requeue_or_dead_letter(
     dlq_payload = build_queue_payload(job_id, task_type, task_data)
     dlq_payload["priority"] = UpstashRedisQueue.normalize_priority(priority)
     dlq_payload["retryCount"] = retry_count
-    dlq_payload["maxRetries"] = max_retries
+    dlq_payload["maxRetries"] = effective_max_retries
     dlq_payload["deadLetterReason"] = reason
     dlq_payload["failureClassification"] = failure_classification
     dlq_payload["deadLetteredAt"] = _utc_now_iso()
@@ -715,7 +953,7 @@ def _requeue_or_dead_letter(
             job_id,
             error_message=normalized_error,
             retry_count=retry_count,
-            max_retries=max_retries,
+            max_retries=effective_max_retries,
             reason=reason,
             dlq_queue=dlq_queue_name,
         )
@@ -741,6 +979,8 @@ def _recover_stale_running_jobs(
     max_retries: int,
     running_timeout_seconds: int,
     stale_scan_batch_size: int,
+    retry_backoff_base_seconds: float,
+    retry_backoff_max_seconds: float,
     dlq_queue_name: str,
 ) -> int:
     try:
@@ -753,6 +993,7 @@ def _recover_stale_running_jobs(
         return 0
 
     recovered = 0
+    skipped_with_active_claim = 0
     for row in stale_rows:
         job_id = str(row.get("id") or "").strip()
         task_type = str(row.get("task_type") or "goal")
@@ -762,19 +1003,24 @@ def _recover_stale_running_jobs(
             logger.error("Skipping stale row with invalid payload: %s", row)
             continue
 
+        if _has_active_execution_claim(row):
+            skipped_with_active_claim += 1
+            logger.info("Skipping stale recovery for %s because execution claim is still active", job_id)
+            continue
+
         retry_count, max_retries_for_job = _extract_retry_state(
             job_row=row,
             queue_payload=None,
             default_max_retries=max_retries,
         )
-        priority, _ = _extract_priority_and_stream(job_row=row, queue_payload=None)
+        priority, stream_results = _extract_priority_and_stream(job_row=row, queue_payload=None)
         started_at = str(row.get("started_at") or "unknown")
         timeout_error = (
             f"Job exceeded running timeout ({running_timeout_seconds}s). "
             f"Last started_at={started_at}."
         )
 
-        _requeue_or_dead_letter(
+        outcome = _requeue_or_dead_letter(
             queue=queue,
             store=store,
             job_id=job_id,
@@ -786,14 +1032,30 @@ def _recover_stale_running_jobs(
             reason="running_timeout",
             failure_classification="running_timeout",
             priority=priority,
-            retry_backoff_base_seconds=0.0,
-            retry_backoff_max_seconds=0.0,
+            retry_backoff_base_seconds=retry_backoff_base_seconds,
+            retry_backoff_max_seconds=retry_backoff_max_seconds,
             dlq_queue_name=dlq_queue_name,
+        )
+        _append_stream_event_if_enabled(
+            store=store,
+            job_id=job_id,
+            enabled=stream_results,
+            event_type=("retry_scheduled" if outcome == "requeued" else "dead_lettered"),
+            status=("queued" if outcome == "requeued" else "failed"),
+            payload={
+                "reason": "running_timeout",
+                "failure_classification": "running_timeout",
+                "retry_count": retry_count + 1 if outcome == "requeued" else retry_count,
+                "max_retries": max_retries_for_job,
+                "source": "stale_recovery",
+            },
         )
         recovered += 1
 
     if recovered:
         logger.warning("Recovered %s stale running jobs", recovered)
+    if skipped_with_active_claim:
+        logger.info("Skipped %s stale-running rows with active execution claims", skipped_with_active_claim)
     return recovered
 
 
@@ -886,7 +1148,20 @@ class AIJobRunner:
             limit = float(raw_limit)
         except (TypeError, ValueError):
             limit = 0.0
-        return max(0.0, limit)
+
+        bounded_limit = max(0.0, limit)
+        hard_cap_usd = _env_float(
+            "AETHEER_JOB_HARD_MAX_COST_USD",
+            _env_float("AETHEER_JOB_DEFAULT_MAX_COST_USD", 0.0, minimum=0.0),
+            minimum=0.0,
+        )
+        if hard_cap_usd > 0 and bounded_limit > hard_cap_usd:
+            raise RuntimeError(
+                "Budget blocked: requested per-job budget exceeds hard cap "
+                f"(requested=${bounded_limit:.6f}, hard_cap=${hard_cap_usd:.6f})"
+            )
+
+        return bounded_limit
 
     def _enforce_monthly_budget_enabled(self, task_data: dict[str, Any]) -> bool:
         if "enforce_monthly_budget" in task_data:
@@ -1073,6 +1348,7 @@ def _process_job_payload(
     run_job: Callable[[str, dict[str, Any]], Any],
     worker_id: str,
     claim_lease_seconds: int,
+    claim_heartbeat_seconds: float,
     max_retries: int,
     retry_backoff_base_seconds: float,
     retry_backoff_max_seconds: float,
@@ -1175,8 +1451,41 @@ def _process_job_payload(
         },
     )
 
+    claim_heartbeat = _start_claim_heartbeat(
+        store=store,
+        job_id=job_id,
+        worker_id=worker_id,
+        claim_lease_seconds=claim_lease_seconds,
+        heartbeat_interval_seconds=claim_heartbeat_seconds,
+    )
+
     try:
         result = run_job(task_type, task_data)
+        can_commit, commit_reason, commit_status = _job_state_allows_terminal_update(
+            store=store,
+            job_id=job_id,
+            worker_id=worker_id,
+        )
+        if not can_commit:
+            logger.warning(
+                "Discarding completion result for %s because job state changed (%s, status=%s)",
+                job_id,
+                commit_reason,
+                commit_status,
+            )
+            _append_stream_event_if_enabled(
+                store=store,
+                job_id=job_id,
+                enabled=stream_results,
+                event_type="result_discarded",
+                status=commit_status,
+                payload={
+                    "reason": commit_reason,
+                    "worker_id": worker_id,
+                },
+            )
+            return False
+
         store.mark_completed(job_id, result)
         _append_stream_event_if_enabled(
             store=store,
@@ -1264,6 +1573,39 @@ def _process_job_payload(
             )
             return False
 
+        if _env_bool("AETHEER_JOB_DLQ_NON_RETRYABLE", False):
+            outcome = _requeue_or_dead_letter(
+                queue=queue,
+                store=store,
+                job_id=job_id,
+                task_type=task_type,
+                task_data=task_data,
+                retry_count=retry_count,
+                max_retries=max_retries_for_job,
+                error_message=str(exc),
+                reason=reason,
+                failure_classification=classification,
+                priority=priority,
+                retry_backoff_base_seconds=0.0,
+                retry_backoff_max_seconds=0.0,
+                dlq_queue_name=dlq_queue_name,
+                force_dead_letter=True,
+            )
+            _append_stream_event_if_enabled(
+                store=store,
+                job_id=job_id,
+                enabled=stream_results,
+                event_type=("dead_lettered" if outcome == "dead-lettered" else "failed"),
+                status=("failed" if outcome in {"dead-lettered", "failed"} else "queued"),
+                payload={
+                    "reason": reason,
+                    "failure_classification": classification,
+                    "retryable": False,
+                    "error": str(exc),
+                },
+            )
+            return False
+
         try:
             store.mark_failed(job_id, f"[{classification}] {exc}")
         except Exception as update_exc:
@@ -1283,6 +1625,8 @@ def _process_job_payload(
             },
         )
         return False
+    finally:
+        _stop_claim_heartbeat(claim_heartbeat)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -1356,6 +1700,12 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=_env_int("AETHEER_JOB_CLAIM_LEASE_SECONDS", 1800, minimum=30),
         help="Execution claim lease duration used to avoid duplicate multi-worker execution.",
+    )
+    parser.add_argument(
+        "--claim-heartbeat-seconds",
+        type=float,
+        default=_env_float("AETHEER_JOB_CLAIM_HEARTBEAT_SECONDS", 30.0, minimum=1.0),
+        help="Seconds between execution-claim heartbeats while a job is running.",
     )
     parser.add_argument(
         "--running-timeout",
@@ -1452,6 +1802,7 @@ def run_worker(
     retry_backoff_base_seconds: float = 1.0,
     retry_backoff_max_seconds: float = 30.0,
     claim_lease_seconds: int = 1800,
+    claim_heartbeat_seconds: float = 30.0,
     running_timeout_seconds: int = 1800,
     stale_scan_interval_seconds: int = 30,
     stale_scan_batch_size: int = 50,
@@ -1474,6 +1825,8 @@ def run_worker(
     retry_backoff_base_seconds = max(0.0, float(retry_backoff_base_seconds))
     retry_backoff_max_seconds = max(retry_backoff_base_seconds, float(retry_backoff_max_seconds))
     claim_lease_seconds = max(30, int(claim_lease_seconds))
+    claim_heartbeat_seconds = max(1.0, float(claim_heartbeat_seconds))
+    claim_heartbeat_seconds = min(claim_heartbeat_seconds, max(1.0, float(claim_lease_seconds) / 2.0))
     running_timeout_seconds = max(30, int(running_timeout_seconds))
     stale_scan_interval_seconds = max(5, int(stale_scan_interval_seconds))
     stale_scan_batch_size = max(1, int(stale_scan_batch_size))
@@ -1549,7 +1902,7 @@ def run_worker(
         (
             "Worker online: queues=%s pop_timeout=%ss max_concurrency=%s batch_size=%s "
             "run_once=%s shutdown_grace_seconds=%s max_retries=%s retry_backoff=%ss..%ss "
-            "claim_lease=%ss timeout=%ss cleanup_interval=%ss metrics_interval=%ss retention=%sh dlq=%s "
+            "claim_lease=%ss claim_heartbeat=%ss timeout=%ss cleanup_interval=%ss metrics_interval=%ss retention=%sh dlq=%s "
             "sandbox=%s strict=%s job_runtime=%ss job_mem=%sMB job_cpu=%ss worker_id=%s"
         ),
         ",".join(priority_queue_names),
@@ -1562,6 +1915,7 @@ def run_worker(
         retry_backoff_base_seconds,
         retry_backoff_max_seconds,
         claim_lease_seconds,
+        claim_heartbeat_seconds,
         running_timeout_seconds,
         cleanup_interval_seconds,
         metrics_log_interval_seconds,
@@ -1599,6 +1953,8 @@ def run_worker(
                     max_retries=max_retries,
                     running_timeout_seconds=running_timeout_seconds,
                     stale_scan_batch_size=stale_scan_batch_size,
+                    retry_backoff_base_seconds=retry_backoff_base_seconds,
+                    retry_backoff_max_seconds=retry_backoff_max_seconds,
                     dlq_queue_name=dlq_queue_name,
                 )
                 next_stale_scan = now + stale_scan_interval_seconds
@@ -1693,6 +2049,7 @@ def run_worker(
                     run_job=_run_job,
                     worker_id=worker_id,
                     claim_lease_seconds=claim_lease_seconds,
+                    claim_heartbeat_seconds=claim_heartbeat_seconds,
                     max_retries=max_retries,
                     retry_backoff_base_seconds=retry_backoff_base_seconds,
                     retry_backoff_max_seconds=retry_backoff_max_seconds,
@@ -1759,6 +2116,7 @@ def main() -> None:
         retry_backoff_base_seconds=max(0.0, float(args.retry_backoff_base)),
         retry_backoff_max_seconds=max(0.0, float(args.retry_backoff_max)),
         claim_lease_seconds=max(30, int(args.claim_lease_seconds)),
+        claim_heartbeat_seconds=max(1.0, float(args.claim_heartbeat_seconds)),
         running_timeout_seconds=max(30, int(args.running_timeout)),
         stale_scan_interval_seconds=max(5, int(args.stale_scan_interval)),
         stale_scan_batch_size=max(1, int(args.stale_scan_batch_size)),

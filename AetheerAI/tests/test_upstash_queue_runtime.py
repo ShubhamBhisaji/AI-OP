@@ -1,5 +1,6 @@
 """Tests for Upstash queue + Supabase async job flow helpers."""
 
+import datetime
 import os
 import sys
 import unittest
@@ -430,6 +431,56 @@ class SupabaseJobStoreTests(unittest.TestCase):
         self.assertEqual(row["status"], "running")
         self.assertEqual(row["metadata"]["execution_claim"]["worker_id"], "worker-a")
 
+        store.mark_completed("job-claim", {"ok": True})
+        completed_row = store.get_job("job-claim")
+        self.assertIsNone(completed_row["metadata"].get("execution_claim"))
+
+    def test_extend_execution_claim_refreshes_expiry_for_same_worker(self):
+        store = SupabaseJobStore(supabase=_FakeSupabaseClient(), table_name="ai_jobs", id_column="id")
+        store.create_job(
+            job_id="job-heartbeat",
+            task_type="goal",
+            task_payload={"goal": "renew"},
+            metadata={},
+        )
+
+        self.assertTrue(
+            store.try_claim_job_execution(
+                "job-heartbeat",
+                worker_id="worker-a",
+                lease_seconds=60,
+                retry_count=0,
+                max_retries=2,
+            )
+        )
+
+        before = store.get_job("job-heartbeat")
+        before_expiry = before["metadata"]["execution_claim"]["claim_expires_at"]
+
+        with patch(
+            "api.async_jobs._utc_now",
+            return_value=datetime.datetime(2026, 3, 18, 0, 0, 30, tzinfo=datetime.timezone.utc),
+        ):
+            refreshed = store.extend_execution_claim(
+                "job-heartbeat",
+                worker_id="worker-a",
+                lease_seconds=600,
+            )
+
+        self.assertTrue(refreshed)
+        after = store.get_job("job-heartbeat")
+        claim = after["metadata"]["execution_claim"]
+        self.assertEqual(claim["worker_id"], "worker-a")
+        self.assertGreater(claim["claim_expires_at"], before_expiry)
+        self.assertGreaterEqual(int(claim.get("renewal_count") or 0), 1)
+
+        rejected = store.extend_execution_claim(
+            "job-heartbeat",
+            worker_id="worker-b",
+            lease_seconds=600,
+        )
+        self.assertFalse(rejected)
+
 
 class QueueRouterTests(unittest.TestCase):
     def setUp(self):
@@ -476,6 +527,94 @@ class QueueRouterTests(unittest.TestCase):
         row = queue_router._job_store.get_job(response["data"]["job_id"])
         self.assertEqual(row["metadata"]["owner_user_id"], 7)
         self.assertIn("max_retries", row["metadata"])
+        self.assertIn("governance", row["metadata"])
+        self.assertIn("resource_limits", row["metadata"]["governance"])
+        self.assertIn("cost_protection", row["metadata"]["governance"])
+        self.assertIn("priority", row["metadata"]["governance"])
+        self.assertIn("max_memory_mb", row["task_payload"])
+        self.assertIn("max_cpu_seconds", row["task_payload"])
+        self.assertIn("max_cost_usd", row["task_payload"])
+
+    def test_create_queue_job_rejects_resource_runtime_cap_exceeded(self):
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "Cap check"},
+            max_runtime_seconds=1200,
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "AETHEER_JOB_MAX_RUNTIME_SECONDS": "600",
+                "AETHEER_JOB_RUNTIME_CAP_SECONDS": "600",
+            },
+            clear=False,
+        ):
+            with self.assertRaises(queue_router.HTTPException) as ctx:
+                queue_router.create_queue_job(
+                    req,
+                    current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+                    db=_FakeDb(),
+                )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertIn("max_runtime_seconds", str(ctx.exception.detail))
+
+    def test_create_queue_job_rejects_cost_cap_exceeded(self):
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "Budget check"},
+            max_cost_usd=25.0,
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "AETHEER_JOB_DEFAULT_MAX_COST_USD": "10",
+                "AETHEER_JOB_HARD_MAX_COST_USD": "10",
+            },
+            clear=False,
+        ):
+            with self.assertRaises(queue_router.HTTPException) as ctx:
+                queue_router.create_queue_job(
+                    req,
+                    current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+                    db=_FakeDb(),
+                )
+
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertIn("max_cost_usd", str(ctx.exception.detail))
+
+    def test_high_priority_demoted_when_high_lane_backpressured(self):
+        queue_router._queue_client.payloads.append(("job_queue:high", {"jobId": "existing-high"}))
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "Needs fast lane"},
+            priority="high",
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "AETHEER_QUEUE_HIGH_PRIORITY_DEPTH_LIMIT": "1",
+                "AETHEER_QUEUE_ALLOW_NON_ADMIN_HIGH_PRIORITY": "1",
+            },
+            clear=False,
+        ):
+            response = queue_router.create_queue_job(
+                req,
+                current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+                db=_FakeDb(),
+            )
+
+        self.assertEqual(response["data"]["priority"], "normal")
+        self.assertEqual(response["data"]["queue"], "job_queue")
+
+        row = queue_router._job_store.get_job(response["data"]["job_id"])
+        governance = row["metadata"]["governance"]["priority"]
+        self.assertEqual(governance["requested"], "high")
+        self.assertEqual(governance["effective"], "normal")
+        self.assertEqual(governance["reason"], "high_priority_backpressure")
 
     def test_create_queue_job_idempotency_deduplicates_retries(self):
         req = queue_router.QueueJobRequest(
@@ -500,6 +639,92 @@ class QueueRouterTests(unittest.TestCase):
         self.assertFalse(first["data"]["deduplicated"])
         self.assertTrue(second["data"]["deduplicated"])
         self.assertEqual(len(queue_router._queue_client.payloads), 1)
+
+    def test_create_queue_job_rejects_when_total_queue_depth_limit_reached(self):
+        queue_router._queue_client.payloads.extend(
+            [
+                ("job_queue", {"jobId": "seed-1"}),
+                ("job_queue:high", {"jobId": "seed-2"}),
+            ]
+        )
+
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "overloaded"},
+            priority="normal",
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "AETHEER_QUEUE_MAX_DEPTH_TOTAL": "1",
+                "AETHEER_QUEUE_OVERLOAD_ALLOW_HIGH_PRIORITY": "0",
+                "AETHEER_QUEUE_OVERLOAD_RETRY_AFTER_SECONDS": "7",
+            },
+            clear=False,
+        ):
+            with self.assertRaises(queue_router.HTTPException) as ctx:
+                queue_router.create_queue_job(
+                    req,
+                    current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+                    db=_FakeDb(),
+                )
+
+        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertIn("overloaded", str(ctx.exception.detail).lower())
+        self.assertEqual(len(queue_router._queue_client.payloads), 2)
+
+    def test_high_priority_enqueue_can_bypass_total_overload_limit(self):
+        queue_router._queue_client.payloads.extend(
+            [
+                ("job_queue", {"jobId": "seed-1"}),
+                ("job_queue:low", {"jobId": "seed-2"}),
+            ]
+        )
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "urgent"},
+            priority="high",
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "AETHEER_QUEUE_MAX_DEPTH_TOTAL": "1",
+                "AETHEER_QUEUE_OVERLOAD_ALLOW_HIGH_PRIORITY": "1",
+            },
+            clear=False,
+        ):
+            response = queue_router.create_queue_job(
+                req,
+                current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+                db=_FakeDb(),
+            )
+
+        self.assertTrue(response["success"])
+        self.assertEqual(response["data"]["priority"], "high")
+
+    def test_create_queue_job_propagates_runtime_timeout(self):
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "Timed execution"},
+            metadata={"source": "test"},
+            max_runtime_seconds=123,
+        )
+
+        response = queue_router.create_queue_job(
+            req,
+            current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+            db=_FakeDb(),
+        )
+
+        job_id = response["data"]["job_id"]
+        row = queue_router._job_store.get_job(job_id)
+        self.assertEqual(row["task_payload"]["max_runtime_seconds"], 123)
+        self.assertEqual(row["metadata"]["max_runtime_seconds"], 123)
+
+        queued_payload = queue_router._queue_client.payloads[-1][1]
+        self.assertEqual(queued_payload["task"]["max_runtime_seconds"], 123)
 
     def test_get_queue_job_status_reads_supabase_row(self):
         store = queue_router._job_store
@@ -608,6 +833,56 @@ class QueueRouterTests(unittest.TestCase):
         self.assertEqual(metrics.status_counts["queued"], 1)
         self.assertGreaterEqual(metrics.avg_queue_wait_ms, 0.0)
         self.assertGreaterEqual(metrics.avg_execution_ms, 0.0)
+        self.assertIn("default_max_runtime_seconds", metrics.governance_limits)
+        self.assertIn("hard_max_cost_usd", metrics.governance_limits)
+
+    def test_collect_queue_metrics_snapshot_matches_route_shape(self):
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "metrics-snapshot"},
+            metadata={"source": "test"},
+            priority="low",
+        )
+        queue_router.create_queue_job(
+            req,
+            current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+            db=_FakeDb(),
+        )
+
+        snap = queue_router.collect_queue_metrics_snapshot()
+        route_metrics = queue_router.get_queue_metrics(
+            current_user=_FakeUser(user_id=1, username="admin", is_admin=True),
+        )
+
+        self.assertGreaterEqual(snap.queue_depth_total, 1)
+        self.assertEqual(snap.queue_depth_total, route_metrics.queue_depth_total)
+        self.assertEqual(snap.status_counts, route_metrics.status_counts)
+
+    def test_queue_metrics_prometheus_export_contains_queue_series(self):
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "metrics-prometheus"},
+            metadata={"source": "test"},
+            priority="high",
+        )
+        queue_router.create_queue_job(
+            req,
+            current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+            db=_FakeDb(),
+        )
+
+        text = queue_router.queue_metrics_prometheus_text("node-a")
+        self.assertIn("aetheer_queue_metrics_scrape_success", text)
+        self.assertIn('aetheer_queue_depth_total{instance="node-a"}', text)
+        self.assertIn("aetheer_queue_depth", text)
+        self.assertIn("aetheer_queue_dlq_depth", text)
+        self.assertIn("aetheer_queue_jobs_status_total", text)
+
+    def test_queue_metrics_prometheus_export_handles_snapshot_failure(self):
+        with patch.object(queue_router, "collect_queue_metrics_snapshot", side_effect=RuntimeError("boom")):
+            text = queue_router.queue_metrics_prometheus_text("node-a")
+
+        self.assertIn('aetheer_queue_metrics_scrape_success{instance="node-a"} 0', text)
 
     def test_list_dead_letter_queue_jobs_requires_admin(self):
         with self.assertRaises(queue_router.HTTPException) as ctx:

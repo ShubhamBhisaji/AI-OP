@@ -50,10 +50,18 @@ class JobApiSecurityTests(unittest.TestCase):
             is_admin=True,
             is_active=True,
         )
-        self._db.add_all([self._user, self._admin])
+        self._user_two = User(
+            username="charlie",
+            email="charlie@example.com",
+            hashed_pw="hash",
+            is_admin=False,
+            is_active=True,
+        )
+        self._db.add_all([self._user, self._admin, self._user_two])
         self._db.commit()
         self._db.refresh(self._user)
         self._db.refresh(self._admin)
+        self._db.refresh(self._user_two)
         job_security._reset_job_rate_limit_state_for_tests()
 
     def tearDown(self) -> None:
@@ -74,6 +82,53 @@ class JobApiSecurityTests(unittest.TestCase):
         with patch.dict(os.environ, {"JOB_API_WRITE_RATE_LIMIT_RPM": "1"}, clear=False):
             for _ in range(4):
                 job_security.enforce_job_api_rate_limit(self._admin, bucket="write")
+
+    def test_tenant_scope_rate_limit_blocks_across_users(self):
+        with patch.dict(
+            os.environ,
+            {
+                "JOB_API_WRITE_RATE_LIMIT_RPM": "99",
+                "JOB_API_TENANT_WRITE_RATE_LIMIT_RPM": "2",
+            },
+            clear=False,
+        ):
+            job_security.enforce_job_api_rate_limit(self._user, bucket="write", tenant_id="org:acme")
+            job_security.enforce_job_api_rate_limit(self._user_two, bucket="write", tenant_id="org:acme")
+            with self.assertRaises(HTTPException) as ctx:
+                job_security.enforce_job_api_rate_limit(self._user, bucket="write", tenant_id="org:acme")
+
+        self.assertEqual(ctx.exception.status_code, 429)
+
+    def test_duplicate_submission_abuse_control_blocks(self):
+        with patch.dict(
+            os.environ,
+            {
+                "JOB_API_DUPLICATE_MAX_PER_WINDOW": "2",
+                "JOB_API_DUPLICATE_WINDOW_SECONDS": "120",
+            },
+            clear=False,
+        ):
+            job_security.enforce_job_submission_abuse_controls(
+                self._user,
+                fingerprint="fp-abc",
+                tenant_id="org:acme",
+                source_ip="203.0.113.8",
+            )
+            job_security.enforce_job_submission_abuse_controls(
+                self._user,
+                fingerprint="fp-abc",
+                tenant_id="org:acme",
+                source_ip="203.0.113.8",
+            )
+            with self.assertRaises(HTTPException) as ctx:
+                job_security.enforce_job_submission_abuse_controls(
+                    self._user,
+                    fingerprint="fp-abc",
+                    tenant_id="org:acme",
+                    source_ip="203.0.113.8",
+                )
+
+        self.assertEqual(ctx.exception.status_code, 429)
 
     def test_default_quota_enforced_without_subscription(self):
         now = datetime.datetime.utcnow()

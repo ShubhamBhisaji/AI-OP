@@ -36,7 +36,11 @@ from api.database import GoalRun, SessionLocal, SystemLog, Task, init_db
 from api.db_router import router as db_router
 from api.predict import router as predict_router
 from api.product_router import router as product_router
-from api.queue_router import router as queue_router
+from api.queue_router import (
+    collect_queue_metrics_snapshot,
+    queue_metrics_prometheus_text,
+    router as queue_router,
+)
 from api.reports import router as reports_router
 from core.aetheerai_kernel import AetheerAiKernel
 from core.env_loader import load_env
@@ -271,7 +275,22 @@ def _observability_settings() -> dict[str, Any]:
         "saturation_threshold": _runtime.config.alert_saturation_threshold,
         "min_requests": _runtime.config.alert_min_requests,
         "cooldown_seconds": _runtime.config.alert_cooldown_seconds,
+        "queue_running_timeout_seconds": _env_int("AETHEER_JOB_RUNNING_TIMEOUT_SECONDS", 1800, minimum=30),
+        "queue_metrics_sample_limit": _env_int("AETHEER_QUEUE_METRICS_SAMPLE_LIMIT", 500, minimum=10),
     }
+
+
+def _queue_metrics_snapshot_safe() -> dict[str, Any]:
+    try:
+        payload = collect_queue_metrics_snapshot().model_dump()
+        payload["available"] = True
+        return payload
+    except Exception as exc:
+        logger.warning("Queue observability snapshot unavailable: %s", exc)
+        return {
+            "available": False,
+            "error": "queue metrics unavailable",
+        }
 
 
 def _emit_request_log_event(
@@ -1473,10 +1492,12 @@ def readiness_check():
 
 @app.get("/api/metrics", tags=["System"], include_in_schema=False)
 def metrics_prometheus():
-    payload = _runtime.prometheus_text(
+    runtime_payload = _runtime.prometheus_text(
         instance_id=_instance_id,
         uptime_seconds=time.time() - _boot_time,
     )
+    queue_payload = queue_metrics_prometheus_text(instance_id=_instance_id)
+    payload = f"{runtime_payload}{queue_payload}"
     return PlainTextResponse(payload, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
@@ -1523,6 +1544,7 @@ def system_status():
                 "settings": _observability_settings(),
                 "recent_alerts": _runtime.recent_alerts(limit=5),
             },
+            "queue_monitoring": _queue_metrics_snapshot_safe(),
             "failover": _runtime.failover_state(provider, model),
         }
 
@@ -1554,6 +1576,7 @@ def system_observability(limit: int = 25):
         data={
             "instance_id": _instance_id,
             "runtime_metrics": _runtime.metrics_snapshot(),
+            "queue_metrics": _queue_metrics_snapshot_safe(),
             "settings": _observability_settings(),
             "recent_alerts": _runtime.recent_alerts(limit=safe_limit),
         }

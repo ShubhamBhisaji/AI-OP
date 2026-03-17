@@ -67,11 +67,16 @@ class WorkerSupervisorConfig:
     min_workers: int
     max_workers: int
     target_queue_depth_per_worker: int
+    scale_up_step: int
+    scale_down_step: int
+    queue_depth_ema_alpha: float
+    queue_depth_high_watermark: int
     scale_interval_seconds: float
     scale_down_cooldown_seconds: float
     pop_timeout: int
     idle_sleep: float
     max_concurrency: int
+    claim_heartbeat_seconds: float
     sandbox_enabled: bool
     sandbox_strict: bool
     job_max_runtime_seconds: int
@@ -93,6 +98,32 @@ def _calculate_desired_workers(
     else:
         desired = math.ceil(depth / max(1, int(target_queue_depth_per_worker)))
     return max(min_workers, min(max_workers, desired))
+
+
+def _smooth_queue_depth(previous_depth: float | None, sample_depth: int, *, alpha: float) -> float:
+    sample = max(0.0, float(sample_depth))
+    if previous_depth is None:
+        return sample
+
+    weight = max(0.05, min(1.0, float(alpha)))
+    return (sample * weight) + (float(previous_depth) * (1.0 - weight))
+
+
+def _apply_scale_step_limit(
+    current_count: int,
+    proposed_count: int,
+    *,
+    scale_up_step: int,
+    scale_down_step: int,
+) -> int:
+    current = max(0, int(current_count))
+    proposed = max(0, int(proposed_count))
+
+    if proposed > current:
+        return min(proposed, current + max(1, int(scale_up_step)))
+    if proposed < current:
+        return max(proposed, current - max(1, int(scale_down_step)))
+    return proposed
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -141,6 +172,50 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Scale target: each worker should handle about this many queued jobs.",
     )
     parser.add_argument(
+        "--scale-up-step",
+        type=int,
+        default=_env_int(
+            "AETHEER_WORKER_SCALE_UP_STEP",
+            "AETHER_WORKER_SCALE_UP_STEP",
+            default=2,
+            minimum=1,
+        ),
+        help="Maximum worker replicas added in a single autoscale cycle.",
+    )
+    parser.add_argument(
+        "--scale-down-step",
+        type=int,
+        default=_env_int(
+            "AETHEER_WORKER_SCALE_DOWN_STEP",
+            "AETHER_WORKER_SCALE_DOWN_STEP",
+            default=1,
+            minimum=1,
+        ),
+        help="Maximum worker replicas removed in a single autoscale cycle.",
+    )
+    parser.add_argument(
+        "--queue-depth-ema-alpha",
+        type=float,
+        default=_env_float(
+            "AETHEER_WORKER_QUEUE_DEPTH_EMA_ALPHA",
+            "AETHER_WORKER_QUEUE_DEPTH_EMA_ALPHA",
+            default=0.4,
+            minimum=0.05,
+        ),
+        help="Smoothing factor (0..1] for queue depth EMA used by autoscaling.",
+    )
+    parser.add_argument(
+        "--queue-depth-high-watermark",
+        type=int,
+        default=_env_int(
+            "AETHEER_WORKER_QUEUE_DEPTH_HIGH_WATERMARK",
+            "AETHER_WORKER_QUEUE_DEPTH_HIGH_WATERMARK",
+            default=0,
+            minimum=0,
+        ),
+        help="Immediate surge threshold; when queue depth reaches this value, scale to max workers (0 disables).",
+    )
+    parser.add_argument(
         "--scale-interval-seconds",
         type=float,
         default=_env_float(
@@ -181,6 +256,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=_env_int("AETHEER_WORKER_MAX_CONCURRENCY", "AETHER_WORKER_MAX_CONCURRENCY", default=1, minimum=1),
         help="Thread concurrency per worker process.",
+    )
+    parser.add_argument(
+        "--claim-heartbeat-seconds",
+        type=float,
+        default=_env_float("AETHEER_JOB_CLAIM_HEARTBEAT_SECONDS", default=30.0, minimum=5.0),
+        help="Execution-claim heartbeat interval forwarded to each worker process.",
     )
     parser.add_argument(
         "--sandbox-enabled",
@@ -232,11 +313,16 @@ def _build_config(args: argparse.Namespace) -> WorkerSupervisorConfig:
         min_workers=min_workers,
         max_workers=max_workers,
         target_queue_depth_per_worker=max(1, int(args.target_queue_depth_per_worker)),
+        scale_up_step=max(1, int(args.scale_up_step)),
+        scale_down_step=max(1, int(args.scale_down_step)),
+        queue_depth_ema_alpha=max(0.05, min(1.0, float(args.queue_depth_ema_alpha))),
+        queue_depth_high_watermark=max(0, int(args.queue_depth_high_watermark)),
         scale_interval_seconds=max(0.5, float(args.scale_interval_seconds)),
         scale_down_cooldown_seconds=max(1.0, float(args.scale_down_cooldown_seconds)),
         pop_timeout=max(1, int(args.pop_timeout)),
         idle_sleep=max(0.05, float(args.idle_sleep)),
         max_concurrency=max(1, int(args.max_concurrency)),
+        claim_heartbeat_seconds=max(5.0, float(args.claim_heartbeat_seconds)),
         sandbox_enabled=bool(args.sandbox_enabled),
         sandbox_strict=bool(args.sandbox_strict),
         job_max_runtime_seconds=max(1, int(args.job_max_runtime_seconds)),
@@ -258,6 +344,8 @@ def _build_worker_command(config: WorkerSupervisorConfig) -> list[str]:
         str(config.idle_sleep),
         "--max-concurrency",
         str(config.max_concurrency),
+        "--claim-heartbeat-seconds",
+        str(config.claim_heartbeat_seconds),
         "--sandbox-enabled" if config.sandbox_enabled else "--no-sandbox-enabled",
         "--sandbox-strict" if config.sandbox_strict else "--no-sandbox-strict",
         "--job-max-runtime-seconds",
@@ -334,10 +422,17 @@ def run_supervisor(config: WorkerSupervisorConfig) -> None:
 
     if autoscale_enabled:
         logger.info(
-            "Worker autoscaling enabled: min=%s max=%s target_depth=%s interval=%ss",
+            (
+                "Worker autoscaling enabled: min=%s max=%s target_depth=%s "
+                "scale_step(+%s/-%s) ema_alpha=%.2f high_watermark=%s interval=%ss"
+            ),
             config.min_workers,
             config.max_workers,
             config.target_queue_depth_per_worker,
+            config.scale_up_step,
+            config.scale_down_step,
+            config.queue_depth_ema_alpha,
+            config.queue_depth_high_watermark,
             config.scale_interval_seconds,
         )
     else:
@@ -345,6 +440,7 @@ def run_supervisor(config: WorkerSupervisorConfig) -> None:
 
     processes: list[subprocess.Popen[object]] = []
     zero_depth_since: float | None = None
+    smoothed_depth: float | None = None
     desired_count = config.min_workers if autoscale_enabled else config.fixed_workers
 
     try:
@@ -366,12 +462,25 @@ def run_supervisor(config: WorkerSupervisorConfig) -> None:
                     logger.warning("Queue depth probe failed; holding worker count steady: %s", exc)
 
                 if queue_depth is not None:
-                    proposed = _calculate_desired_workers(
+                    smoothed_depth = _smooth_queue_depth(
+                        smoothed_depth,
                         queue_depth,
+                        alpha=config.queue_depth_ema_alpha,
+                    )
+                    depth_for_decision = max(queue_depth, int(math.ceil(smoothed_depth)))
+
+                    proposed = _calculate_desired_workers(
+                        depth_for_decision,
                         min_workers=config.min_workers,
                         max_workers=config.max_workers,
                         target_queue_depth_per_worker=config.target_queue_depth_per_worker,
                     )
+
+                    if (
+                        config.queue_depth_high_watermark > 0
+                        and queue_depth >= config.queue_depth_high_watermark
+                    ):
+                        proposed = config.max_workers
 
                     # Scale down only after sustained empty queue to avoid worker churn.
                     if proposed < len(processes):
@@ -387,14 +496,23 @@ def run_supervisor(config: WorkerSupervisorConfig) -> None:
                     else:
                         zero_depth_since = None
 
+                    proposed = _apply_scale_step_limit(
+                        len(processes),
+                        proposed,
+                        scale_up_step=config.scale_up_step,
+                        scale_down_step=config.scale_down_step,
+                    )
+
                     desired_count = proposed
                     logger.debug(
-                        "Autoscale sample: depth=%s desired=%s active=%s",
+                        "Autoscale sample: depth=%s ema=%.2f desired=%s active=%s",
                         queue_depth,
+                        smoothed_depth,
                         desired_count,
                         len(processes),
                     )
                 else:
+                    smoothed_depth = None
                     desired_count = max(config.min_workers, len(processes))
             else:
                 desired_count = config.fixed_workers
