@@ -45,3 +45,5 @@ models/checkpoints/
 src/*.egg-info/
 dist/
 build/
+.vercel
+.env*.local
