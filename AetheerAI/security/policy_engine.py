@@ -3,6 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntEnum
+
+
+# OPT-5: Typed permission levels replace bare integers, preventing
+# out-of-range values from silently bypassing authorization checks.
+class PermissionLevel(IntEnum):
+    READ_ONLY   = 1
+    STANDARD    = 2
+    ELEVATED    = 3
+    PRIVILEGED  = 4
+    ADMIN       = 5
+
+
+# Maximum defined level — any value above this is rejected at the gate.
+_MAX_AGENT_LEVEL = max(PermissionLevel)
 
 
 @dataclass(frozen=True)
@@ -39,6 +54,14 @@ class PolicyEngine:
         agent_level: int,
         required_level: int,
     ) -> PolicyDecision:
+        # OPT-5: Reject out-of-range levels to prevent integer overflow bypass.
+        if agent_level > _MAX_AGENT_LEVEL or required_level > _MAX_AGENT_LEVEL:
+            return PolicyDecision(
+                False,
+                f"OOB permission level (agent={agent_level}, required={required_level}). "
+                f"Max permitted: {int(_MAX_AGENT_LEVEL)}.",
+            )
+
         if tool_name in self._deny_tools:
             return PolicyDecision(False, f"Tool '{tool_name}' is explicitly denied by policy.")
 

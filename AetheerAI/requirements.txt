@@ -78,3 +78,31 @@ cryptography>=42.0.0           # security_tool
 
 # --- kubernetes_tool ---
 # kubernetes>=30.1.0
+
+# ---
+# 2026 Enterprise Features (install only what you need)
+# ---
+
+# --- Feature 10: Zero-Copy Data Connectors ---
+# SQL databases (PostgreSQL, MySQL, SQLite, MSSQL, etc.)
+# sqlalchemy>=2.0.0            # required for SQL connectors
+# psycopg2-binary>=2.9.0       # PostgreSQL
+# pymysql>=1.1.0               # MySQL
+
+# Google BigQuery
+# google-cloud-bigquery>=3.19.0
+
+# Salesforce SOQL
+# simple-salesforce>=1.12.0
+
+# Parquet file support (already have pandas above — add pyarrow for .parquet)
+# pyarrow>=15.0.0
+
+# --- Feature 11: Red-Team Security Agent ---
+# (uses only existing deps: ai_adapter + standard library)
+
+# --- Feature 12: Assembly Line Trace Graph ---
+# (uses only stdlib + streamlit already listed above)
+
+# --- Feature 13: Intelligent Model Router ---
+# (uses only stdlib + existing ai_adapter)

@@ -215,6 +215,23 @@ class WorkflowEngine:
         self.self_healer = None          # SelfHealingDebugger | None (Feature 1)
         self.priority_controller = None  # PriorityController | None  (Feature 5)
         self.checkpoint_manager = None   # CheckpointManager | None   (Feature 6)
+        # BLOCKER-8: ModelRouter applied before every execute() call.
+        self.model_router = None         # ModelRouter | None
+        # BLOCKER-2: FinOpsController — wired for budget guard.
+        self.finops_controller = None    # FinOpsController | None
+        # WARNING-1: Per-session token budget cap for retry/heal loops.
+        import os as _os_we
+        self.max_retry_tokens: int = int(
+            _os_we.environ.get("AETHEERAI_MAX_RETRY_TOKENS", "8000")
+        )
+        # BLOCKER-8: ModelRouter applied before every execute() call.
+        self.model_router = None         # ModelRouter | None
+        # BLOCKER-2: FinOpsController — budget guard before every AI call.
+        self.finops_controller = None    # FinOpsController | None
+        # WARNING-1: Per-session token budget cap for retry/heal loops.
+        self.max_retry_tokens: int = int(
+            __import__("os").environ.get("AETHEERAI_MAX_RETRY_TOKENS", "8000")
+        )
 
     # ------------------------------------------------------------------
     # HITL gate helper (Fix 8)
@@ -386,6 +403,19 @@ class WorkflowEngine:
         On error results the engine feeds the error back and retries.
         """
         logger.info("WorkflowEngine: executing agent '%s'", agent.name)
+
+        # BLOCKER-8: Auto-route to cheapest capable model before every call.
+        if self.model_router is not None:
+            try:
+                route = self.model_router.route(task)
+                self.model_router.apply(route)
+                logger.info(
+                    "ModelRouter: '%s' → %s/%s (complexity: %s)",
+                    agent.name, route.provider, route.model, route.complexity,
+                )
+            except Exception as _mr_exc:
+                logger.debug("ModelRouter skipped (non-fatal): %s", _mr_exc)
+
         prompt = self._build_prompt(agent=agent, task=task)
         messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
         result = self.ai_adapter.chat(messages=messages)
@@ -399,6 +429,15 @@ class WorkflowEngine:
         # ── Self-correction loop (Fix 5) ──────────────────────────────
         for attempt in range(1, MAX_SELF_CORRECT_RETRIES + 1):
             if not _looks_like_error(result):
+                break
+            # WARNING-1: Abort retry loop if session token budget is exhausted.
+            session_tokens = self.ai_adapter._session_usage.get("total_tokens", 0)
+            if session_tokens > self.max_retry_tokens:
+                logger.warning(
+                    "WorkflowEngine: retry token budget exhausted (%d tokens) for "
+                    "agent '%s'. Surfacing last error.",
+                    session_tokens, agent.name,
+                )
                 break
             logger.warning(
                 "WorkflowEngine: agent '%s' returned an error on attempt %d/%d — "
@@ -455,6 +494,19 @@ class WorkflowEngine:
         is never blocked by a slow network call.
         """
         logger.info("WorkflowEngine[async]: executing agent '%s'", agent.name)
+
+        # BLOCKER-8: Auto-route to cheapest capable model before every call.
+        if self.model_router is not None:
+            try:
+                route = self.model_router.route(task)
+                self.model_router.apply(route)
+                logger.info(
+                    "ModelRouter: '%s' → %s/%s (complexity: %s)",
+                    agent.name, route.provider, route.model, route.complexity,
+                )
+            except Exception as _mr_exc:
+                logger.debug("ModelRouter skipped (non-fatal): %s", _mr_exc)
+
         prompt = self._build_prompt(agent=agent, task=task)
         messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
 
@@ -472,6 +524,15 @@ class WorkflowEngine:
         # Self-correction loop (async)
         for attempt in range(1, MAX_SELF_CORRECT_RETRIES + 1):
             if not _looks_like_error(result):
+                break
+            # WARNING-1: Abort retry loop if session token budget is exhausted.
+            session_tokens = self.ai_adapter._session_usage.get("total_tokens", 0)
+            if session_tokens > self.max_retry_tokens:
+                logger.warning(
+                    "WorkflowEngine[async]: retry token budget exhausted (%d tokens) "
+                    "for agent '%s'. Surfacing last error.",
+                    session_tokens, agent.name,
+                )
                 break
             logger.warning(
                 "WorkflowEngine[async]: agent '%s' self-correcting (attempt %d/%d).",

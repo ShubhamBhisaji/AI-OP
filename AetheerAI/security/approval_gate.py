@@ -22,7 +22,7 @@ import logging
 import os
 import asyncio
 import contextvars
-from typing import Any, Callable
+from typing import Any, Callable, Coroutine
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,11 @@ class ApprovalGate:
         "approval_auto_approve_override", default=None
     )
 
+    # Context-local async approval callback (replaces silent auto-approve in async mode).
+    _async_callback: contextvars.ContextVar = contextvars.ContextVar(
+        "approval_async_callback", default=None
+    )
+
     @classmethod
     def set_headless(cls, value: bool) -> None:
         cls._headless_override.set(bool(value))
@@ -99,6 +104,17 @@ class ApprovalGate:
         cls._auto_approve_override.set(bool(value))
 
     @classmethod
+    def set_async_callback(cls, cb: Callable | None) -> None:
+        """
+        Register an async-safe approval callback for use inside async workflows.
+
+        The callback receives (tool_name, agent_name, tier, args_summary) and must
+        return True (approved) or raise ApprovalDenied.  When None is set the
+        gate falls back to headless/reject behaviour in async contexts.
+        """
+        cls._async_callback.set(cb)
+
+    @classmethod
     def _headless(cls) -> bool:
         override = cls._headless_override.get()
         return cls._headless_default if override is None else override
@@ -106,7 +122,18 @@ class ApprovalGate:
     @classmethod
     def _auto_approve(cls) -> bool:
         override = cls._auto_approve_override.get()
-        return cls._auto_approve_default if override is None else override
+        result = cls._auto_approve_default if override is None else override
+        if result:
+            # WARNING-5: Hard-block auto-approve in production/staging environments.
+            env = os.environ.get("AETHEERAI_ENV", "").lower()
+            if env in ("production", "prod", "staging"):
+                logger.critical(
+                    "[ApprovalGate] SECURITY: AETHEERAI_AUTO_APPROVE=1 is set but "
+                    "AETHEERAI_ENV=%s — auto-approve is DISABLED in this environment.",
+                    env,
+                )
+                return False
+        return result
 
     @classmethod
     def request(
@@ -150,22 +177,38 @@ class ApprovalGate:
             logger.warning(msg)
             raise ApprovalDenied(msg)
 
-        # Avoid blocking asyncio loops with a synchronous input() prompt.
-        # When running inside an active async event loop, auto-approve with a
-        # warning so that async workflows (broadcast, pipeline_async, etc.) are
-        # not silently denied. The HITL gate provides the higher-level safety
-        # net for async execution.
+        # BLOCKER-1 fix: Never silently approve in async context.
+        # Use the registered async callback; if none is set, reject (fail-safe).
         try:
-            if asyncio.get_running_loop().is_running():
-                logger.warning(
-                    "[ApprovalGate] ASYNC AUTO-APPROVE: agent=%s tool=%s (%s) — "
-                    "interactive prompt unavailable in async context. "
-                    "Use AETHEERAI_HEADLESS=1 or a HITL callback to gate this call.",
-                    agent_name, tool_name, tier,
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                cb = cls._async_callback.get()
+                if cb is not None:
+                    # Delegate to the caller-supplied async-safe approval handler.
+                    # The callback must raise ApprovalDenied to block or return to allow.
+                    import inspect
+                    result = cb(tool_name, agent_name, tier, args_summary)
+                    if inspect.isawaitable(result):
+                        # Schedule on the running loop — cannot await here (sync call).
+                        # The callback is expected to be fire-and-forget or already resolved.
+                        logger.warning(
+                            "[ApprovalGate] ASYNC CALLBACK: agent=%s tool=%s (%s) — "
+                            "async callback scheduled; treating as approved for this invocation. "
+                            "Use request_async() for full async gating.",
+                            agent_name, tool_name, tier,
+                        )
+                    return  # callback did not raise → approved
+                # No async callback registered → fail-safe reject.
+                msg = (
+                    f"[ApprovalGate] ASYNC-REJECT: no async approval callback registered. "
+                    f"Blocking {tier} tool '{tool_name}' for agent '{agent_name}'. "
+                    f"Register a callback via ApprovalGate.set_async_callback() or "
+                    f"set AETHEERAI_HEADLESS=1 to make the rejection explicit."
                 )
-                return
+                logger.error(msg)
+                raise ApprovalDenied(msg)
         except RuntimeError:
-            # No active loop in this thread — interactive prompt is safe.
+            # No active event loop — interactive prompt is safe.
             pass
 
         # ── Interactive prompt ────────────────────────────────────────

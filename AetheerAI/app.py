@@ -1,4 +1,4 @@
-"""
+﻿"""
 app.py — AetheerAI — An AI Master!! Dashboard (Streamlit GUI)
 
 Run with:  python -m streamlit run app.py
@@ -19,6 +19,7 @@ import streamlit as st
 from core.env_loader import load_env, check_env_file
 from core.aetheerai_kernel import AetheerAiKernel
 from core.workflow_engine import WorkflowFeedback, HITLAction
+from core.trace_bus import TraceBus
 
 # ── Page config — must be first Streamlit call ───────────────────────────
 st.set_page_config(
@@ -357,6 +358,19 @@ with st.sidebar:
         "🐝 Swarm Bus",
         "🔨 Tool Synthesizer",
         "🖥️ Computer Use",
+        "🗄️ Zero-Copy Data",
+        "🔴 Red-Team Security",
+        "📡 Assembly Line",
+        "🧭 Model Router",
+        "🚦 Aetheer Gateway",
+        "🧠 Dual-Process",
+        "💰 FinOps",
+        "🔬 Semantic Cleaner",
+        "🎛️ Control Plane",
+        "👤 Human Supervisor",
+        "🔐 Federated Learning",
+        "🚨 Proactive Concierge",
+        "🎭 Personality Engine",
     ], label_visibility="collapsed")
 
     st.markdown("---")
@@ -2567,3 +2581,1676 @@ elif page == "🖥️ Computer Use":
                     f"at ({entry.get('x','?')}, {entry.get('y','?')}) "
                     f"— _{entry.get('reasoning','')}_"
                 )
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 15. ZERO-COPY DATA
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🗄️ Zero-Copy Data":
+    st.title("🗄️ Zero-Copy Data Connectors")
+    st.caption(
+        "Sub-agents query live data sources at execution time — "
+        "no stale vector-store copies, up to 40% fewer data errors."
+    )
+
+    tab_reg, tab_query, tab_list = st.tabs(["➕ Register Connector", "🔎 Live Query", "📋 Connectors"])
+
+    # ── Tab 1: Register ───────────────────────────────────────────────
+    with tab_reg:
+        st.subheader("Register a Live Data Connector")
+        kind = st.selectbox("Connector type", ["sql", "rest", "file", "bigquery", "salesforce"])
+        conn_name = st.text_input("Connector name", placeholder="e.g. orders_db")
+
+        if kind == "sql":
+            conn_str = st.text_input(
+                "Connection string",
+                placeholder="postgresql://user:pass@host/db  or  sqlite:///data.db",
+            )
+            max_rows = st.number_input("Max rows returned", min_value=1, max_value=50_000, value=5_000)
+            kwargs = {"connection_string": conn_str, "max_rows": int(max_rows)}
+
+        elif kind == "rest":
+            base_url = st.text_input("Base URL", placeholder="https://api.example.com")
+            response_key = st.text_input("Response key (dot-path, optional)", placeholder="data.items")
+            raw_headers = st.text_area("Headers (JSON)", height=80, placeholder='{"Authorization": "Bearer TOKEN"}')
+            try:
+                headers = __import__("json").loads(raw_headers) if raw_headers.strip() else {}
+            except Exception:
+                headers = {}
+                st.warning("Headers JSON is invalid — using empty headers.")
+            kwargs = {"base_url": base_url, "headers": headers, "response_key": response_key or None}
+
+        elif kind == "file":
+            file_path = st.text_input("Absolute file path", placeholder="C:/data/orders.csv")
+            kwargs = {"file_path": file_path}
+
+        elif kind == "bigquery":
+            bq_project = st.text_input("GCP Project ID")
+            bq_creds = st.text_input("Service account JSON path (blank = ADC)")
+            kwargs = {"project": bq_project, "credentials_path": bq_creds or None}
+
+        elif kind == "salesforce":
+            sf_user = st.text_input("Username")
+            sf_pass = st.text_input("Password", type="password")
+            sf_token = st.text_input("Security token", type="password")
+            sf_domain = st.selectbox("Domain", ["login", "test"])
+            kwargs = {"username": sf_user, "password": sf_pass, "security_token": sf_token, "domain": sf_domain}
+
+        c1, c2 = st.columns(2)
+        if c1.button("✅ Register & Test", type="primary", use_container_width=True):
+            if not conn_name.strip():
+                st.error("Please enter a connector name.")
+            else:
+                try:
+                    result = kernel.zc_register(conn_name.strip(), kind, **kwargs)
+                    test = kernel.zc_test(conn_name.strip())
+                    ok = test.get(conn_name.strip(), {}).get("ok", False)
+                    msg = test.get(conn_name.strip(), {}).get("message", "")
+                    if ok:
+                        st.success(f"✅ Connector **{conn_name}** registered and connected. {msg}")
+                    else:
+                        st.warning(f"⚠ Connector registered but connection test failed: {msg}")
+                except Exception as exc:
+                    st.error(f"Registration error: {exc}")
+
+        if c2.button("🗑 Unregister", use_container_width=True):
+            if conn_name.strip():
+                removed = kernel.zc_unregister(conn_name.strip())
+                st.success("Removed." if removed else "Connector not found.")
+
+    # ── Tab 2: Live Query ─────────────────────────────────────────────
+    with tab_query:
+        st.subheader("Execute a Live Query")
+        connectors = kernel.zc_list()
+        if not connectors:
+            st.info("No connectors registered yet. Add one in the **Register** tab.")
+        else:
+            conn_options = [c["name"] for c in connectors]
+            selected = st.selectbox("Connector", conn_options)
+            statement = st.text_area(
+                "Query / statement",
+                height=100,
+                placeholder="SELECT * FROM orders WHERE status = 'open' LIMIT 50",
+            )
+            raw_params = st.text_input("Parameters (JSON)", placeholder='{"status": "open"}')
+            try:
+                params = __import__("json").loads(raw_params) if raw_params.strip() else None
+            except Exception:
+                params = None
+                st.warning("Parameters JSON is invalid — ignoring.")
+
+            if st.button("▶ Run Live Query", type="primary"):
+                try:
+                    rows = kernel.zc_query(selected, statement, params)
+                    st.success(f"{len(rows)} rows returned (live, zero-copy).")
+                    if rows:
+                        import pandas as pd
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                except Exception as exc:
+                    st.error(f"Query error: {exc}")
+
+    # ── Tab 3: Connectors list ────────────────────────────────────────
+    with tab_list:
+        st.subheader("Registered Connectors")
+        rows_list = kernel.zc_list()
+        if not rows_list:
+            st.info("No connectors registered.")
+        else:
+            for c in rows_list:
+                with st.expander(f"🔌 **{c['name']}** — {c.get('kind','?').upper()}"):
+                    st.json(c)
+            if st.button("🧪 Test All Connectors"):
+                results = kernel.zc_test()
+                for name, res in results.items():
+                    icon = "✅" if res.get("ok") else "❌"
+                    st.write(f"{icon} **{name}**: {res.get('message')}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 16. RED-TEAM SECURITY
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🔴 Red-Team Security":
+    st.title("🔴 Autonomous Red-Team Security")
+    st.caption(
+        "Spawn an adversarial sub-agent to probe new integrations for "
+        "prompt injection, data exfiltration, privilege escalation, and "
+        "other enterprise attack vectors — before any system goes live."
+    )
+
+    tab_run, tab_attacks, tab_history = st.tabs(["🚨 Run Red-Team", "⚔ Attack Library", "📜 History"])
+
+    # ── Tab 1: Run ────────────────────────────────────────────────────
+    with tab_run:
+        st.subheader("Launch Adversarial Test")
+        target_desc = st.text_area(
+            "Target system description",
+            height=120,
+            placeholder=(
+                "e.g. An email-processing agent that reads inbound emails, "
+                "extracts order data, and writes it to a Salesforce CRM system."
+            ),
+        )
+        extra_ctx = st.text_area(
+            "Extra context (optional — agent instructions, system prompt, etc.)",
+            height=80,
+        )
+
+        all_attacks = kernel.red_team_list_attacks()
+        attack_names = {a["id"]: a["name"] for a in all_attacks}
+        selected_attacks = st.multiselect(
+            "Attack scenarios to run (empty = all)",
+            options=list(attack_names.keys()),
+            format_func=lambda k: attack_names[k],
+        )
+
+        col1, col2 = st.columns([3, 1])
+        run_btn = col1.button("🔴 Run Red-Team Evaluation", type="primary", use_container_width=True)
+
+        if run_btn:
+            if not target_desc.strip():
+                st.error("Please describe the target system.")
+            else:
+                with st.spinner("Red-Teamer agent is probing the system..."):
+                    try:
+                        loop = asyncio.new_event_loop()
+                        report = loop.run_until_complete(
+                            asyncio.get_event_loop().run_in_executor(
+                                None,
+                                lambda: kernel.red_team_run_report(
+                                    target_desc,
+                                    attack_ids=selected_attacks or None,
+                                    extra_context=extra_ctx,
+                                ),
+                            )
+                        )
+                        loop.close()
+                    except Exception:
+                        report = kernel.red_team_run_report(
+                            target_desc,
+                            attack_ids=selected_attacks or None,
+                            extra_context=extra_ctx,
+                        )
+
+                    st.session_state["rt_last_report"] = report
+
+                    sev_color = {
+                        "PASS": "🟢", "LOW": "🟡", "MEDIUM": "🟠",
+                        "HIGH": "🔴", "CRITICAL": "🚨",
+                    }.get(report.severity, "⚪")
+                    if report.passed:
+                        st.success(f"{sev_color} All tests passed — no vulnerabilities found.")
+                    else:
+                        vuln_count = sum(1 for f in report.findings if f.vulnerable)
+                        st.error(
+                            f"{sev_color} **{vuln_count} vulnerabilities** detected "
+                            f"| Severity: **{report.severity}** "
+                            f"| Duration: {report.duration_s}s"
+                        )
+
+        report = st.session_state.get("rt_last_report")
+        if report:
+            st.markdown("---")
+            st.subheader("Security Report")
+            st.markdown(report.to_markdown())
+
+            dl_data = report.to_markdown()
+            st.download_button(
+                "⬇ Download Report (Markdown)",
+                data=dl_data,
+                file_name=f"red_team_report_{int(report.started_at)}.md",
+                mime="text/markdown",
+            )
+
+    # ── Tab 2: Attack Library ─────────────────────────────────────────
+    with tab_attacks:
+        st.subheader("Built-in Attack Scenarios")
+        for attack in all_attacks:
+            with st.expander(f"⚔ **{attack['name']}**  `{attack['id']}`"):
+                st.write(attack["description"])
+
+    # ── Tab 3: History ────────────────────────────────────────────────
+    with tab_history:
+        st.subheader("Red-Team Audit Log")
+        st.info("Red-team events are logged to the Governance Audit Log.")
+        if st.button("📋 View Audit Log"):
+            st.switch_page = None  # placeholder — direct users to Governance page
+            st.info("Navigate to **🛡️ Governance** → Audit Log to see red-team events.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 17. ASSEMBLY LINE (Live Trace Graph)
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "📡 Assembly Line":
+    import time as _time
+    import json as _json
+
+    st.title("📡 Assembly Line — Live Trace Graph")
+    st.caption(
+        "Watch agents collaborate in real time. "
+        "See exactly which agent is working, which tool it called, "
+        "and where any bottleneck is — the Human-in-the-Loop observability layer."
+    )
+
+    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1, 1, 2])
+    auto_refresh = col_ctrl1.toggle("🔄 Auto-refresh", value=False, key="trace_auto_refresh")
+    if col_ctrl2.button("🗑 Clear Trace", use_container_width=True):
+        kernel.trace_clear()
+        st.success("Trace buffer cleared.")
+    refresh_rate = col_ctrl3.slider("Refresh interval (s)", 1, 10, 3, key="trace_interval")
+
+    # ── Stats strip ───────────────────────────────────────────────────
+    stats = kernel.trace_stats()
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Events", stats["total_events"])
+    m2.metric("Active Agents", len(stats.get("agents", {})))
+    m3.metric("Tool Calls", sum(stats.get("tools_called", {}).values()))
+    m4.metric("Errors", stats["total_errors"])
+
+    st.markdown("---")
+
+    # ── Flowchart (SVG / HTML) ────────────────────────────────────────
+    graph = kernel.trace_graph()
+    nodes = graph["nodes"]
+    edges = graph["edges"]
+
+    STATUS_COLORS = {
+        "running": "#2563eb",
+        "success": "#16a34a",
+        "error": "#dc2626",
+        "waiting": "#94a3b8",
+    }
+    NODE_SHAPES = {"agent": "🤖", "tool": "🔧"}
+
+    if not nodes:
+        st.info("No trace events yet. Run a task or pipeline to see the Assembly Line come alive.")
+    else:
+        # Build a lightweight HTML/CSS flowchart using SVG foreignObject
+        node_html = ""
+        for i, n in enumerate(nodes):
+            color = STATUS_COLORS.get(n.get("status", "waiting"), "#94a3b8")
+            icon = NODE_SHAPES.get(n.get("type", "agent"), "📦")
+            x = 60 + (i % 5) * 190
+            y = 40 + (i // 5) * 110
+            node_html += f"""
+            <g transform="translate({x},{y})">
+              <rect rx="10" ry="10" width="160" height="60"
+                    fill="{color}22" stroke="{color}" stroke-width="2"/>
+              <text x="80" y="20" text-anchor="middle" font-size="18">{icon}</text>
+              <text x="80" y="40" text-anchor="middle" font-size="11"
+                    font-family="Inter,sans-serif" fill="#1e293b"
+                    font-weight="600">{n['label'][:22]}</text>
+              <text x="80" y="55" text-anchor="middle" font-size="9"
+                    fill="{color}" font-family="Inter,sans-serif">{n.get('status','').upper()}</text>
+            </g>"""
+
+        # Build edge lines (simplified — connect by index for now)
+        edge_lines = ""
+        node_positions = {}
+        for i, n in enumerate(nodes):
+            node_positions[n["id"]] = (60 + (i % 5) * 190 + 80, 40 + (i // 5) * 110 + 30)
+
+        for e in edges:
+            src = node_positions.get(e["from"])
+            dst = node_positions.get(e["to"])
+            if src and dst:
+                edge_lines += (
+                    f'<line x1="{src[0]}" y1="{src[1]}" x2="{dst[0]}" y2="{dst[1]}" '
+                    f'stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>'
+                )
+
+        total_rows = max(1, (len(nodes) + 4) // 5)
+        svg_h = 40 + total_rows * 110 + 40
+        svg = f"""
+        <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="{svg_h}"
+             viewBox="0 0 1000 {svg_h}" style="background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8"
+                    refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L9,3 z" fill="#94a3b8"/>
+            </marker>
+          </defs>
+          {edge_lines}
+          {node_html}
+        </svg>"""
+        st.markdown(svg, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── Event table ───────────────────────────────────────────────────
+    st.subheader("Recent Events")
+    events = kernel.trace_latest(100)
+    if not events:
+        st.info("No events in buffer.")
+    else:
+        import pandas as pd
+        df = pd.DataFrame(events)[
+            ["event_id", "event_type", "agent_name", "tool_name", "target_agent",
+             "status", "duration_ms", "task"]
+        ].rename(columns={
+            "event_id": "ID", "event_type": "Type", "agent_name": "Agent",
+            "tool_name": "Tool", "target_agent": "→ Agent",
+            "status": "Status", "duration_ms": "ms", "task": "Task",
+        })
+        st.dataframe(df, use_container_width=True, height=320)
+
+    # ── Auto-refresh ──────────────────────────────────────────────────
+    if auto_refresh:
+        _time.sleep(refresh_rate)
+        st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 18. MODEL ROUTER
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🧭 Model Router":
+    st.title("🧭 Intelligent Model Router")
+    st.caption(
+        "Not all tasks need a premium brain. The router matches task complexity "
+        "to the most cost-effective model — reducing costs while maintaining quality."
+    )
+
+    tab_route, tab_table, tab_history = st.tabs(["🎯 Route a Task", "📊 Routing Table", "📜 History"])
+
+    # ── Tab 1: Route ──────────────────────────────────────────────────
+    with tab_route:
+        st.subheader("Evaluate Task Complexity & Select Model")
+        task_input = st.text_area(
+            "Task description",
+            height=120,
+            placeholder="Describe the task you want the AI to perform...",
+        )
+        c1, c2 = st.columns(2)
+        use_ai = c1.toggle("Use AI scoring (more accurate, ~50 tokens)", value=False)
+        force_complexity = c2.selectbox(
+            "Force complexity override (optional)",
+            ["", "SIMPLE", "MODERATE", "COMPLEX"],
+        )
+        apply_model = st.toggle(
+            "Apply selected model to the AI adapter immediately",
+            value=False,
+        )
+
+        if st.button("🧭 Analyse & Route", type="primary"):
+            if not task_input.strip():
+                st.error("Please enter a task description.")
+            else:
+                with st.spinner("Analysing complexity..."):
+                    decision = kernel.route_model(
+                        task_input,
+                        use_ai_scoring=use_ai,
+                        apply=apply_model,
+                        force_complexity=force_complexity or None,
+                    )
+
+                COMPLEXITY_COLORS = {
+                    "SIMPLE": "🟢", "MODERATE": "🟡", "COMPLEX": "🔴",
+                }
+                COST_TIER_ICONS = {
+                    "free-local": "🖥️ Free (Local)",
+                    "cheap-cloud": "💸 Cheap Cloud",
+                    "premium-cloud": "💎 Premium Cloud",
+                }
+                cx = decision["complexity"]
+                c_icon = COMPLEXITY_COLORS.get(cx, "⚪")
+                cost_label = COST_TIER_ICONS.get(decision["cost_tier"], decision["cost_tier"])
+
+                st.markdown(f"""
+<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:20px;margin:12px 0;">
+  <div style="font-size:22px;font-weight:700;color:#0f172a;">
+    {c_icon} {cx} Task
+  </div>
+  <div style="font-size:14px;color:#475569;margin-top:6px;">
+    <strong>Provider:</strong> {decision['provider']} &nbsp;|&nbsp;
+    <strong>Model:</strong> {decision['model']} &nbsp;|&nbsp;
+    <strong>Cost tier:</strong> {cost_label}
+  </div>
+  <div style="font-size:13px;color:#64748b;margin-top:8px;">
+    <em>{decision['reason']}</em>
+  </div>
+  <div style="font-size:11px;color:#94a3b8;margin-top:6px;">
+    Scored by: {decision['scored_by']}
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+                if apply_model:
+                    st.success(
+                        f"✅ AI adapter switched to **{decision['provider']} / {decision['model']}**"
+                    )
+
+    # ── Tab 2: Routing Table ──────────────────────────────────────────
+    with tab_table:
+        st.subheader("Routing Table")
+        st.caption("Model priority list per complexity tier. First available provider wins.")
+        from core.model_router import _ROUTING_TABLE
+        for tier, candidates in _ROUTING_TABLE.items():
+            color = {"SIMPLE": "🟢", "MODERATE": "🟡", "COMPLEX": "🔴"}.get(tier, "⚪")
+            with st.expander(f"{color} **{tier}**", expanded=True):
+                rows = [
+                    {"Priority": i + 1, "Provider": p, "Model": m}
+                    for i, (p, m) in enumerate(candidates)
+                ]
+                import pandas as pd
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # ── Tab 3: History ────────────────────────────────────────────────
+    with tab_history:
+        st.subheader("Routing Decision History")
+        history = kernel.route_model_history()
+        if not history:
+            st.info("No routing decisions recorded yet. Route a task to see history here.")
+        else:
+            agg_stats = kernel.route_model_stats()
+            s1, s2, s3 = st.columns(3)
+            s1.metric("Total Routed", agg_stats["total_routed"])
+            s2.metric("By Complexity", str(agg_stats["by_complexity"]))
+            s3.metric("Unique Models", len(agg_stats["by_model"]))
+
+            import pandas as pd
+            df_hist = pd.DataFrame(history)
+            st.dataframe(df_hist, use_container_width=True, height=320)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 19. AETHEER GATEWAY
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🚦 Aetheer Gateway":
+    st.title("🚦 Aetheer Gateway — Rate-Limiting Agent Proxy")
+    st.caption(
+        "Prevent agent-triggered API floods. Register destinations with token-bucket "
+        "rate limits, send rate-controlled requests, and monitor live traffic metrics."
+    )
+
+    tab_reg, tab_send, tab_metrics = st.tabs(
+        ["📋 Destinations", "📤 Send Request", "📊 Metrics"]
+    )
+
+    with tab_reg:
+        st.subheader("Registered Destinations")
+        destinations = kernel.gateway_list()
+        if not destinations:
+            st.info("No gateway destinations registered yet.")
+        else:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(destinations), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("Register New Destination")
+        with st.form("gw_register_form"):
+            c1, c2 = st.columns(2)
+            gw_name = c1.text_input("Destination Name", placeholder="my-api")
+            gw_url  = c2.text_input("Base URL", placeholder="https://api.example.com")
+            c3, c4, c5 = st.columns(3)
+            gw_rate  = c3.number_input("Rate (req/s)", min_value=0.1, max_value=100.0, value=5.0, step=0.5)
+            gw_burst = c4.number_input("Burst Size", min_value=1, max_value=200, value=10, step=1)
+            gw_batch = c5.number_input("Batch Size", min_value=1, max_value=50, value=1, step=1)
+            if st.form_submit_button("➕ Register", type="primary"):
+                if not gw_name.strip() or not gw_url.strip():
+                    st.error("Name and URL are required.")
+                else:
+                    kernel.gateway_register(
+                        name=gw_name.strip(),
+                        base_url=gw_url.strip(),
+                        rate=float(gw_rate),
+                        burst=int(gw_burst),
+                        batch_size=int(gw_batch),
+                    )
+                    st.success(f"✅ Destination **{gw_name}** registered at `{gw_url}`.")
+                    st.rerun()
+
+    with tab_send:
+        st.subheader("Send Rate-Limited Request")
+        destinations = kernel.gateway_list()
+        dest_names = [d["name"] for d in destinations] if destinations else []
+        if not dest_names:
+            st.warning("Register a destination first.")
+        else:
+            with st.form("gw_send_form"):
+                c1, c2 = st.columns(2)
+                send_dest   = c1.selectbox("Destination", dest_names)
+                send_method = c2.selectbox("Method", ["GET", "POST", "PUT", "DELETE", "PATCH"])
+                send_path   = st.text_input("Path", value="/")
+                send_body   = st.text_area("Request Body (JSON)", height=120, placeholder="{}")
+                if st.form_submit_button("🚀 Send", type="primary"):
+                    import json as _json
+                    body = None
+                    if send_body.strip():
+                        try:
+                            body = _json.loads(send_body)
+                        except Exception:
+                            st.error("Invalid JSON body.")
+                            st.stop()
+                    with st.spinner("Sending (rate-limited)..."):
+                        resp = kernel.gateway_send(
+                            destination=send_dest,
+                            path=send_path,
+                            method=send_method,
+                            body=body,
+                        )
+                    color = "green" if resp["ok"] else "red"
+                    st.markdown(
+                        f'<span style="color:{color};font-weight:700;">HTTP {resp["status"]}</span>',
+                        unsafe_allow_html=True,
+                    )
+                    st.code(resp["text"][:2000], language="json")
+
+    with tab_metrics:
+        st.subheader("Live Traffic Metrics")
+        metrics = kernel.gateway_metrics()
+        if not metrics:
+            st.info("No metrics yet. Send some requests first.")
+        else:
+            for dest, m in metrics.items():
+                with st.expander(f"📡 **{dest}**", expanded=True):
+                    cols = st.columns(5)
+                    cols[0].metric("Sent", m.get("sent", 0))
+                    cols[1].metric("Queued Now", m.get("queued", 0))
+                    cols[2].metric("Retried", m.get("retried", 0))
+                    cols[3].metric("Errors", m.get("errors", 0))
+                    cols[4].metric("Avg Latency (ms)", f"{m.get('avg_latency_ms', 0):.0f}")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 20. DUAL-PROCESS ENGINE
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🧠 Dual-Process":
+    st.title("🧠 Dual-Process Thinking — System 1 & System 2")
+    st.caption(
+        "**System 1** is a fast, frozen cheap model for rapid execution. "
+        "**System 2** is the Curator Agent — it studies error patterns and "
+        "writes permanent lessons to Long-Term Memory, making the system smarter over time."
+    )
+
+    tab_s1, tab_s2, tab_stats, tab_lessons = st.tabs(
+        ["⚡ System 1 Run", "🧐 System 2 Reflect", "📊 Stats", "📚 Lessons"]
+    )
+
+    with tab_s1:
+        st.subheader("Run a Task Through System 1 (Fast)")
+        with st.form("s1_form"):
+            s1_agent = st.text_input("Agent Name", value="GeneralAgent")
+            s1_task  = st.text_area("Task", height=130, placeholder="Summarise this document...")
+            c1, c2  = st.columns(2)
+            s1_type = c1.selectbox("Task Type", ["general", "summarise", "classify", "extract", "qa", "code"])
+            s1_sys  = c2.text_input("System Prompt (optional)", placeholder="You are a helpful AI.")
+            if st.form_submit_button("⚡ Execute via System 1", type="primary"):
+                if not s1_task.strip():
+                    st.error("Enter a task.")
+                else:
+                    with st.spinner("Running S1 (fast model)..."):
+                        result = kernel.s1_run(
+                            agent_name=s1_agent,
+                            task=s1_task,
+                            task_type=s1_type,
+                            system_prompt=s1_sys,
+                        )
+                    status = "✅ Success" if result["success"] else "❌ Failed"
+                    st.markdown(f"**Status:** {status} &nbsp;|&nbsp; **Model:** `{result['model_used']}` &nbsp;|&nbsp; **Duration:** {result['duration_ms']:.0f}ms")
+                    if result["error"]:
+                        st.error(result["error"])
+                    else:
+                        st.markdown("**Result:**")
+                        st.markdown(result["result"])
+
+    with tab_s2:
+        st.subheader("Run System 2 Curator Reflection")
+        st.info(
+            "The Curator Agent reviews System 1 errors and distils permanent "
+            "lessons. It only runs when enough samples exist (default ≥ 5)."
+        )
+        with st.form("s2_form"):
+            s2_agent = st.text_input("Agent to Reflect On", value="GeneralAgent")
+            s2_force = st.toggle("Force reflection even if error rate is low", value=False)
+            if st.form_submit_button("🧐 Run System 2 Curator", type="primary"):
+                with st.spinner("Curator Agent reflecting..."):
+                    report = kernel.s2_reflect(agent_name=s2_agent, force=s2_force)
+                if not report["reflected"]:
+                    st.warning(f"Reflection skipped: {report['reason']}")
+                else:
+                    st.success("✅ Reflection complete!")
+                    st.metric("Error Rate", f"{report['error_rate']:.1%}")
+                    st.markdown("**Pattern Summary:**")
+                    st.info(report["pattern_summary"])
+                    if report["lessons"]:
+                        st.markdown("**Lessons Learned:**")
+                        for lesson in report["lessons"]:
+                            st.markdown(f"- {lesson}")
+                    if report["updated_instructions"]:
+                        st.markdown("**Updated Instructions Suggested:**")
+                        st.code(report["updated_instructions"])
+
+        st.markdown("---")
+        if st.button("🔄 Reflect All Agents"):
+            with st.spinner("Running S2 for all agents..."):
+                all_reports = kernel.s2_reflect_all()
+            if not all_reports:
+                st.info("No agents have enough S1 samples for reflection.")
+            else:
+                for r in all_reports:
+                    st.markdown(f"**{r['agent']}** — error rate: `{r['error_rate']:.1%}` — lessons: {len(r['lessons'])}")
+
+    with tab_stats:
+        st.subheader("System 1 Outcome Statistics")
+        stats = kernel.dual_process_stats()
+        if not stats or stats.get("total", 0) == 0:
+            st.info("No System 1 runs recorded yet.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Runs", stats.get("total", 0))
+            c2.metric("Success Rate", f"{stats.get('success_rate', 0):.1%}")
+            c3.metric("Avg Duration", f"{stats.get('avg_duration_ms', 0):.0f}ms")
+
+            by_type = stats.get("by_task_type", {})
+            if by_type:
+                import pandas as pd
+                df = pd.DataFrame(
+                    [{"Task Type": k, "Count": v} for k, v in by_type.items()]
+                )
+                st.bar_chart(df.set_index("Task Type"))
+
+    with tab_lessons:
+        st.subheader("Stored S2 Lessons by Agent")
+        q_agent = st.text_input("Agent name", value="GeneralAgent", key="lessons_agent")
+        if st.button("📚 Load Lessons"):
+            lessons = kernel.dual_process_lessons(q_agent)
+            if not lessons:
+                st.info(f"No lessons stored for **{q_agent}** yet.")
+            else:
+                for i, lesson in enumerate(lessons, 1):
+                    st.markdown(f"{i}. {lesson}")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 21. FINOPS CONTROLLER
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "💰 FinOps":
+    st.title("💰 FinOps — Cost-Aware AI Orchestration")
+    st.caption(
+        "Know the price before you run. Get cost quotes, track live spend, "
+        "swap models to stay within budget, and see exactly where every dollar goes."
+    )
+
+    tab_quote, tab_status, tab_ledger, tab_breakdown = st.tabs(
+        ["💵 Cost Quote", "📊 Spend Status", "📒 Ledger", "🔍 Breakdown"]
+    )
+
+    with tab_quote:
+        st.subheader("Project Cost Quote")
+        with st.form("finops_quote_form"):
+            c1, c2 = st.columns(2)
+            q_tasks  = c1.number_input("Number of Tasks", min_value=1, max_value=10000, value=10, step=1)
+            q_agents = c2.number_input("Number of Agents", min_value=1, max_value=100, value=1, step=1)
+            cost_table = kernel.finops_model_cost_table()
+            model_list = list(cost_table.keys())
+            q_model = st.selectbox("Model", model_list, index=0 if model_list else 0)
+            c3, c4 = st.columns(2)
+            q_tpt    = c3.number_input("Tokens per Task (0 = default)", min_value=0, max_value=200000, value=0, step=500)
+            q_budget = c4.number_input("Budget Override USD (0 = use global)", min_value=0.0, value=0.0, step=0.5, format="%.2f")
+            if st.form_submit_button("💵 Get Quote", type="primary"):
+                quote = kernel.finops_quote(
+                    tasks=int(q_tasks),
+                    agents=int(q_agents),
+                    model=q_model,
+                    tokens_per_task=int(q_tpt) if q_tpt > 0 else None,
+                    budget_override=float(q_budget) if q_budget > 0 else None,
+                )
+                bg = "#dcfce7" if quote["within_budget"] else "#fee2e2"
+                icon = "✅" if quote["within_budget"] else "⚠️"
+                st.markdown(f"""
+<div style="background:{bg};border-radius:12px;padding:20px;margin:12px 0;">
+  <div style="font-size:20px;font-weight:700;">{icon} Estimated Cost: ${quote['total_usd']:.4f} USD</div>
+  <div style="font-size:14px;margin-top:6px;">
+    Model: <code>{quote['model']}</code> &nbsp;|&nbsp;
+    Tokens: ~{quote['token_estimate']:,}
+  </div>
+</div>
+""", unsafe_allow_html=True)
+                if quote.get("optimised_model"):
+                    st.info(
+                        f"💡 Cheaper alternative: **{quote['optimised_model']}** "
+                        f"≈ ${quote['optimised_cost_usd']:.4f} USD"
+                    )
+                if quote.get("breakdown"):
+                    import pandas as pd
+                    st.dataframe(
+                        pd.DataFrame(quote["breakdown"]),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+    with tab_status:
+        st.subheader("Live Spend vs Budget")
+        status = kernel.finops_status()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Used (USD)", f"${status['used_usd']:.4f}")
+        c2.metric("Budget (USD)", f"${status['budget_usd']:.2f}" if status['budget_usd'] > 0 else "Unlimited")
+        c3.metric("Remaining", f"${status['remaining_usd']:.4f}" if status['budget_usd'] > 0 else "—")
+
+        if status["budget_usd"] > 0:
+            pct = min(status.get("percent_used", 0), 1.0)
+            bar_color = "#ef4444" if pct >= 1.0 else "#f59e0b" if pct >= 0.8 else "#22c55e"
+            st.markdown(
+                f'<div style="background:#e2e8f0;border-radius:8px;height:18px;width:100%;">'
+                f'<div style="background:{bar_color};border-radius:8px;height:18px;'
+                f'width:{pct*100:.1f}%;transition:width 0.5s;"></div></div>'
+                f'<div style="font-size:12px;color:#64748b;margin-top:4px;">'
+                f'{pct*100:.1f}% of budget used</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown("---")
+        st.subheader("Set Monthly Budget")
+        new_budget = st.number_input(
+            "Monthly budget (USD) — set to 0 for unlimited",
+            min_value=0.0, value=float(status["budget_usd"]), step=1.0, format="%.2f"
+        )
+        if st.button("💾 Save Budget"):
+            kernel.finops_set_budget(new_budget)
+            st.success(f"Budget set to ${new_budget:.2f}/month.")
+            st.rerun()
+
+    with tab_ledger:
+        st.subheader("Spend Ledger")
+        limit = st.slider("Show last N records", 10, 200, 50)
+        records = kernel.finops_ledger(limit=limit)
+        if not records:
+            st.info("No spend recorded yet.")
+        else:
+            import pandas as pd
+            df_l = pd.DataFrame(records)
+            st.dataframe(df_l, use_container_width=True, height=400)
+            total = sum(r["cost_usd"] for r in records)
+            st.metric("Total shown", f"${total:.4f}")
+
+    with tab_breakdown:
+        st.subheader("Spend Breakdown")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**By Agent**")
+            by_agent = kernel.finops_spend_by_agent()
+            if not by_agent:
+                st.info("No data yet.")
+            else:
+                import pandas as pd
+                df_a = pd.DataFrame(
+                    [{"Agent": k, "Spent (USD)": round(v, 4)} for k, v in by_agent.items()]
+                ).sort_values("Spent (USD)", ascending=False)
+                st.dataframe(df_a, use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown("**By Model**")
+            by_model = kernel.finops_spend_by_model()
+            if not by_model:
+                st.info("No data yet.")
+            else:
+                import pandas as pd
+                df_m = pd.DataFrame(
+                    [{"Model": k, "Spent (USD)": round(v, 4)} for k, v in by_model.items()]
+                ).sort_values("Spent (USD)", ascending=False)
+                st.dataframe(df_m, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("Model Pricing Reference")
+        cost_table = kernel.finops_model_cost_table()
+        import pandas as pd
+        df_ct = pd.DataFrame(
+            [
+                {
+                    "Model": m,
+                    "Input $/M tokens": v["input_per_m"],
+                    "Output $/M tokens": v["output_per_m"],
+                }
+                for m, v in cost_table.items()
+            ]
+        )
+        st.dataframe(df_ct, use_container_width=True, height=400, hide_index=True)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 22. SEMANTIC CLEANER
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🔬 Semantic Cleaner":
+    st.title("🔬 Semantic Pre-Processor — Unstructured Data → Clean JSON")
+    st.caption(
+        "Feed messy PDFs, Zoom transcripts, screenshots, raw HTML, or CSV into "
+        "this pre-processor before any agent sees it. Output is clean, structured "
+        "JSON + Markdown that agents can reason about accurately."
+    )
+
+    tab_clean, tab_batch, tab_types = st.tabs(
+        ["🧹 Clean Document", "📦 Batch Clean", "📋 Supported Types"]
+    )
+
+    with tab_clean:
+        st.subheader("Clean a Single Document")
+        col1, col2 = st.columns([2, 1])
+        raw_input = col1.text_area(
+            "Paste raw content here",
+            height=280,
+            placeholder="Paste PDF text, transcript, HTML, email, CSV...",
+        )
+        content_hint = col2.selectbox(
+            "Content Type",
+            ["auto", "pdf", "transcript", "screenshot", "html", "email", "csv", "json", "text"],
+        )
+        extra_instr = col2.text_input(
+            "Extra instructions (optional)",
+            placeholder="Focus on financial figures",
+        )
+
+        if st.button("🔬 Clean & Structure", type="primary"):
+            if not raw_input.strip():
+                st.error("Please paste some content to clean.")
+            else:
+                with st.spinner("AI pre-processing..."):
+                    result = kernel.semantic_clean(
+                        raw=raw_input,
+                        hint=content_hint,
+                        extra_instructions=extra_instr,
+                    )
+
+                # Quality badge
+                qs = result["quality_score"]
+                q_color = "#22c55e" if qs >= 0.7 else "#f59e0b" if qs >= 0.4 else "#ef4444"
+                ready_label = "✅ Ready for Agent" if result["ready_for_agent"] else "⚠️ Needs Review"
+                st.markdown(
+                    f'<div style="display:inline-flex;gap:16px;background:#f8fafc;'
+                    f'border-radius:8px;padding:10px 16px;margin-bottom:12px;">'
+                    f'<span style="color:{q_color};font-weight:700;">'
+                    f'Quality: {qs:.0%}</span>'
+                    f'<span>{ready_label}</span>'
+                    f'<span style="color:#64748b;">Type: {result["content_type"]}</span>'
+                    f'<span style="color:#64748b;">⏱ {result["processing_ms"]:.0f}ms</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                if result["warnings"]:
+                    for w in result["warnings"]:
+                        st.warning(w)
+
+                tab_json, tab_md, tab_agent = st.tabs(
+                    ["📋 Structured JSON", "📝 Clean Markdown", "🤖 Agent Input"]
+                )
+                with tab_json:
+                    import json as _json
+                    st.code(
+                        _json.dumps(result["structured"], indent=2),
+                        language="json",
+                    )
+                with tab_md:
+                    st.markdown(result["markdown"])
+                with tab_agent:
+                    st.caption("This is the exact string to pass to your agent:")
+                    st.code(result["agent_input"], language="markdown")
+
+    with tab_batch:
+        st.subheader("Batch Clean Multiple Documents")
+        st.info(
+            "Enter one document per section. Use the '+' button to add more. "
+            "All documents are cleaned in sequence."
+        )
+
+        if "batch_items" not in st.session_state:
+            st.session_state.batch_items = [{"raw": "", "hint": "auto", "extra": ""}]
+
+        for i, item in enumerate(st.session_state.batch_items):
+            with st.expander(f"Document {i + 1}", expanded=(i == 0)):
+                item["raw"]  = st.text_area(f"Content {i+1}", value=item["raw"], height=120, key=f"b_raw_{i}")
+                item["hint"] = st.selectbox(
+                    f"Type {i+1}",
+                    ["auto", "pdf", "transcript", "html", "email", "csv", "json", "text"],
+                    key=f"b_hint_{i}",
+                )
+                item["extra"] = st.text_input(f"Extra instructions {i+1}", value=item.get("extra", ""), key=f"b_extra_{i}")
+
+        col_add, col_run = st.columns([1, 3])
+        if col_add.button("➕ Add Document"):
+            st.session_state.batch_items.append({"raw": "", "hint": "auto", "extra": ""})
+            st.rerun()
+
+        if col_run.button("🔬 Clean All", type="primary"):
+            items_to_clean = [
+                {"raw": it["raw"], "hint": it["hint"], "extra_instructions": it.get("extra", "")}
+                for it in st.session_state.batch_items
+                if it["raw"].strip()
+            ]
+            if not items_to_clean:
+                st.error("No content to clean.")
+            else:
+                with st.spinner(f"Cleaning {len(items_to_clean)} document(s)..."):
+                    batch_results = kernel.semantic_clean_batch(items_to_clean)
+
+                import pandas as pd
+                summary = pd.DataFrame([
+                    {
+                        "#": i + 1,
+                        "Type": r["content_type"],
+                        "Quality": f"{r['quality_score']:.0%}",
+                        "Ready?": "✅" if r["ready_for_agent"] else "⚠️",
+                        "Original Chars": r["original_length"],
+                        "Markdown Chars": r["markdown_length"],
+                        "ms": r["processing_ms"],
+                        "Warnings": "; ".join(r["warnings"]) if r["warnings"] else "",
+                    }
+                    for i, r in enumerate(batch_results)
+                ])
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    with tab_types:
+        st.subheader("Supported Content Types")
+        types_info = [
+            {"Type": "pdf",        "Description": "PDF text (extracted by pdfplumber/pypdf2)", "Outputs": "title, sections, tables, key-values, action items"},
+            {"Type": "transcript", "Description": "Meeting/call/Zoom transcript",               "Outputs": "participants, topics, decisions, action items"},
+            {"Type": "screenshot", "Description": "OCR text from screenshots",                  "Outputs": "screen type, text blocks, UI elements, numbers"},
+            {"Type": "html",       "Description": "Raw HTML / web page source",                 "Outputs": "title, clean Markdown body, headings, links"},
+            {"Type": "email",      "Description": "Email thread or single message",             "Outputs": "subject, from/to, body, sentiment, action items"},
+            {"Type": "csv",        "Description": "CSV data (possibly malformed)",              "Outputs": "headers, schema, sample rows, row count"},
+            {"Type": "json",       "Description": "Malformed or unvalidated JSON",              "Outputs": "fixed JSON, list of corrections made"},
+            {"Type": "text",       "Description": "Any raw/unstructured plain text",            "Outputs": "clean text, key points, entities, summary"},
+            {"Type": "auto",       "Description": "Heuristic auto-detection (default)",         "Outputs": "depends on detected type"},
+        ]
+        import pandas as pd
+        st.dataframe(
+            pd.DataFrame(types_info),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 23. CONTROL PLANE
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🎛️ Control Plane":
+    st.title("🎛️ Agentic Control Plane — Multi-Agent Orchestration")
+    st.caption(
+        "The Supreme Court for your agent fleet. Register agents with their goals, "
+        "detect conflicting strategies, and let the Master AI issue binding resolutions "
+        "based on your core business KPIs."
+    )
+
+    tab_board, tab_agents, tab_conflicts, tab_mediate, tab_escalations, tab_collab = st.tabs(
+        ["📊 Status Board", "🤖 Agents", "⚡ Conflicts", "⚖️ Mediate", "📋 Escalations", "🔗 Collab Graph"]
+    )
+
+    with tab_board:
+        board = kernel.cp_status_board()
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Agents", board["agents_registered"])
+        c2.metric("Conflicts", board["total_conflicts_detected"])
+        c3.metric("Unresolved", board["unresolved_conflicts"])
+        c4.metric("Open Tickets", board["open_escalations"])
+        c5.metric("Resolutions", board["resolutions_issued"])
+        if board["high_priority_agents"]:
+            st.warning(f"⚠️ High-priority agents: {', '.join(board['high_priority_agents'])}")
+        if board["departments"]:
+            st.info(f"Departments managed: {', '.join(board['departments'])}")
+
+        st.markdown("---")
+        st.subheader("Resolution History")
+        history = kernel.cp_resolution_history()
+        if not history:
+            st.info("No resolutions issued yet.")
+        else:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(history), use_container_width=True, hide_index=True)
+
+    with tab_agents:
+        st.subheader("Registered Agents")
+        agents = kernel.cp_list_agents()
+        if not agents:
+            st.info("No agents registered. Use the form below.")
+        else:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(agents), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("Register Agent")
+        with st.form("cp_agent_form"):
+            c1, c2, c3 = st.columns(3)
+            ag_name   = c1.text_input("Agent Name", placeholder="EfficiencyAgent")
+            ag_dept   = c2.text_input("Department", placeholder="finance")
+            ag_pri    = c3.slider("Priority (1=critical, 10=low)", 1, 10, 5)
+            ag_goals  = st.text_area("Goals (one per line)", placeholder="reduce cost by 20%\nminimise API calls")
+            ag_kpis   = st.text_area("KPIs (one per line)", placeholder="cost_per_unit\napi_latency_ms")
+            ag_dep_on = st.text_input("Depends On (comma-separated agent names, optional)", "")
+            if st.form_submit_button("➕ Register Agent", type="primary"):
+                if not ag_name.strip():
+                    st.error("Agent name is required.")
+                else:
+                    kernel.cp_register_agent(
+                        agent_name  = ag_name.strip(),
+                        goals       = [g.strip() for g in ag_goals.strip().splitlines() if g.strip()],
+                        kpis        = [k.strip() for k in ag_kpis.strip().splitlines() if k.strip()],
+                        priority    = ag_pri,
+                        department  = ag_dept.strip() or "general",
+                        depends_on  = [x.strip() for x in ag_dep_on.split(",") if x.strip()] or None,
+                    )
+                    st.success(f"✅ Agent **{ag_name}** registered.")
+                    st.rerun()
+
+    with tab_conflicts:
+        st.subheader("Open Conflicts")
+        if st.button("🔍 Detect Conflicts Now", type="primary"):
+            new_c = kernel.cp_detect_conflicts()
+            if not new_c:
+                st.success("No new conflicts detected.")
+            else:
+                st.warning(f"⚠️ {len(new_c)} new conflict(s) detected.")
+                st.rerun()
+
+        conflicts = kernel.cp_open_conflicts()
+        if not conflicts:
+            st.info("No unresolved conflicts.")
+        else:
+            for c in conflicts:
+                sev_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(c["severity"], "⚪")
+                with st.expander(f"{sev_icon} [{c['conflict_id']}] {c['description']}", expanded=True):
+                    st.markdown(f"**Agents:** {', '.join(c['agents'])}")
+                    for ag, goals in c["goals"].items():
+                        st.markdown(f"- **{ag}**: {', '.join(goals)}")
+
+    with tab_mediate:
+        st.subheader("Supreme Court Mediation")
+        st.caption("Select a conflict and configure your business KPIs. The Master AI will issue a binding resolution.")
+        conflicts = kernel.cp_open_conflicts()
+        if not conflicts:
+            st.info("No conflicts to mediate. Detect conflicts first.")
+        else:
+            conf_options = {f"[{c['conflict_id']}] {c['description'][:60]}": c["conflict_id"] for c in conflicts}
+            selected = st.selectbox("Select conflict", list(conf_options.keys()))
+            c1, c2 = st.columns(2)
+            bkpi_primary   = c1.text_input("Primary Business KPI", value="net_profit")
+            bkpi_secondary = c2.text_input("Secondary KPI", value="customer_satisfaction")
+            extra_kpis_raw = st.text_input("More KPIs (comma-separated)", "")
+            if st.button("⚖️ Issue Resolution", type="primary"):
+                bkpis = {"primary": bkpi_primary, "secondary": bkpi_secondary}
+                if extra_kpis_raw.strip():
+                    for pair in extra_kpis_raw.split(","):
+                        parts = pair.split(":", 1)
+                        if len(parts) == 2:
+                            bkpis[parts[0].strip()] = parts[1].strip()
+                with st.spinner("Consulting Supreme Court AI..."):
+                    res = kernel.cp_mediate(conf_options[selected], business_kpis=bkpis)
+                st.success("✅ Resolution issued!")
+                st.markdown(f"**Winning KPI:** `{res['winning_kpi']}`")
+                st.info(res["verdict"])
+                st.markdown("**Reasoning:**")
+                st.markdown(res["reasoning"])
+                if res["recommended_actions"]:
+                    st.markdown("**Recommended Actions:**")
+                    for a in res["recommended_actions"]:
+                        st.markdown(f"- {a}")
+                if res["override_map"]:
+                    st.markdown("**Agent Directives:**")
+                    for ag, directive in res["override_map"].items():
+                        st.markdown(f"- **{ag}**: {directive}")
+
+    with tab_escalations:
+        st.subheader("Escalation Tickets")
+        tickets = kernel.cp_open_escalations()
+        if not tickets:
+            st.info("No open escalations.")
+        else:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(tickets), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("Create Escalation")
+        with st.form("cp_escalate_form"):
+            c1, c2 = st.columns(2)
+            esc_agent  = c1.text_input("Agent Name", placeholder="BillingAgent")
+            esc_sev    = c2.selectbox("Severity", ["low", "medium", "high", "critical"])
+            esc_issue  = st.text_input("Issue", placeholder="Attempted to execute >$10k payment")
+            esc_ctx    = st.text_area("Context", height=80)
+            if st.form_submit_button("🚨 Escalate", type="primary"):
+                t = kernel.cp_escalate(esc_agent.strip(), esc_issue.strip(), esc_ctx.strip(), esc_sev)
+                st.success(f"Ticket `{t['ticket_id']}` created.")
+
+    with tab_collab:
+        st.subheader("Agent Collaboration Graph (Dependencies)")
+        matrix = kernel.cp_collaboration_matrix()
+        if not matrix:
+            st.info("No dependency edges registered yet. Use 'Depends On' when registering agents.")
+        else:
+            import pandas as pd
+            edges = [{"Agent": a, "Depends On": dep} for a, deps in matrix.items() for dep in deps]
+            st.dataframe(pd.DataFrame(edges), use_container_width=True, hide_index=True)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 24. HUMAN SUPERVISOR
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "👤 Human Supervisor":
+    st.title("👤 Human-Supervisor Mode — Adaptive Delegation")
+    st.caption(
+        "Track every approval, detect where *you* are the bottleneck, "
+        "and let the AI suggest policy upgrades that hand recurring decisions "
+        "to trusted agents — permanently."
+    )
+
+    tab_style, tab_record, tab_bottlenecks, tab_policy, tab_events = st.tabs(
+        ["🧠 My Style", "✍️ Record Approval", "⚠️ Bottlenecks", "📜 Policies", "📋 Events"]
+    )
+
+    with tab_style:
+        st.subheader("Your Management Style Analysis")
+        report = kernel.hs_management_report()
+        if report["total_events"] == 0:
+            st.info("Record some approval events to see your management style analysis.")
+        else:
+            style_colors = {
+                "Liberator": "#22c55e", "Delegator": "#3b82f6",
+                "Balanced": "#f59e0b", "Hands-On": "#ef4444",
+            }
+            color = style_colors.get(report["style_label"], "#64748b")
+            st.markdown(
+                f'<div style="background:{color}22;border:2px solid {color};border-radius:12px;padding:20px;">'
+                f'<div style="font-size:24px;font-weight:700;color:{color};">🧠 {report["style_label"]}</div>'
+                f'<div style="font-size:14px;margin-top:6px;">{report["style_description"]}</div></div>',
+                unsafe_allow_html=True,
+            )
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Autonomy Score", f"{report['autonomy_score']:.0%}")
+            c2.metric("Avg Wait per Approval", f"{report['avg_wait_s']:.0f}s")
+            c3.metric("Total Events", report["total_events"])
+            if report["bottleneck_categories"]:
+                st.warning(f"⚠️ Bottlenecks in: {', '.join(report['bottleneck_categories'])}")
+            st.info(f"💡 {report['recommended_next_step']}")
+
+    with tab_record:
+        st.subheader("Record an Approval Event")
+        with st.form("hs_record_form"):
+            c1, c2 = st.columns(2)
+            hr_agent    = c1.text_input("Agent Name", placeholder="BillingAgent")
+            hr_action   = c2.text_input("Action", placeholder="send_invoice")
+            c3, c4      = st.columns(2)
+            hr_category = c3.text_input("Category", placeholder="finance")
+            hr_wait     = c4.number_input("Time You Took to Decide (seconds)", min_value=0, max_value=86400, value=60, step=5)
+            hr_approved = st.toggle("You approved it", value=True)
+            hr_auto     = st.toggle("This was auto-approved (no human review)", value=False)
+            if st.form_submit_button("✅ Record", type="primary"):
+                ev = kernel.hs_record_approval(
+                    agent_name   = hr_agent.strip(),
+                    action       = hr_action.strip(),
+                    category     = hr_category.strip() or "general",
+                    wait_ms      = hr_wait * 1000,
+                    approved     = hr_approved,
+                    auto_approved= hr_auto,
+                )
+                st.success(f"Recorded event `{ev['event_id']}` in category `{ev['category']}`.")
+
+    with tab_bottlenecks:
+        st.subheader("Bottleneck Analysis")
+        bottlenecks = kernel.hs_detect_bottlenecks()
+        if not bottlenecks:
+            st.success("✅ No bottlenecks detected. Your delegation is healthy.")
+        else:
+            for b in bottlenecks:
+                score = b["bottleneck_score"]
+                color = "#ef4444" if score > 0.7 else "#f59e0b" if score > 0.4 else "#3b82f6"
+                with st.expander(f"⚠️ **{b['category']}** — score {score:.0%}", expanded=True):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Events", b["event_count"])
+                    c2.metric("Avg Wait", f"{b['avg_wait_s']:.0f}s")
+                    c3.metric("Approval Rate", f"{b['approval_rate']:.0%}")
+                    if b["suggestion"]:
+                        st.info(f"💡 {b['suggestion']}")
+                    if st.button(f"🤖 Get AI Policy Suggestion for '{b['category']}'", key=f"hs_sug_{b['category']}"):
+                        with st.spinner("AI generating policy update..."):
+                            upd = kernel.hs_suggest_policy(b["category"])
+                        if upd:
+                            st.success(f"**Suggested:** Upgrade `{b['category']}` from {upd['old_level']} → **{upd['new_level']}**")
+                            st.markdown(f"**Reasoning:** {upd['reasoning']}")
+                            if upd["conditions"]:
+                                st.markdown("**Conditions still required:**")
+                                for cond in upd["conditions"]:
+                                    st.markdown(f"- {cond}")
+                            if st.button(f"✅ Apply this policy", key=f"hs_apply_{b['category']}"):
+                                kernel.hs_apply_policy(b["category"], upd["new_level"])
+                                st.success(f"Policy applied — {b['category']} is now **{upd['new_level']}**.")
+                                st.rerun()
+
+    with tab_policy:
+        st.subheader("Delegation Levels")
+        levels = kernel.hs_delegation_levels()
+        if not levels:
+            st.info("No custom policies set. All categories default to MANUAL.")
+        else:
+            import pandas as pd
+            df_lev = pd.DataFrame([{"Category": k, "Level": v} for k, v in levels.items()])
+            st.dataframe(df_lev, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("Manually Set Delegation Level")
+        with st.form("hs_policy_form"):
+            c1, c2 = st.columns(2)
+            pol_cat   = c1.text_input("Category", placeholder="finance")
+            pol_level = c2.selectbox("New Delegation Level", ["MANUAL", "SUPERVISED", "AUTONOMOUS"])
+            if st.form_submit_button("💾 Set Policy"):
+                kernel.hs_apply_policy(pol_cat.strip(), pol_level)
+                st.success(f"**{pol_cat}** set to **{pol_level}**.")
+                st.rerun()
+
+    with tab_events:
+        st.subheader("Recent Approval Events")
+        events = kernel.hs_recent_events(limit=50)
+        if not events:
+            st.info("No events recorded yet.")
+        else:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(events), use_container_width=True, height=400, hide_index=True)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 25. FEDERATED LEARNING
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🔐 Federated Learning":
+    st.title("🔐 Federated Privacy-Preserving Learning")
+    st.caption(
+        "Agents get smarter by sharing *insights*, never *data*. "
+        "Each department distils local workflow learnings into privacy-safe summaries. "
+        "The Global Model merges these summaries without a single raw record leaving its node."
+    )
+
+    tab_nodes, tab_record_fl, tab_distil, tab_global, tab_query, tab_audit = st.tabs(
+        ["🌐 Nodes", "📝 Record Workflow", "⚗️ Distil", "🌍 Global Model", "🔍 Query", "🛡️ Privacy Audit"]
+    )
+
+    with tab_nodes:
+        st.subheader("Federated Nodes")
+        nodes = kernel.fl_node_stats()
+        if not nodes:
+            st.info("No nodes yet. Record some workflows to create department nodes.")
+        else:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(nodes), use_container_width=True, hide_index=True)
+
+    with tab_record_fl:
+        st.subheader("Record a Workflow Outcome (Stays Local)")
+        with st.form("fl_record_form"):
+            c1, c2 = st.columns(2)
+            fl_dept     = c1.text_input("Department ID", placeholder="engineering")
+            fl_wf_type  = c2.text_input("Workflow Type", placeholder="code-review")
+            c3, c4      = st.columns(2)
+            fl_success  = c3.toggle("Workflow succeeded", value=True)
+            fl_dur      = c4.number_input("Duration (ms)", min_value=0.0, value=1500.0, step=100.0)
+            fl_tags_raw = st.text_input("Tags (comma-separated)", placeholder="fast, automated, ci")
+            if st.form_submit_button("📝 Record", type="primary"):
+                tags = [t.strip() for t in fl_tags_raw.split(",") if t.strip()]
+                rec = kernel.fl_record_workflow(
+                    dept_id=fl_dept.strip() or "default",
+                    workflow_type=fl_wf_type.strip() or "general",
+                    success=fl_success,
+                    duration_ms=fl_dur,
+                    tags=tags,
+                )
+                st.success(f"Record `{rec['record_id']}` added to node **{rec['dept_id']}** — raw data stays local.")
+
+    with tab_distil:
+        st.subheader("Distil Insights (Clears Raw Records)")
+        nodes = kernel.fl_node_stats()
+        dept_names = [n["dept_id"] for n in nodes] if nodes else []
+        if not dept_names:
+            st.info("No department nodes yet.")
+        else:
+            dist_dept = st.selectbox("Select Department", dept_names)
+            selected_node = next((n for n in nodes if n["dept_id"] == dist_dept), None)
+            if selected_node:
+                st.metric("Pending Records", selected_node["pending_records"])
+                st.caption("Distillation requires ≥5 records per workflow type.")
+            if st.button("⚗️ Distil Insights Now", type="primary"):
+                with st.spinner("Extracting patterns (no raw data leaves the node)..."):
+                    insights = kernel.fl_distil_insights(dist_dept)
+                if not insights:
+                    st.warning("Not enough records to distil (need ≥5 per workflow type).")
+                else:
+                    st.success(f"✅ {len(insights)} insight(s) distilled. Raw records cleared.")
+                    for ins in insights:
+                        with st.expander(f"📊 {ins['workflow_type']} — {ins['success_rate']:.0%} success"):
+                            c1, c2 = st.columns(2)
+                            c1.metric("Sample Size", ins["sample_size"])
+                            c2.metric("Avg Duration", f"{ins['avg_duration_ms']:.0f}ms")
+                            st.markdown("**Best Practices Extracted:**")
+                            for p in ins["best_practices"]:
+                                st.markdown(f"- {p}")
+
+    with tab_global:
+        st.subheader("Global Federated Model")
+        if st.button("🌍 Aggregate Global Model Now", type="primary"):
+            with st.spinner("Merging insights across all nodes (no raw data)..."):
+                kernel.fl_aggregate()
+            st.success("✅ Global model updated.")
+            st.rerun()
+
+        model = kernel.fl_global_model()
+        if not model:
+            st.info("No global model yet. Distil some insights and click Aggregate.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Model Version", model["model_version"])
+            c2.metric("Workflow Types", len(model["workflow_types"]))
+            c3.metric("Contributing Nodes", len(model["contributing_nodes"]))
+            st.markdown(f"**Nodes:** {', '.join(model['contributing_nodes'])}")
+
+            for wf, rate in model["avg_success_rates"].items():
+                bar_color = "#22c55e" if rate >= 0.8 else "#f59e0b" if rate >= 0.6 else "#ef4444"
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:12px;margin:6px 0;">'
+                    f'<span style="width:180px;font-size:13px;">{wf}</span>'
+                    f'<div style="flex:1;background:#e2e8f0;border-radius:6px;height:14px;">'
+                    f'<div style="background:{bar_color};border-radius:6px;height:14px;width:{rate*100:.0f}%;"></div>'
+                    f'</div>'
+                    f'<span style="font-size:12px;color:#64748b;">{rate:.0%}</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+    with tab_query:
+        st.subheader("Query Best Practices")
+        q_wf = st.text_input("Workflow Type", placeholder="code-review")
+        if st.button("🔍 Get Best Practices"):
+            practices = kernel.fl_best_practices(q_wf.strip())
+            if not practices:
+                st.info("No practices found for that workflow type. Build the global model first.")
+            else:
+                st.success(f"✅ {len(practices)} best practice(s) found:")
+                for p in practices:
+                    st.markdown(f"- {p}")
+
+    with tab_audit:
+        st.subheader("Privacy Audit Log")
+        st.info("Every entry must show `raw_data_shared = False` — verified automatically.")
+        audit = kernel.fl_privacy_audit()
+        if not audit:
+            st.info("No audit entries yet.")
+        else:
+            import pandas as pd
+            df_audit = pd.DataFrame(audit)
+            # Highlight any privacy violations (there should be none)
+            if any(e["raw_data_shared"] for e in audit):
+                st.error("🚨 PRIVACY VIOLATION DETECTED — raw data was shared!")
+            else:
+                st.success("✅ All entries verified: no raw data shared.")
+            st.dataframe(df_audit, use_container_width=True, hide_index=True)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 26. PROACTIVE CONCIERGE
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🚨 Proactive Concierge":
+    st.title("🚨 Proactive Concierge — Event-Driven AI")
+    st.caption(
+        "Stop waiting for prompts. Define monitoring rules across your connected apps. "
+        "When a metric crosses a threshold, the Concierge automatically spawns a "
+        "War Room of agents to investigate and present a solution before you check your email."
+    )
+
+    tab_rules, tab_signal, tab_warrooms, tab_history = st.tabs(
+        ["📏 Rules", "📡 Feed Signal", "🔴 War Rooms", "📊 History"]
+    )
+
+    with tab_rules:
+        st.subheader("Monitoring Rules")
+        rules = kernel.concierge_rules()
+        if not rules:
+            st.info("No rules yet. Add one below.")
+        else:
+            for r in rules:
+                sev_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(r["severity"], "⚪")
+                status_icon = "✅" if r["enabled"] else "⏸️"
+                with st.expander(f"{sev_icon} {status_icon} **{r['name']}** — `{r['source']}/{r['metric']}` {r['comparison']} {r['threshold']}", expanded=False):
+                    c1, c2 = st.columns(2)
+                    c1.markdown(f"**Agents:** {', '.join(r['agent_roles'])}")
+                    c2.markdown(f"**Triggers:** {r['trigger_count']} &nbsp;|&nbsp; **Cooldown:** {r['cooldown_s']}s")
+
+        st.markdown("---")
+        st.subheader("Add Monitoring Rule")
+        with st.form("concierge_rule_form"):
+            c1, c2 = st.columns(2)
+            r_name   = c1.text_input("Rule Name", placeholder="Sales Drop Alert")
+            r_source = c2.text_input("Source", placeholder="crm")
+            c3, c4   = st.columns(2)
+            r_metric = c3.text_input("Metric", placeholder="daily_revenue")
+            r_comp   = c4.selectbox("Comparison", ["pct_drop", "pct_rise", "lt", "gt", "lte", "gte"])
+            c5, c6   = st.columns(2)
+            r_thresh = c5.number_input("Threshold (use decimal for %, e.g. 0.10 = 10%)", min_value=0.0, value=0.10, step=0.01, format="%.3f")
+            r_sev    = c6.selectbox("Severity", ["critical", "high", "medium", "low"])
+            r_roles  = st.text_input("Agent Roles (comma-separated)", value="AnalystAgent, ReportingAgent")
+            r_cool   = st.number_input("Cooldown (seconds)", min_value=0, value=300, step=30)
+            if st.form_submit_button("➕ Add Rule", type="primary"):
+                roles = [x.strip() for x in r_roles.split(",") if x.strip()]
+                rule = kernel.concierge_add_rule(
+                    name=r_name.strip(),
+                    source=r_source.strip(),
+                    metric=r_metric.strip(),
+                    threshold=float(r_thresh),
+                    comparison=r_comp,
+                    agent_roles=roles,
+                    severity=r_sev,
+                    cooldown_s=float(r_cool),
+                )
+                st.success(f"✅ Rule `{rule['rule_id']}` added: **{r_name}**")
+                st.rerun()
+
+    with tab_signal:
+        st.subheader("Feed a Live Signal")
+        st.info("Simulate or pipeline a metric reading. If any rule matches, a War Room is spawned automatically.")
+        with st.form("concierge_signal_form"):
+            c1, c2 = st.columns(2)
+            sig_source = c1.text_input("Source", placeholder="crm")
+            sig_metric = c2.text_input("Metric", placeholder="daily_revenue")
+            c3, c4     = st.columns(2)
+            sig_value  = c3.number_input("Current Value", value=8500.0, step=100.0)
+            sig_prev   = c4.number_input("Previous Value (optional, 0 = skip)", value=0.0, step=100.0)
+            sig_ctx    = st.text_area("Context JSON (optional)", height=80, placeholder='{"period": "2026-03-17"}')
+            if st.form_submit_button("📡 Feed Signal", type="primary"):
+                import json as _json
+                ctx = {}
+                if sig_ctx.strip():
+                    try:
+                        ctx = _json.loads(sig_ctx)
+                    except Exception:
+                        st.warning("Context JSON is invalid — ignoring.")
+                prev = float(sig_prev) if sig_prev != 0.0 else None
+                spawned = kernel.concierge_feed_signal(sig_source, sig_metric, sig_value, prev, ctx)
+                if not spawned:
+                    st.info("Signal received. No rules triggered.")
+                else:
+                    st.warning(f"⚠️ {len(spawned)} War Room(s) spawned!")
+                    for wr in spawned:
+                        st.markdown(f"- 🔴 **{wr['name']}** (`{wr['war_room_id']}`)")
+                    st.rerun()
+
+    with tab_warrooms:
+        st.subheader("Active War Rooms")
+        stats = kernel.concierge_stats()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Rules Active", stats["rules_active"])
+        c2.metric("Signals Received", stats["signals_received"])
+        c3.metric("War Rooms Active", stats["war_rooms_active"])
+        c4.metric("Resolved", stats["war_rooms_resolved"])
+
+        war_rooms = kernel.concierge_active_war_rooms()
+        if not war_rooms:
+            st.info("No active War Rooms. Feed a signal to trigger one.")
+        else:
+            for wr in war_rooms:
+                status_icon = {"spawned": "🔴", "investigating": "🟡", "resolved": "✅"}.get(wr["status"], "⚪")
+                with st.expander(f"{status_icon} **{wr['name']}** — {wr['status']}", expanded=True):
+                    st.markdown(f"**Rule:** {wr['trigger_rule']} &nbsp;|&nbsp; **Agents:** {', '.join(wr['agents'])}")
+                    if wr["summary"]:
+                        st.info(wr["summary"])
+                    if wr["recommended_actions"]:
+                        st.markdown("**Recommended Actions:**")
+                        for a in wr["recommended_actions"]:
+                            st.markdown(f"- {a}")
+                    if wr["status"] == "spawned":
+                        if st.button(f"🔍 Investigate Now", key=f"investigate_{wr['war_room_id']}", type="primary"):
+                            with st.spinner("War Room agents investigating..."):
+                                result = kernel.concierge_investigate(wr["war_room_id"])
+                            st.success("Investigation complete!")
+                            if result.get("findings"):
+                                for f in result["findings"]:
+                                    sev_c = {"critical": "#ef4444", "high": "#f97316", "medium": "#fbbf24", "low": "#22c55e"}.get(f["severity"], "#64748b")
+                                    st.markdown(
+                                        f'<div style="border-left:4px solid {sev_c};padding:8px 12px;margin:6px 0;">'
+                                        f'<strong>{f["agent"]}</strong>: {f["finding"]}</div>',
+                                        unsafe_allow_html=True,
+                                    )
+                            st.rerun()
+
+    with tab_history:
+        st.subheader("Signal History")
+        limit = st.slider("Show last N signals", 10, 200, 50)
+        history = kernel.concierge_signal_history(limit=limit)
+        if not history:
+            st.info("No signals received yet.")
+        else:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(history), use_container_width=True, height=320, hide_index=True)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 27. PERSONALITY ENGINE
+# ═══════════════════════════════════════════════════════════════════════════
+elif page == "🎭 Personality Engine":
+    st.title("🎭 Personality Engine — Human-AI Style Matching")
+    st.caption(
+        "AI-human teams perform better when their communication styles align. "
+        "Detect the user's personality profile from their messages, assign tailored "
+        "styles to agents, and watch responses transform — executives get bullet metrics, "
+        "creatives get collaborative energy, engineers get raw depth."
+    )
+
+    tab_detect, tab_assign, tab_style, tab_preview, tab_stats = st.tabs(
+        ["🔍 Detect Profile", "🎨 Assign Styles", "📋 Profile Catalog", "✍️ Style Preview", "📊 Stats"]
+    )
+
+    with tab_detect:
+        st.subheader("Detect Your Personality Profile")
+        messages_input = st.text_area(
+            "Paste recent messages or prompts (one per line)",
+            height=180,
+            placeholder="Show me the Q3 P&L\nWhat's our EBITDA vs last quarter?\nNeed the board summary by 8am",
+        )
+        use_ai_detect = st.toggle("Use AI for richer analysis (~50 tokens)", value=False)
+        if st.button("🔍 Detect Profile", type="primary"):
+            msgs = [m.strip() for m in messages_input.strip().splitlines() if m.strip()]
+            if not msgs:
+                st.error("Enter some sample messages.")
+            else:
+                with st.spinner("Analysing communication style..."):
+                    result = kernel.pe_detect_profile(msgs, use_ai=use_ai_detect)
+
+                profile_colors = {
+                    "EXECUTIVE": "#7c3aed", "CREATIVE": "#ec4899",
+                    "TECHNICAL": "#0ea5e9", "ANALYTICAL": "#f97316",
+                    "COLLABORATIVE": "#22c55e",
+                }
+                color = profile_colors.get(result["profile"], "#64748b")
+                st.markdown(
+                    f'<div style="background:{color}22;border:2px solid {color};border-radius:12px;padding:20px;">'
+                    f'<div style="font-size:22px;font-weight:700;color:{color};">🎭 {result["profile"]}</div>'
+                    f'<div style="font-size:14px;margin-top:6px;">{result["reasoning"]}</div>'
+                    f'<div style="font-size:12px;color:#64748b;margin-top:4px;">Confidence: {result["confidence"]:.0%} &nbsp;|&nbsp; '
+                    f'Signals: {", ".join(result["signal_words"][:5]) or "general pattern"}</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+    with tab_assign:
+        st.subheader("Assign Communication Style to an Agent")
+        with st.form("pe_assign_form"):
+            c1, c2 = st.columns(2)
+            pe_agent   = c1.text_input("Agent Name", placeholder="ReportingAgent")
+            pe_profile = c2.selectbox("Profile", kernel.pe_profiles(), format_func=lambda d: d["profile"])
+            profile_name = pe_profile["profile"] if isinstance(pe_profile, dict) else pe_profile
+            if st.form_submit_button("🎨 Assign Style", type="primary"):
+                kernel.pe_set_style(pe_agent.strip(), profile_name)
+                st.success(f"✅ **{pe_agent}** now uses **{profile_name}** style.")
+
+        st.markdown("---")
+        st.subheader("Current Agent Styles")
+        styles = kernel.pe_agent_styles()
+        if not styles:
+            st.info("No styles assigned yet.")
+        else:
+            import pandas as pd
+            st.dataframe(
+                pd.DataFrame([{"Agent": k, "Profile": v} for k, v in styles.items()]),
+                use_container_width=True, hide_index=True,
+            )
+
+    with tab_style:
+        st.subheader("Profile Catalog")
+        profiles = kernel.pe_profiles()
+        import pandas as pd
+        df_profiles = pd.DataFrame(profiles)
+        st.dataframe(df_profiles, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("Profile Comparison")
+        for p in profiles:
+            colors = {
+                "EXECUTIVE": "#7c3aed", "CREATIVE": "#ec4899",
+                "TECHNICAL": "#0ea5e9", "ANALYTICAL": "#f97316",
+                "COLLABORATIVE": "#22c55e",
+            }
+            c = colors.get(p["profile"], "#64748b")
+            st.markdown(
+                f'<div style="border-left:4px solid {c};padding:8px 14px;margin:8px 0;">'
+                f'<strong style="color:{c};">{p["profile"]}</strong><br>'
+                f'<span style="font-size:13px;">Tone: {p["tone"]} &nbsp;|&nbsp; Verbosity: {p["verbosity"]} '
+                f'&nbsp;|&nbsp; Format: {p["format"]}</span></div>',
+                unsafe_allow_html=True,
+            )
+
+    with tab_preview:
+        st.subheader("Live Style Preview — See the Transformation")
+        with st.form("pe_preview_form"):
+            raw_resp = st.text_area(
+                "Raw response to style",
+                height=180,
+                placeholder="Our Q3 revenue was $2.4M representing a 12% quarter-over-quarter increase. The primary driver was the enterprise tier growing by 34% following the product launch in July. Customer acquisition cost decreased from $320 to $285. Net retention is at 118% indicating strong expansion revenue from existing accounts.",
+            )
+            c1, c2 = st.columns(2)
+            preview_agent   = c1.text_input("Agent Name (for style lookup)", value="PreviewAgent")
+            preview_profile = c2.selectbox(
+                "Force Profile (overrides agent style)",
+                ["", "EXECUTIVE", "CREATIVE", "TECHNICAL", "ANALYTICAL", "COLLABORATIVE"]
+            )
+            preview_ctx = st.text_input("Context", placeholder="quarterly business review")
+            if st.form_submit_button("✍️ Style It", type="primary"):
+                if not raw_resp.strip():
+                    st.error("Enter a response to style.")
+                else:
+                    with st.spinner("Adapting communication style..."):
+                        result = kernel.pe_style_response(
+                            agent_name    = preview_agent,
+                            response      = raw_resp,
+                            context       = preview_ctx,
+                            force_profile = preview_profile or None,
+                        )
+
+                    col_orig, col_styled = st.columns(2)
+                    with col_orig:
+                        st.markdown("**📄 Original**")
+                        st.markdown(
+                            f'<div style="background:#f8fafc;border-radius:8px;padding:14px;font-size:13px;">{result["original"]}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    with col_styled:
+                        profile_colors = {
+                            "EXECUTIVE": "#7c3aed", "CREATIVE": "#ec4899",
+                            "TECHNICAL": "#0ea5e9", "ANALYTICAL": "#f97316",
+                            "COLLABORATIVE": "#22c55e",
+                        }
+                        c = profile_colors.get(result["profile"], "#64748b")
+                        st.markdown(f'**✨ Styled ({result["profile"]})**')
+                        st.markdown(
+                            f'<div style="background:{c}11;border:1px solid {c}44;border-radius:8px;padding:14px;font-size:13px;">{result["styled"]}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    if result["transformations"]:
+                        st.caption(f"Transformations: {', '.join(result['transformations'])} — ⏱ {result['processing_ms']:.0f}ms")
+
+    with tab_stats:
+        st.subheader("Styling Statistics")
+        stats = kernel.pe_styling_stats()
+        if stats.get("total", 0) == 0:
+            st.info("No responses styled yet. Use the Preview tab to try it.")
+        else:
+            c1, c2 = st.columns(2)
+            c1.metric("Total Styled", stats["total"])
+            c2.metric("Avg Processing", f"{stats.get('avg_processing_ms', 0):.0f}ms")
+            by_profile = stats.get("by_profile", {})
+            if by_profile:
+                import pandas as pd
+                st.bar_chart(pd.Series(by_profile, name="Styled Responses"))

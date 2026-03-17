@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,17 @@ class MemoryManager:
         self._persist = persist
         self._vector_collection = None
 
+        # BLOCKER-6: Isolation mode — when enabled, only registered namespaces
+        # are allowed, preventing agents from accidentally cross-reading memory.
+        self._isolation_mode: bool = False
+        self._registered_namespaces: set[str] = {"global"}  # global always allowed
+
+        # OPT-3: Debounced flush — batch writes within a 500 ms window so rapid
+        # consecutive saves don't each trigger a full fsync cycle.
+        self._dirty: bool = False
+        self._flush_lock = threading.Lock()
+        self._flush_timer: threading.Timer | None = None
+
         if persist and _MEMORY_FILE.exists():
             self._load()
 
@@ -122,6 +134,30 @@ class MemoryManager:
             return key
         return f"{namespace}:{key}"
 
+    def set_isolation_mode(self, enabled: bool) -> None:
+        """BLOCKER-6: Enable/disable strict namespace isolation.
+
+        When enabled, only namespaces that have been explicitly registered via
+        ``register_namespace()`` are permitted.  Attempts to access an
+        unregistered namespace raise ``PermissionError``.
+        """
+        self._isolation_mode = enabled
+        logger.info("MemoryManager: isolation mode %s.", "ENABLED" if enabled else "disabled")
+
+    def register_namespace(self, namespace: str) -> None:
+        """BLOCKER-6: Whitelist a namespace so it can be used under isolation mode."""
+        self._registered_namespaces.add(namespace)
+        logger.debug("MemoryManager: registered namespace '%s'.", namespace)
+
+    def _assert_namespace(self, namespace: str) -> None:
+        """Raise PermissionError if isolation mode is active and namespace is unknown."""
+        if self._isolation_mode and namespace not in self._registered_namespaces:
+            raise PermissionError(
+                f"MemoryManager: access to unregistered namespace '{namespace}' "
+                "is blocked (isolation mode is active). "
+                "Call register_namespace() first."
+            )
+
     def scoped(self, namespace: str) -> "ScopedMemory":
         """
         Return a ScopedMemory proxy that automatically injects *namespace*
@@ -140,31 +176,35 @@ class MemoryManager:
 
     def save(self, key: str, value: Any, namespace: str = "global") -> None:
         """Store or overwrite a value by key inside *namespace*."""
+        self._assert_namespace(namespace)  # BLOCKER-6
         ns_key = self._ns_key(key, namespace)
         self._store[ns_key] = value
-        self._flush()
+        self._schedule_flush()  # OPT-3: debounced instead of immediate
         self._vector_index(ns_key, value, namespace=namespace)
 
     def load(self, key: str, default: Any = None, namespace: str = "global") -> Any:
         """Retrieve a value by key from *namespace*, returning *default* if absent."""
+        self._assert_namespace(namespace)  # BLOCKER-6
         return self._store.get(self._ns_key(key, namespace), default)
 
     def append(self, key: str, value: Any, namespace: str = "global") -> None:
         """Append a value to a list stored at *key* in *namespace*."""
+        self._assert_namespace(namespace)  # BLOCKER-6
         ns_key = self._ns_key(key, namespace)
         existing = self._store.get(ns_key, [])
         if not isinstance(existing, list):
             existing = [existing]
         existing.append(value)
         self._store[ns_key] = existing
-        self._flush()
+        self._schedule_flush()  # OPT-3
 
     def delete(self, key: str, namespace: str = "global") -> bool:
         """Remove a key from *namespace*. Returns True if it existed."""
+        self._assert_namespace(namespace)  # BLOCKER-6
         ns_key = self._ns_key(key, namespace)
         if ns_key in self._store:
             del self._store[ns_key]
-            self._flush()
+            self._schedule_flush()  # OPT-3
             return True
         return False
 
@@ -294,6 +334,27 @@ class MemoryManager:
                     tmp.unlink()
                 except OSError:
                     pass
+
+    def _schedule_flush(self) -> None:
+        """OPT-3: Debounced flush — coalesce rapid saves into one disk write (500 ms)."""
+        if not self._persist:
+            return
+        with self._flush_lock:
+            self._dirty = True
+            if self._flush_timer is not None:
+                self._flush_timer.cancel()
+            self._flush_timer = threading.Timer(0.5, self._deferred_flush)
+            self._flush_timer.daemon = True
+            self._flush_timer.start()
+
+    def _deferred_flush(self) -> None:
+        """OPT-3: Runs on a background thread after the debounce window expires."""
+        with self._flush_lock:
+            self._flush_timer = None
+            if not self._dirty:
+                return
+            self._dirty = False
+        self._flush()  # actual disk write — outside the lock to avoid contention
 
     def _load(self) -> None:
         try:

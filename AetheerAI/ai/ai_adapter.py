@@ -88,9 +88,12 @@ class AIAdapter:
             "completion_tokens": 0,
             "total_tokens": 0,
         }
-        # Limit concurrent AI requests to 3 — prevents HTTP 429 rate-limit blowouts
-        # when many async subtasks launch simultaneously (Bug 1 fix)
-        self._semaphore = asyncio.Semaphore(3)
+        # WARNING-8: Limit concurrent AI requests — configurable via env var.
+        # Default 10 keeps throughput high without hammering rate limits.
+        # Override with AETHEERAI_ASYNC_CONCURRENCY=N to tune per deployment.
+        self._semaphore = asyncio.Semaphore(
+            int(os.environ.get("AETHEERAI_ASYNC_CONCURRENCY", "10"))
+        )
         logger.info("AIAdapter initialized: provider=%s model=%s", self.provider, self.model)
 
     # ------------------------------------------------------------------

@@ -33,6 +33,19 @@ from core.state_checkpoint import CheckpointManager, CheckpointStore
 from core.swarm_bus import SwarmBus
 from core.tool_synthesizer import ToolSynthesizer
 from core.computer_use import ComputerUseAgent
+from core.zero_copy_connector import ZeroCopyRegistry
+from core.red_team_agent import RedTeamCoordinator, RedTeamReport
+from core.trace_bus import TraceBus
+from core.model_router import ModelRouter
+from core.aetheer_gateway import AetheerGateway
+from core.dual_process import DualProcessEngine
+from core.finops_controller import FinOpsController
+from core.semantic_preprocessor import SemanticPreprocessor
+from core.control_plane import ControlPlane
+from core.human_supervisor import HumanSupervisor, DelegationLevel
+from core.federated_learning import FederatedLearner
+from core.proactive_concierge import ProactiveConcierge
+from core.personality_engine import PersonalityEngine, PersonalityProfile
 from evals.benchmark_runner import BenchmarkRunner
 from tools.tool_manager import ToolManager
 from ai.ai_adapter import AIAdapter
@@ -122,6 +135,42 @@ class AetheerAiKernel:
             ai_adapter=self.ai_adapter,
             audit_logger=_audit,
         )
+        # ── Feature 10: Zero-Copy Live Data Connectors ────────────────────
+        self.zero_copy = ZeroCopyRegistry()
+        # ── Feature 11: Red-Team Adversarial Security Agent ───────────────
+        self.red_team = RedTeamCoordinator(
+            ai_adapter=self.ai_adapter,
+            audit_logger=_audit,
+        )
+        # ── Feature 12: Live Trace Bus (Assembly Line Visualization) ──────
+        self.trace_bus = TraceBus.current()
+        # ── Feature 13: Intelligent Model Router ─────────────────────────
+        self.model_router = ModelRouter(
+            ai_adapter=self.ai_adapter,
+            prefer_local=True,
+        )
+        # ── Feature 14: Aetheer Gateway (Rate-Limited HTTP Proxy) ─────────
+        self.gateway = AetheerGateway()
+        # ── Feature 15: Dual-Process Engine (System 1 + System 2) ────────
+        self.dual_process = DualProcessEngine(
+            ai_adapter=self.ai_adapter,
+            memory_manager=self.memory,
+        )
+        # ── Feature 16: FinOps Controller (Cost-Aware Orchestration) ─────
+        # BLOCKER-2: Budget was hard-coded at $0.0 (never enforced). Read from env.
+        self.finops = FinOpsController(
+            monthly_budget_usd=float(
+                os.environ.get("AETHEERAI_MONTHLY_BUDGET_USD", "50.0")
+            )
+        )
+        # BLOCKER-8: Wire model_router + finops into WorkflowEngine so auto-routing
+        # and cost gating are active on every agent execution.
+        self.workflow_engine.model_router = self.model_router
+        self.workflow_engine.finops_controller = self.finops
+        # BLOCKER-6: Enable namespace isolation so agents cannot cross-read memory.
+        self.memory.set_isolation_mode(True)
+        # ── Feature 17: Semantic Preprocessor (Unstructured → Structured) ─
+        self.semantic = SemanticPreprocessor(ai_adapter=self.ai_adapter)
         logger.info("AetheerAI — An AI Master!! kernel ready.")
 
     @staticmethod
@@ -3070,3 +3119,680 @@ class AetheerAiKernel:
 
         self.memory.save(key=f"build:{app_name}:files", value=[f for f, _ in files_written])
         return {"output_dir": output_dir, "files": files_written, "raw": raw}
+
+    # ------------------------------------------------------------------
+    # Feature 10: Zero-Copy Live Data Connectors
+    # ------------------------------------------------------------------
+
+    def zc_register(self, name: str, kind: str, **kwargs) -> dict:
+        """
+        Register a live zero-copy data connector.
+
+        Parameters
+        ----------
+        name : Unique connector name (e.g. "orders_db").
+        kind : "sql" | "bigquery" | "salesforce" | "rest" | "file"
+        **kwargs : Connector-specific arguments (see ZeroCopyRegistry.build_connector).
+
+        Returns success dict.
+        """
+        connector = self.zero_copy.build_connector(kind, **kwargs)
+        self.zero_copy.register(name, connector)
+        return {"registered": name, "kind": kind}
+
+    def zc_query(self, connector_name: str, statement: str, params: dict | None = None) -> list[dict]:
+        """Execute a live query against a registered zero-copy connector."""
+        return self.zero_copy.query(connector_name, statement, params)
+
+    def zc_test(self, connector_name: str | None = None) -> dict:
+        """Test one or all registered connectors. Returns {name: {ok, message}}."""
+        if connector_name:
+            return {connector_name: self.zero_copy.test_connector(connector_name)}
+        return self.zero_copy.test_all()
+
+    def zc_list(self) -> list[dict]:
+        """List all registered zero-copy connectors."""
+        return self.zero_copy.list_connectors()
+
+    def zc_unregister(self, name: str) -> bool:
+        """Remove a zero-copy connector by name."""
+        return self.zero_copy.unregister(name)
+
+    # ------------------------------------------------------------------
+    # Feature 11: Red-Team Adversarial Security Agent
+    # ------------------------------------------------------------------
+
+    def red_team_run(
+        self,
+        target_description: str,
+        attack_ids: list[str] | None = None,
+        extra_context: str = "",
+    ) -> dict:
+        """
+        Spawn a red-team adversarial agent to probe the described system.
+
+        Parameters
+        ----------
+        target_description : Plain-language description of the system/integration.
+        attack_ids         : Optional subset of attacks to run (None = all).
+        extra_context      : Optional additional context (agent instructions, etc.).
+
+        Returns the RedTeamReport as a dict with keys:
+          target, passed, severity, duration_s, findings, summary.
+        """
+        report = self.red_team.run(
+            target_description=target_description,
+            attack_ids=attack_ids,
+            extra_context=extra_context,
+        )
+        return report.to_dict()
+
+    def red_team_run_report(
+        self,
+        target_description: str,
+        attack_ids: list[str] | None = None,
+        extra_context: str = "",
+    ) -> "RedTeamReport":
+        """
+        Same as red_team_run but returns the full RedTeamReport object
+        (for Markdown rendering with report.to_markdown()).
+        """
+        return self.red_team.run(
+            target_description=target_description,
+            attack_ids=attack_ids,
+            extra_context=extra_context,
+        )
+
+    def red_team_list_attacks(self) -> list[dict]:
+        """Return all built-in attack scenario definitions."""
+        return self.red_team.list_attacks()
+
+    # ------------------------------------------------------------------
+    # Feature 12: Live Trace Bus (Assembly Line Visualization)
+    # ------------------------------------------------------------------
+
+    def trace_snapshot(self) -> list[dict]:
+        """Return the full current event buffer."""
+        return self.trace_bus.snapshot()
+
+    def trace_latest(self, n: int = 50) -> list[dict]:
+        """Return the n most recent trace events."""
+        return self.trace_bus.latest(n)
+
+    def trace_since(self, since_ts: float) -> list[dict]:
+        """Return all events after since_ts (epoch float)."""
+        return self.trace_bus.events_since(since_ts)
+
+    def trace_graph(self) -> dict:
+        """Return {nodes, edges} graph for the Assembly Line flowchart."""
+        return self.trace_bus.build_graph()
+
+    def trace_stats(self) -> dict:
+        """Return aggregate trace statistics."""
+        return self.trace_bus.stats()
+
+    def trace_clear(self) -> None:
+        """Flush all buffered trace events."""
+        self.trace_bus.clear()
+
+    # ------------------------------------------------------------------
+    # Feature 13: Intelligent Model Router
+    # ------------------------------------------------------------------
+
+    def route_model(
+        self,
+        task: str,
+        use_ai_scoring: bool = False,
+        apply: bool = False,
+        force_complexity: str | None = None,
+    ) -> dict:
+        """
+        Evaluate task complexity and return the recommended model.
+
+        Parameters
+        ----------
+        task             : Task text to analyse.
+        use_ai_scoring   : Use AI to rate complexity (more accurate, ~50 tokens).
+        apply            : When True, immediately switch the AIAdapter to
+                           the recommended model.
+        force_complexity : Override complexity: "SIMPLE" | "MODERATE" | "COMPLEX".
+
+        Returns RoutingDecision as dict.
+        """
+        decision = self.model_router.route(
+            task,
+            use_ai_scoring=use_ai_scoring,
+            force_complexity=force_complexity,
+        )
+        if apply:
+            self.model_router.apply(decision)
+        return decision.to_dict()
+
+    def route_model_history(self) -> list[dict]:
+        """Return the full model routing decision history."""
+        return self.model_router.history()
+
+    def route_model_stats(self) -> dict:
+        """Return aggregate model routing statistics."""
+        return self.model_router.stats()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 14: Aetheer Gateway ──────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def gateway_register(
+        self,
+        name: str,
+        base_url: str,
+        rate: float = 5.0,
+        burst: int = 10,
+        batch_size: int = 1,
+    ) -> None:
+        """Register a destination with the Aetheer Gateway rate limiter."""
+        self.gateway.register(
+            name=name,
+            base_url=base_url,
+            rate=rate,
+            burst=burst,
+            batch_size=batch_size,
+        )
+
+    def gateway_send(
+        self,
+        destination: str,
+        path: str,
+        method: str = "GET",
+        body: dict | None = None,
+    ) -> dict:
+        """Send a rate-limited request through the Aetheer Gateway."""
+        resp = self.gateway.send(
+            destination=destination,
+            path=path,
+            method=method,
+            body=body,
+        )
+        return {
+            "status": resp.status_code,
+            "ok": resp.ok,
+            "text": resp.text[:2000],
+        }
+
+    def gateway_metrics(self, destination: str | None = None) -> dict:
+        """Return live metrics from the Aetheer Gateway."""
+        return self.gateway.metrics(destination)
+
+    def gateway_list(self) -> list[dict]:
+        """Return all registered gateway destinations."""
+        return self.gateway.list_destinations()
+
+    def gateway_queue_depth(self, destination: str) -> int:
+        """Return the number of enqueued requests for a destination."""
+        return self.gateway.queue_depth(destination)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 15: Dual-Process (System 1 + System 2) ───────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def s1_run(
+        self,
+        agent_name: str,
+        task: str,
+        task_type: str = "general",
+        system_prompt: str = "",
+    ) -> dict:
+        """Run a task through System 1 (fast, cheap frozen model) and return result."""
+        outcome = self.dual_process.system1_run(
+            agent_name=agent_name,
+            task=task,
+            task_type=task_type,
+            system_prompt=system_prompt,
+        )
+        return {
+            "agent": outcome.agent_name,
+            "task_type": outcome.task_type,
+            "success": outcome.success,
+            "result": outcome.result,
+            "error": outcome.error_msg,
+            "duration_ms": outcome.duration_ms,
+            "model_used": outcome.model_used,
+        }
+
+    def s2_reflect(self, agent_name: str, force: bool = False) -> dict:
+        """Run System 2 curator reflection for an agent and return the report."""
+        report = self.dual_process.system2_reflect(agent_name=agent_name, force=force)
+        if report is None:
+            return {"reflected": False, "reason": "insufficient samples or above error threshold"}
+        return {
+            "reflected": True,
+            "agent": report.agent_name,
+            "error_rate": report.error_rate,
+            "pattern_summary": report.pattern_summary,
+            "lessons": report.lessons,
+            "updated_instructions": report.updated_instructions,
+        }
+
+    def s2_reflect_all(self) -> list[dict]:
+        """Run System 2 curator reflection for all tracked agents."""
+        reports = self.dual_process.reflect_all()
+        return [
+            {
+                "agent": r.agent_name,
+                "error_rate": r.error_rate,
+                "lessons": r.lessons,
+            }
+            for r in reports
+        ]
+
+    def dual_process_stats(self, agent_name: str | None = None) -> dict:
+        """Return System 1 outcome statistics."""
+        return self.dual_process.outcome_stats(agent_name)
+
+    def dual_process_lessons(self, agent_name: str) -> list[str]:
+        """Return stored System 2 lessons for an agent."""
+        return self.dual_process.get_lessons(agent_name)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 16: FinOps Controller ────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def finops_quote(
+        self,
+        tasks: int = 1,
+        agents: int = 1,
+        model: str = "",
+        tokens_per_task: int | None = None,
+        budget_override: float | None = None,
+    ) -> dict:
+        """Get a cost quote before running a project."""
+        from core.finops_controller import CostQuote
+        model = model or f"{self.ai_adapter.provider}/{self.ai_adapter.model}"
+        q: CostQuote = self.finops.quote(
+            tasks=tasks,
+            agents=agents,
+            model=model,
+            tokens_per_task=tokens_per_task,
+            budget_override=budget_override,
+        )
+        return {
+            "model": q.model,
+            "token_estimate": q.token_estimate,
+            "total_usd": q.total_usd,
+            "within_budget": q.within_budget,
+            "optimised_model": q.optimised_model,
+            "optimised_cost_usd": q.optimised_cost_usd,
+            "breakdown": q.breakdown,
+        }
+
+    def finops_status(self) -> dict:
+        """Return current spend status vs budget."""
+        return self.finops.status()
+
+    def finops_set_budget(self, usd: float) -> None:
+        """Set the monthly spend budget in USD (0 = unlimited)."""
+        self.finops.set_budget(usd)
+
+    def finops_ledger(self, limit: int = 50) -> list[dict]:
+        """Return recent spend records."""
+        return [
+            {
+                "agent": r.agent,
+                "task": r.task,
+                "model": r.model,
+                "cost_usd": r.cost_usd,
+                "ts": r.timestamp,
+            }
+            for r in self.finops.ledger(limit=limit)
+        ]
+
+    def finops_spend_by_agent(self) -> dict:
+        return self.finops.spend_by_agent()
+
+    def finops_spend_by_model(self) -> dict:
+        return self.finops.spend_by_model()
+
+    def finops_model_cost_table(self) -> dict:
+        return self.finops.model_cost_table()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 17: Semantic Preprocessor ────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def semantic_clean(
+        self,
+        raw: str,
+        hint: str = "auto",
+        extra_instructions: str = "",
+    ) -> dict:
+        """Clean a raw document and return a structured result dict."""
+        doc = self.semantic.clean(raw, hint=hint, extra_instructions=extra_instructions)
+        return {
+            "content_type": doc.content_type,
+            "ready_for_agent": doc.ready_for_agent,
+            "quality_score": doc.quality_score,
+            "structured": doc.structured,
+            "markdown": doc.markdown,
+            "warnings": doc.warnings,
+            "processing_ms": doc.processing_ms,
+            "agent_input": doc.to_agent_input(),
+        }
+
+    def semantic_clean_batch(self, items: list[dict]) -> list[dict]:
+        """Clean multiple documents. Each item: {raw, hint?, extra_instructions?}."""
+        docs = self.semantic.clean_batch(items)
+        return [d.to_dict() for d in docs]
+
+    def semantic_supported_types(self) -> list[str]:
+        """Return the list of supported content type hints."""
+        return self.semantic.supported_types()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 18: Agentic Control Plane ──────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def cp_register_agent(
+        self,
+        agent_name: str,
+        goals: list[str],
+        kpis: list[str],
+        priority: int = 5,
+        department: str = "general",
+        constraints: list[str] | None = None,
+        depends_on: list[str] | None = None,
+    ) -> dict:
+        """Register an agent and its objectives with the Control Plane."""
+        g = self.control_plane.register_agent(
+            agent_name, goals, kpis, priority, department, constraints, depends_on
+        )
+        return {"agent": g.agent_name, "priority": g.priority, "department": g.department}
+
+    def cp_detect_conflicts(self) -> list[dict]:
+        """Detect goal conflicts between registered agents."""
+        conflicts = self.control_plane.detect_conflicts()
+        return [
+            {
+                "conflict_id": c.conflict_id,
+                "agents": c.agents,
+                "description": c.description,
+                "severity": c.severity,
+                "goals": c.conflicting_goals,
+            }
+            for c in conflicts
+        ]
+
+    def cp_mediate(self, conflict_id: str, business_kpis: dict | None = None) -> dict:
+        """Run the Supreme Court AI mediator on a conflict."""
+        resolution = self.control_plane.mediate(conflict_id, business_kpis)
+        return {
+            "conflict_id": resolution.conflict_id,
+            "verdict": resolution.verdict,
+            "winning_kpi": resolution.winning_kpi,
+            "recommended_actions": resolution.recommended_actions,
+            "reasoning": resolution.reasoning,
+            "override_map": resolution.override_map,
+        }
+
+    def cp_escalate(
+        self, agent_name: str, issue: str, context: str = "", severity: str = "medium"
+    ) -> dict:
+        """Create a human-review escalation ticket."""
+        t = self.control_plane.escalate(agent_name, issue, context, severity)
+        return {"ticket_id": t.ticket_id, "agent": t.agent_name, "severity": t.severity}
+
+    def cp_status_board(self) -> dict:
+        """Return the full multi-agent status board."""
+        return self.control_plane.status_board()
+
+    def cp_list_agents(self) -> list[dict]:
+        return self.control_plane.list_agents()
+
+    def cp_open_conflicts(self) -> list[dict]:
+        return self.control_plane.open_conflicts()
+
+    def cp_open_escalations(self) -> list[dict]:
+        return self.control_plane.open_escalations()
+
+    def cp_resolution_history(self) -> list[dict]:
+        return self.control_plane.resolution_history()
+
+    def cp_collaboration_matrix(self) -> dict:
+        return self.control_plane.collaboration_matrix()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 19: Human-Supervisor Mode ─────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def hs_record_approval(
+        self,
+        agent_name: str,
+        action: str,
+        category: str,
+        wait_ms: float,
+        approved: bool,
+        auto_approved: bool = False,
+    ) -> dict:
+        """Record an approval event for bottleneck tracking."""
+        ev = self.human_supervisor.record_approval(
+            agent_name, action, category, wait_ms, approved, auto_approved
+        )
+        return {"event_id": ev.event_id, "category": ev.category, "wait_s": ev.wait_ms / 1000}
+
+    def hs_detect_bottlenecks(self) -> list[dict]:
+        """Analyse approval history and return bottleneck categories."""
+        return [
+            {
+                "category": r.category,
+                "event_count": r.event_count,
+                "avg_wait_s": round(r.avg_wait_ms / 1000, 1),
+                "approval_rate": r.approval_rate,
+                "bottleneck_score": r.bottleneck_score,
+                "suggestion": r.suggestion,
+            }
+            for r in self.human_supervisor.detect_bottlenecks()
+        ]
+
+    def hs_suggest_policy(self, category: str) -> dict | None:
+        """Get an AI-suggested delegation policy upgrade for a category."""
+        upd = self.human_supervisor.suggest_policy_update(category)
+        if not upd:
+            return None
+        return {
+            "category": upd.category,
+            "action": upd.action,
+            "old_level": upd.old_level.value,
+            "new_level": upd.new_level.value,
+            "reasoning": upd.reasoning,
+            "conditions": upd.conditions,
+        }
+
+    def hs_apply_policy(self, category: str, level: str) -> None:
+        """Directly set a delegation level for a category."""
+        self.human_supervisor.set_delegation_level(category, DelegationLevel(level.upper()))
+
+    def hs_can_auto_approve(self, agent_name: str, action: str, category: str) -> bool:
+        return self.human_supervisor.can_auto_approve(agent_name, action, category)
+
+    def hs_management_report(self) -> dict:
+        """Return the user's management style analysis."""
+        r = self.human_supervisor.management_style_report()
+        return {
+            "style_label": r.style_label,
+            "style_description": r.style_description,
+            "autonomy_score": r.autonomy_score,
+            "avg_wait_s": round(r.avg_wait_ms / 1000, 1),
+            "bottleneck_categories": r.bottleneck_categories,
+            "recommended_next_step": r.recommended_next_step,
+            "total_events": r.total_events,
+        }
+
+    def hs_delegation_levels(self) -> dict:
+        return self.human_supervisor.delegation_levels()
+
+    def hs_recent_events(self, limit: int = 50) -> list[dict]:
+        return self.human_supervisor.recent_events(limit)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 20: Federated Privacy-Preserving Learning ──────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def fl_record_workflow(
+        self,
+        dept_id: str,
+        workflow_type: str,
+        success: bool,
+        duration_ms: float,
+        tags: list[str] | None = None,
+    ) -> dict:
+        """Record a workflow outcome locally in a department node."""
+        r = self.federated.record_workflow(dept_id, workflow_type, success, duration_ms, tags)
+        return {"record_id": r.record_id, "dept_id": dept_id, "workflow_type": workflow_type}
+
+    def fl_distil_insights(self, dept_id: str) -> list[dict]:
+        """Distil local records into privacy-safe insights. Clears raw records."""
+        insights = self.federated.distil_insights(dept_id)
+        return [
+            {
+                "insight_id": i.insight_id,
+                "dept_id": i.dept_id,
+                "workflow_type": i.workflow_type,
+                "sample_size": i.sample_size,
+                "success_rate": i.success_rate,
+                "avg_duration_ms": i.avg_duration_ms,
+                "best_practices": i.best_practices,
+            }
+            for i in insights
+        ]
+
+    def fl_aggregate(self) -> dict | None:
+        """Aggregate all node insights into the Global Model."""
+        return self.federated.get_global_model() or self.federated.aggregate_global_model().__dict__
+
+    def fl_best_practices(self, workflow_type: str) -> list[str]:
+        """Query the Global Model for best practices on a workflow type."""
+        return self.federated.get_best_practices(workflow_type)
+
+    def fl_node_stats(self) -> list[dict]:
+        return self.federated.node_stats()
+
+    def fl_privacy_audit(self) -> list[dict]:
+        return self.federated.privacy_audit()
+
+    def fl_global_model(self) -> dict | None:
+        return self.federated.get_global_model()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 21: Proactive Concierge ───────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def concierge_add_rule(
+        self,
+        name: str,
+        source: str,
+        metric: str,
+        threshold: float,
+        comparison: str = "pct_drop",
+        agent_roles: list[str] | None = None,
+        severity: str = "high",
+        cooldown_s: float = 300.0,
+    ) -> dict:
+        """Add a monitoring rule to the Proactive Concierge."""
+        rule = self.concierge.add_rule(
+            name, source, metric, threshold, comparison, agent_roles, severity, cooldown_s
+        )
+        return {"rule_id": rule.rule_id, "name": rule.name, "comparison": rule.comparison}
+
+    def concierge_feed_signal(
+        self,
+        source: str,
+        metric: str,
+        value: float,
+        previous_value: float | None = None,
+        context: dict | None = None,
+    ) -> list[dict]:
+        """Feed a live metric signal. Returns spawned War Rooms."""
+        spawned = self.concierge.feed_signal(source, metric, value, previous_value, context)
+        return [{"war_room_id": w.war_room_id, "name": w.name, "status": w.status} for w in spawned]
+
+    def concierge_investigate(self, war_room_id: str) -> dict:
+        """Run the War Room investigation for a given war room ID."""
+        wr = self.concierge.investigate(war_room_id)
+        return self.concierge.war_room_detail(wr.war_room_id) or {}
+
+    def concierge_active_war_rooms(self) -> list[dict]:
+        return self.concierge.active_war_rooms()
+
+    def concierge_war_room_detail(self, war_room_id: str) -> dict | None:
+        return self.concierge.war_room_detail(war_room_id)
+
+    def concierge_rules(self) -> list[dict]:
+        return self.concierge.rules()
+
+    def concierge_signal_history(self, limit: int = 100) -> list[dict]:
+        return self.concierge.signal_history(limit)
+
+    def concierge_stats(self) -> dict:
+        return self.concierge.stats()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ── Feature 22: Personality Engine ───────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+
+    def pe_detect_profile(
+        self,
+        conversation_history: list[str],
+        use_ai: bool = False,
+    ) -> dict:
+        """Detect the user's personality profile from recent messages."""
+        result = self.personality.detect_user_profile(conversation_history, use_ai)
+        return {
+            "profile": result.profile.value,
+            "confidence": result.confidence,
+            "signal_words": result.signal_words,
+            "reasoning": result.reasoning,
+        }
+
+    def pe_set_style(self, agent_name: str, profile: str) -> None:
+        """Assign a communication style profile to an agent."""
+        self.personality.set_agent_style(agent_name, PersonalityProfile(profile.upper()))
+
+    def pe_style_response(
+        self,
+        agent_name: str,
+        response: str,
+        context: str = "",
+        force_profile: str | None = None,
+    ) -> dict:
+        """Rewrite an agent response in the assigned communication style."""
+        result = self.personality.style_response(
+            agent_name, response, context,
+            PersonalityProfile(force_profile.upper()) if force_profile else None,
+        )
+        return {
+            "agent": result.agent_name,
+            "profile": result.profile_applied.value,
+            "original": result.original,
+            "styled": result.styled,
+            "transformations": result.transformations,
+            "processing_ms": result.processing_ms,
+        }
+
+    def pe_get_style(self, agent_name: str) -> dict:
+        """Return the CommunicationStyle for an agent."""
+        s = self.personality.get_style(agent_name)
+        return {
+            "profile": s.profile.value,
+            "tone": s.tone,
+            "verbosity": s.verbosity,
+            "format": s.format_preference,
+            "emojis": s.use_emojis,
+            "jargon": s.use_technical_jargon,
+        }
+
+    def pe_profiles(self) -> list[dict]:
+        """Return all available personality profiles and their style parameters."""
+        return self.personality.profile_descriptions()
+
+    def pe_agent_styles(self) -> dict:
+        return self.personality.agent_styles()
+
+    def pe_styling_stats(self) -> dict:
+        return self.personality.styling_stats()
