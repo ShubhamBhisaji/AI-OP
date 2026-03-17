@@ -33,9 +33,11 @@ The wrappers are implemented under `AetheerAI/integrations/` and can be used dir
 - `UPSTASH_REDIS_POP_TIMEOUT_SECONDS` (default: `30`)
 - `UPSTASH_REDIS_SOCKET_TIMEOUT_SECONDS` (default: `90`)
 - `AETHEER_JOB_MAX_RETRIES` (default: `3`)
+- `AETHEER_JOB_CLAIM_LEASE_SECONDS` (default: `1800`, distributed execution-claim lease to avoid duplicate multi-worker execution)
 - `AETHEER_JOB_RUNNING_TIMEOUT_SECONDS` (default: `1800`)
 - `AETHEER_STALE_SCAN_INTERVAL_SECONDS` (default: `30`)
 - `AETHEER_STALE_SCAN_BATCH_SIZE` (default: `50`)
+- `AETHEER_WORKER_METRICS_LOG_INTERVAL_SECONDS` (default: `30`, periodic queue/throughput telemetry log interval; `0` disables)
 - `AETHEER_DISABLE_VERCEL_DIRECT_GOALS` (default: `1`, blocks direct long-running `/api/goals` calls when `VERCEL=1`)
 - `AETHEER_WORKER_AUTOSCALE` (default: `1`, enables queue-depth based worker autoscaling)
 - `AETHEER_WORKER_MIN_PROCESSES` (default: `1`, minimum worker replicas)
@@ -45,6 +47,8 @@ The wrappers are implemented under `AetheerAI/integrations/` and can be used dir
 - `AETHEER_WORKER_SCALE_DOWN_COOLDOWN_SECONDS` (default: `45.0`, queue-empty cooldown before scale-down)
 - `AETHEER_WORKER_PROCESSES` (default: `1`, fixed replicas when autoscaling is disabled)
 - `AETHEER_WORKER_MAX_CONCURRENCY` (default: `1`, thread concurrency per worker process)
+- `JOB_API_MAX_TASK_PAYLOAD_BYTES` (default: `262144`, max serialized bytes for `task_data` on queue create APIs)
+- `JOB_API_MAX_METADATA_BYTES` (default: `65536`, max serialized bytes for `metadata` on queue create APIs)
 
 ### Async Job Table Schema (Supabase)
 
@@ -168,6 +172,9 @@ python workers/upstash_job_worker.py --once
 
 - `GET /api/queue/jobs/{job_id}`
 : Polls Supabase for the latest status (`queued`, `running`, `completed`, `failed`) and result/error payload.
+
+- `GET /api/queue/metrics` (admin)
+: Returns queue depth by lane, DLQ depth, status counts, and stale-running probe count.
 
 Worker reliability behavior:
 

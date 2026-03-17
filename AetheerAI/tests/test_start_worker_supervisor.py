@@ -119,6 +119,43 @@ class StartWorkerSupervisorTests(unittest.TestCase):
         self.assertIn("--max-concurrency", cmd)
         self.assertIn("2", cmd)
 
+    def test_run_supervisor_uses_priority_queue_depth_probe(self):
+        class _QueueMonitor:
+            queue_name = "job_queue"
+            priority_queue_names = ("job_queue:high", "job_queue", "job_queue:low")
+
+            def __init__(self):
+                self.calls = []
+
+            def queue_depth_many(self, *, queue_names):
+                self.calls.append(tuple(queue_names))
+                return 0
+
+        monitor = _QueueMonitor()
+        cfg = start_worker.WorkerSupervisorConfig(
+            autoscale=True,
+            fixed_workers=1,
+            min_workers=1,
+            max_workers=3,
+            target_queue_depth_per_worker=4,
+            scale_interval_seconds=5.0,
+            scale_down_cooldown_seconds=30.0,
+            pop_timeout=20,
+            idle_sleep=0.1,
+            max_concurrency=1,
+            log_level="INFO",
+        )
+
+        with patch.object(start_worker, "UpstashRedisQueue", return_value=monitor), patch.object(
+            start_worker,
+            "_scale_workers",
+            side_effect=KeyboardInterrupt(),
+        ):
+            start_worker.run_supervisor(cfg)
+
+        self.assertGreaterEqual(len(monitor.calls), 1)
+        self.assertEqual(monitor.calls[0], monitor.priority_queue_names)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,11 +7,13 @@ import datetime
 import logging
 import os
 import random
+import socket
 import signal
 import sys
 import threading
 import time
 from typing import Any, Callable
+import uuid
 
 # Ensure project-local imports resolve when executed as a script.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -181,6 +183,28 @@ def _blocking_pop_many_with_priority(
     if payload is None:
         return []
     return [payload] if isinstance(payload, dict) else []
+
+
+def _queue_depth_snapshot(
+    queue: UpstashRedisQueue,
+    *,
+    queue_names: tuple[str, ...],
+    dlq_queue_name: str,
+) -> dict[str, int]:
+    snapshot: dict[str, int] = {}
+    for queue_name in queue_names:
+        try:
+            snapshot[queue_name] = int(queue.queue_depth(queue_name=queue_name))
+        except Exception:
+            logger.debug("Queue depth probe failed for %s", queue_name, exc_info=True)
+
+    if dlq_queue_name and dlq_queue_name not in snapshot:
+        try:
+            snapshot[dlq_queue_name] = int(queue.queue_depth(queue_name=dlq_queue_name))
+        except Exception:
+            logger.debug("DLQ depth probe failed for %s", dlq_queue_name, exc_info=True)
+
+    return snapshot
 
 
 def _extract_retry_state(
@@ -526,6 +550,8 @@ def _process_job_payload(
     queue: UpstashRedisQueue,
     store: SupabaseJobStore,
     run_job: Callable[[str, dict[str, Any]], Any],
+    worker_id: str,
+    claim_lease_seconds: int,
     max_retries: int,
     retry_backoff_base_seconds: float,
     retry_backoff_max_seconds: float,
@@ -578,10 +604,42 @@ def _process_job_payload(
         queue_payload=payload,
     )
 
-    try:
-        store.mark_running(job_id, retry_count=retry_count, max_retries=max_retries_for_job)
-    except Exception as exc:
-        logger.warning("Failed to mark job %s running before execution: %s", job_id, exc)
+    claim_acquired = True
+    claim_fn = getattr(store, "try_claim_job_execution", None)
+    if callable(claim_fn):
+        try:
+            claim_acquired = bool(
+                claim_fn(
+                    job_id,
+                    worker_id=worker_id,
+                    lease_seconds=claim_lease_seconds,
+                    retry_count=retry_count,
+                    max_retries=max_retries_for_job,
+                )
+            )
+        except Exception as exc:
+            claim_acquired = False
+            logger.warning("Failed to acquire execution claim for %s: %s", job_id, exc)
+    else:
+        try:
+            store.mark_running(job_id, retry_count=retry_count, max_retries=max_retries_for_job)
+        except Exception as exc:
+            logger.warning("Failed to mark job %s running before execution: %s", job_id, exc)
+
+    if not claim_acquired:
+        logger.info("Skipping job %s because execution claim was not acquired", job_id)
+        _append_stream_event_if_enabled(
+            store=store,
+            job_id=job_id,
+            enabled=stream_results,
+            event_type="duplicate_skipped",
+            status=str((row or {}).get("status") or "queued"),
+            payload={
+                "reason": "execution_claim_not_acquired",
+                "worker_id": worker_id,
+            },
+        )
+        return False
 
     _append_stream_event_if_enabled(
         store=store,
@@ -742,6 +800,12 @@ def _parse_args() -> argparse.Namespace:
         help="Maximum seconds for exponential backoff on external API failures.",
     )
     parser.add_argument(
+        "--claim-lease-seconds",
+        type=int,
+        default=_env_int("AETHEER_JOB_CLAIM_LEASE_SECONDS", 1800, minimum=30),
+        help="Execution claim lease duration used to avoid duplicate multi-worker execution.",
+    )
+    parser.add_argument(
         "--running-timeout",
         type=int,
         default=_env_int("AETHEER_JOB_RUNNING_TIMEOUT_SECONDS", 1800, minimum=30),
@@ -764,6 +828,12 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=_env_int("AETHEER_JOB_CLEANUP_INTERVAL_SECONDS", 300, minimum=0),
         help="Seconds between cleanup sweeps for old terminal jobs (0 disables cleanup).",
+    )
+    parser.add_argument(
+        "--metrics-log-interval-seconds",
+        type=float,
+        default=_env_float("AETHEER_WORKER_METRICS_LOG_INTERVAL_SECONDS", 30.0, minimum=0.0),
+        help="Seconds between periodic queue/throughput telemetry logs (0 disables).",
     )
     parser.add_argument(
         "--retention-hours",
@@ -795,10 +865,12 @@ def run_worker(
     max_retries: int = 3,
     retry_backoff_base_seconds: float = 1.0,
     retry_backoff_max_seconds: float = 30.0,
+    claim_lease_seconds: int = 1800,
     running_timeout_seconds: int = 1800,
     stale_scan_interval_seconds: int = 30,
     stale_scan_batch_size: int = 50,
     cleanup_interval_seconds: int = 300,
+    metrics_log_interval_seconds: float = 30.0,
     retention_hours: int = 168,
     dlq_queue_name: str = "job_queue_dlq",
 ) -> None:
@@ -810,10 +882,12 @@ def run_worker(
     max_retries = max(0, int(max_retries))
     retry_backoff_base_seconds = max(0.0, float(retry_backoff_base_seconds))
     retry_backoff_max_seconds = max(retry_backoff_base_seconds, float(retry_backoff_max_seconds))
+    claim_lease_seconds = max(30, int(claim_lease_seconds))
     running_timeout_seconds = max(30, int(running_timeout_seconds))
     stale_scan_interval_seconds = max(5, int(stale_scan_interval_seconds))
     stale_scan_batch_size = max(1, int(stale_scan_batch_size))
     cleanup_interval_seconds = max(0, int(cleanup_interval_seconds))
+    metrics_log_interval_seconds = max(0.0, float(metrics_log_interval_seconds))
     retention_hours = max(1, int(retention_hours))
     dlq_queue_name = str(dlq_queue_name).strip() or "job_queue_dlq"
     priority_queue_names = tuple(
@@ -824,6 +898,7 @@ def run_worker(
     if not priority_queue_names:
         priority_queue_names = (queue.queue_name,)
     runner_local = threading.local()
+    worker_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
     def _run_job(task_type: str, task_data: dict[str, Any]) -> Any:
         runner = getattr(runner_local, "runner", None)
@@ -868,7 +943,7 @@ def run_worker(
         (
             "Worker online: queues=%s pop_timeout=%ss max_concurrency=%s batch_size=%s "
             "run_once=%s shutdown_grace_seconds=%s max_retries=%s retry_backoff=%ss..%ss "
-            "timeout=%ss cleanup_interval=%ss retention=%sh dlq=%s"
+            "claim_lease=%ss timeout=%ss cleanup_interval=%ss metrics_interval=%ss retention=%sh dlq=%s worker_id=%s"
         ),
         ",".join(priority_queue_names),
         pop_timeout,
@@ -879,10 +954,13 @@ def run_worker(
         max_retries,
         retry_backoff_base_seconds,
         retry_backoff_max_seconds,
+        claim_lease_seconds,
         running_timeout_seconds,
         cleanup_interval_seconds,
+        metrics_log_interval_seconds,
         retention_hours,
         dlq_queue_name,
+        worker_id,
     )
 
     handled = 0
@@ -890,6 +968,7 @@ def run_worker(
     inflight: dict[Future[bool], str] = {}
     next_stale_scan = time.monotonic()
     next_cleanup_scan = time.monotonic() if cleanup_interval_seconds > 0 else float("inf")
+    next_metrics_log = time.monotonic() if metrics_log_interval_seconds > 0 else float("inf")
     pool = ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="upstash-job")
     try:
         for signum in _supported_shutdown_signals():
@@ -922,6 +1001,28 @@ def run_worker(
                     except Exception as cleanup_exc:
                         logger.warning("Periodic cleanup failed: %s", cleanup_exc, exc_info=True)
                 next_cleanup_scan = now + cleanup_interval_seconds
+
+            if metrics_log_interval_seconds > 0 and now >= next_metrics_log:
+                depth_snapshot = _queue_depth_snapshot(
+                    queue,
+                    queue_names=priority_queue_names,
+                    dlq_queue_name=dlq_queue_name,
+                )
+                active_queue_depth = sum(
+                    depth_snapshot.get(queue_name, 0)
+                    for queue_name in priority_queue_names
+                    if queue_name in depth_snapshot
+                )
+                logger.info(
+                    "Worker metrics: worker_id=%s submitted=%s completed=%s inflight=%s queue_depth=%s dlq_depth=%s",
+                    worker_id,
+                    submitted,
+                    handled,
+                    len(inflight),
+                    active_queue_depth,
+                    depth_snapshot.get(dlq_queue_name, 0),
+                )
+                next_metrics_log = now + metrics_log_interval_seconds
 
             inflight, completed_now = _collect_done(inflight, timeout=0)
             handled += completed_now
@@ -978,6 +1079,8 @@ def run_worker(
                     queue=queue,
                     store=store,
                     run_job=_run_job,
+                    worker_id=worker_id,
+                    claim_lease_seconds=claim_lease_seconds,
                     max_retries=max_retries,
                     retry_backoff_base_seconds=retry_backoff_base_seconds,
                     retry_backoff_max_seconds=retry_backoff_max_seconds,
@@ -1043,10 +1146,12 @@ def main() -> None:
         max_retries=max(0, int(args.max_retries)),
         retry_backoff_base_seconds=max(0.0, float(args.retry_backoff_base)),
         retry_backoff_max_seconds=max(0.0, float(args.retry_backoff_max)),
+        claim_lease_seconds=max(30, int(args.claim_lease_seconds)),
         running_timeout_seconds=max(30, int(args.running_timeout)),
         stale_scan_interval_seconds=max(5, int(args.stale_scan_interval)),
         stale_scan_batch_size=max(1, int(args.stale_scan_batch_size)),
         cleanup_interval_seconds=max(0, int(args.cleanup_interval_seconds)),
+        metrics_log_interval_seconds=max(0.0, float(args.metrics_log_interval_seconds)),
         retention_hours=max(1, int(args.retention_hours)),
         dlq_queue_name=str(args.dlq_queue).strip() or "job_queue_dlq",
     )

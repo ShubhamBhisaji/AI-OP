@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import os
 import uuid
@@ -36,6 +37,33 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
     except ValueError:
         value = default
     return max(minimum, value)
+
+
+def _json_size_bytes(value: Any) -> int:
+    try:
+        encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=True)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Queue payload must be JSON-serializable") from exc
+    return len(encoded.encode("utf-8"))
+
+
+def _enforce_payload_size_limits(req: "QueueJobRequest") -> None:
+    max_task_bytes = _env_int("JOB_API_MAX_TASK_PAYLOAD_BYTES", 262_144, minimum=64)
+    max_metadata_bytes = _env_int("JOB_API_MAX_METADATA_BYTES", 65_536, minimum=64)
+
+    task_size = _json_size_bytes(req.task_data)
+    if task_size > max_task_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"task_data exceeds {max_task_bytes} bytes (got {task_size})",
+        )
+
+    metadata_size = _json_size_bytes(req.metadata)
+    if metadata_size > max_metadata_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"metadata exceeds {max_metadata_bytes} bytes (got {metadata_size})",
+        )
 
 
 def _normalize_priority(value: str | None) -> str:
@@ -108,6 +136,7 @@ class QueueJobRequest(BaseModel):
     task_type: str = Field(
         default="goal",
         min_length=1,
+        max_length=120,
         description="Task discriminator consumed by the worker (for example: goal, agent_task, chat).",
     )
     task_data: dict[str, Any] = Field(
@@ -179,6 +208,17 @@ class QueueJobEventsResponse(BaseModel):
     events: list[dict[str, Any]]
 
 
+class QueueMetricsResponse(BaseModel):
+    generated_at: str
+    queue_depth_total: int
+    queue_depth_by_name: dict[str, int]
+    dlq_queue: str
+    dlq_depth: int
+    status_counts: dict[str, int]
+    stale_running: int
+    running_timeout_seconds: int
+
+
 def _enqueue_single_job(
     req: QueueJobRequest,
     *,
@@ -186,6 +226,8 @@ def _enqueue_single_job(
     db: Session,
     apply_rate_limit: bool,
 ) -> dict[str, Any]:
+    _enforce_payload_size_limits(req)
+
     if apply_rate_limit:
         enforce_job_api_rate_limit(current_user, bucket="write")
 
@@ -379,6 +421,78 @@ def get_queue_job_events(
         job_id=str(row.get("id") or row.get("job_id") or job_id),
         total_events=len(event_rows),
         events=clipped,
+    )
+
+
+@router.get(
+    "/api/queue/metrics",
+    summary="Queue operational metrics",
+    response_model=QueueMetricsResponse,
+)
+def get_queue_metrics(
+    current_user: User = Depends(get_current_user),
+):
+    enforce_job_api_rate_limit(current_user, bucket="read")
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    queue = _get_queue_client()
+    store = _get_job_store()
+    queue_names = tuple(
+        str(name)
+        for name in getattr(queue, "priority_queue_names", (getattr(queue, "queue_name", "job_queue"),))
+        if str(name).strip()
+    )
+    if not queue_names:
+        queue_names = (str(getattr(queue, "queue_name", "job_queue")),)
+
+    queue_depth_by_name: dict[str, int] = {}
+    for name in queue_names:
+        try:
+            queue_depth_by_name[name] = int(queue.queue_depth(queue_name=name))
+        except Exception as exc:
+            logger.warning("Queue depth read failed for %s: %s", name, exc)
+            queue_depth_by_name[name] = 0
+
+    dlq_queue_name = (os.getenv("UPSTASH_REDIS_DLQ_NAME") or "job_queue_dlq").strip() or "job_queue_dlq"
+    try:
+        dlq_depth = int(queue.queue_depth(queue_name=dlq_queue_name))
+    except Exception as exc:
+        logger.warning("DLQ depth read failed for %s: %s", dlq_queue_name, exc)
+        dlq_depth = 0
+
+    status_counts_fn = getattr(store, "status_counts", None)
+    if callable(status_counts_fn):
+        try:
+            status_counts = status_counts_fn()
+        except Exception as exc:
+            logger.warning("Status count query failed: %s", exc)
+            status_counts = {"queued": 0, "running": 0, "completed": 0, "failed": 0}
+    else:
+        status_counts = {"queued": 0, "running": 0, "completed": 0, "failed": 0}
+
+    running_timeout_seconds = _env_int("AETHEER_JOB_RUNNING_TIMEOUT_SECONDS", 1800, minimum=30)
+    stale_probe_limit = _env_int("AETHEER_STALE_SCAN_BATCH_SIZE", 50, minimum=1)
+    try:
+        stale_running = len(
+            store.list_stale_running_jobs(
+                timeout_seconds=running_timeout_seconds,
+                limit=stale_probe_limit,
+            )
+        )
+    except Exception as exc:
+        logger.warning("Stale-running probe failed: %s", exc)
+        stale_running = 0
+
+    return QueueMetricsResponse(
+        generated_at=_utc_now_iso(),
+        queue_depth_total=sum(queue_depth_by_name.values()),
+        queue_depth_by_name=queue_depth_by_name,
+        dlq_queue=dlq_queue_name,
+        dlq_depth=dlq_depth,
+        status_counts=status_counts,
+        stale_running=stale_running,
+        running_timeout_seconds=running_timeout_seconds,
     )
 
 

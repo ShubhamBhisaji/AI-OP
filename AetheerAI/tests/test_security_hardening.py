@@ -32,7 +32,7 @@ class SecurityHardeningTests(unittest.TestCase):
             return value
 
         tm.register("plain_tool", plain_tool)
-        out = tm.call("plain_tool", "ok", agent_name="tester", agent_level=1)
+        out = tm.call("plain_tool", "ok", agent_name="tester", agent_level=3)
         self.assertEqual(out, "ok")
 
     def test_guarded_tool_uses_central_approval(self):
@@ -78,7 +78,7 @@ class SecurityHardeningTests(unittest.TestCase):
                 return value
 
             tm.register("plain_tool", plain_tool)
-            tm.call("plain_tool", "ok", agent_name="tester", agent_level=1)
+            tm.call("plain_tool", "ok", agent_name="tester", agent_level=3)
 
             lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
             self.assertEqual(len(lines), 1)

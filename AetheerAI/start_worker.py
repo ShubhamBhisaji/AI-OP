@@ -306,7 +306,14 @@ def run_supervisor(config: WorkerSupervisorConfig) -> None:
             if autoscale_enabled and queue_monitor is not None:
                 queue_depth: int | None = None
                 try:
-                    queue_depth = max(0, int(queue_monitor.queue_depth()))
+                    queue_names = tuple(
+                        str(name)
+                        for name in getattr(queue_monitor, "priority_queue_names", (queue_monitor.queue_name,))
+                        if str(name).strip()
+                    )
+                    if not queue_names:
+                        queue_names = (str(getattr(queue_monitor, "queue_name", "job_queue")),)
+                    queue_depth = max(0, int(queue_monitor.queue_depth_many(queue_names=queue_names)))
                 except Exception as exc:
                     logger.warning("Queue depth probe failed; holding worker count steady: %s", exc)
 

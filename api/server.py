@@ -21,6 +21,11 @@ for _p in (_AETHEERAI_ROOT, _PROJECT_ROOT):
 # instead of this root-level gateway package.
 sys.modules["api"] = importlib.import_module("AetheerAI.api")
 
-from AetheerAI.api.server import app  # noqa: E402
+from AetheerAI.api.server import (  # noqa: E402
+    _parse_api_keys,
+    _required_role_for,
+    _role_allows,
+    app,
+)
 
-__all__ = ["app"]
+__all__ = ["app", "_parse_api_keys", "_required_role_for", "_role_allows"]

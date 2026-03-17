@@ -4,6 +4,9 @@
 # --- FastAPI backend (AETHER OS REST API) ---
 fastapi>=0.111.0               # FastAPI framework
 uvicorn[standard]>=0.29.0      # ASGI server (use: uvicorn api.server:app --reload)
+sqlalchemy>=2.0.0              # ORM/database engine used by API persistence layer
+email-validator>=2.0.0         # Required by pydantic EmailStr fields
+python-multipart>=0.0.9        # Required for FastAPI form/file upload endpoints
 
 # --- Core AI providers ---
 # litellm is the unified interface  it calls the provider SDKs listed below
@@ -121,8 +124,6 @@ markdownify>=0.12.0            # web_scraper_pro (HTML → Markdown conversion)
 # --- Feature 13: Intelligent Model Router ---
 # (uses only stdlib + existing ai_adapter)
 
-<<<<<<< HEAD
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXTERNAL SERVICE INTEGRATIONS  (install for full feature set)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -145,13 +146,8 @@ markdownify>=0.12.0            # web_scraper_pro (HTML → Markdown conversion)
 
 # --- Vercel CLI mirroring (optional) ---
 # (no extra install required — uses Vercel REST API via requests)
-=======
+
 # ---
 # BUILD TOOLS  (only when packaging the app as a standalone .exe)
 # ---
 # pyinstaller>=6.6.0           # build_pyinstaller.py — creates standalone exe
-# ---
-# BUILD TOOLS  (only when packaging the app as a standalone .exe)
-# ---
-# pyinstaller>=6.6.0           # build_pyinstaller.py — creates standalone exe
->>>>>>> 1f44c8bf313781aa050c56364d327bd5a5cb0958

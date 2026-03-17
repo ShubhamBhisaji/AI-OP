@@ -1,8 +1,10 @@
 """Tests for Upstash queue + Supabase async job flow helpers."""
 
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -103,8 +105,14 @@ class _FakeSupabaseClient:
     def update_rows(self, *, table, values, filters, use_service_role=True):
         target = str(filters.get("id", "eq."))[3:]
         if target in self.rows:
-            self.rows[target].update(dict(values))
-            return [dict(self.rows[target])]
+            row = self.rows[target]
+            status_filter = str(filters.get("status") or "").strip()
+            if status_filter.startswith("eq."):
+                required = status_filter[3:]
+                if str(row.get("status") or "") != required:
+                    return []
+            row.update(dict(values))
+            return [dict(row)]
         return []
 
     def delete_rows(self, *, table, filters, use_service_role=True):
@@ -165,9 +173,22 @@ class _FakeStore:
     def get_job(self, job_id):
         return self.rows.get(job_id)
 
+    def list_stale_running_jobs(self, *, timeout_seconds, limit=50):
+        del timeout_seconds, limit
+        return []
+
+    def status_counts(self):
+        counts = {"queued": 0, "running": 0, "completed": 0, "failed": 0}
+        for row in self.rows.values():
+            status = str(row.get("status") or "")
+            if status in counts:
+                counts[status] += 1
+        return counts
+
 
 class _FakeQueue:
     queue_name = "job_queue"
+    priority_queue_names = ("job_queue:high", "job_queue", "job_queue:low")
 
     def __init__(self):
         self.payloads = []
@@ -188,6 +209,10 @@ class _FakeQueue:
         target = queue_name or self.queue_name_for_priority(priority)
         self.payloads.append((target, dict(payload)))
         return len(self.payloads)
+
+    def queue_depth(self, *, queue_name=None):
+        target = queue_name or self.queue_name
+        return sum(1 for lane, _payload in self.payloads if lane == target)
 
 
 class _FakeUser:
@@ -356,6 +381,36 @@ class SupabaseJobStoreTests(unittest.TestCase):
         self.assertIsNone(store.get_job("job-old-2"))
         self.assertIsNotNone(store.get_job("job-fresh"))
 
+    def test_try_claim_job_execution_only_claims_queued_rows(self):
+        store = SupabaseJobStore(supabase=_FakeSupabaseClient(), table_name="ai_jobs", id_column="id")
+        store.create_job(
+            job_id="job-claim",
+            task_type="goal",
+            task_payload={"goal": "claim"},
+            metadata={},
+        )
+
+        first = store.try_claim_job_execution(
+            "job-claim",
+            worker_id="worker-a",
+            lease_seconds=60,
+            retry_count=0,
+            max_retries=3,
+        )
+        second = store.try_claim_job_execution(
+            "job-claim",
+            worker_id="worker-b",
+            lease_seconds=60,
+            retry_count=0,
+            max_retries=3,
+        )
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+        row = store.get_job("job-claim")
+        self.assertEqual(row["status"], "running")
+        self.assertEqual(row["metadata"]["execution_claim"]["worker_id"], "worker-a")
+
 
 class QueueRouterTests(unittest.TestCase):
     def setUp(self):
@@ -462,6 +517,52 @@ class QueueRouterTests(unittest.TestCase):
             queue_router.cleanup_old_queue_jobs(
                 current_user=_FakeUser(user_id=12, username="mallory", is_admin=False),
             )
+
+    def test_create_queue_job_rejects_oversized_task_payload(self):
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "x" * 5000},
+            metadata={"source": "test"},
+        )
+
+        with patch.dict(os.environ, {"JOB_API_MAX_TASK_PAYLOAD_BYTES": "1024"}, clear=False):
+            with self.assertRaises(queue_router.HTTPException) as ctx:
+                queue_router.create_queue_job(
+                    req,
+                    current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+                    db=_FakeDb(),
+                )
+
+        self.assertEqual(ctx.exception.status_code, 413)
+
+    def test_queue_metrics_requires_admin(self):
+        with self.assertRaises(queue_router.HTTPException) as ctx:
+            queue_router.get_queue_metrics(
+                current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_queue_metrics_admin_returns_depth_and_counts(self):
+        req = queue_router.QueueJobRequest(
+            task_type="goal",
+            task_data={"goal": "metrics"},
+            metadata={"source": "test"},
+            priority="high",
+        )
+        queue_router.create_queue_job(
+            req,
+            current_user=_FakeUser(user_id=7, username="alice", is_admin=False),
+            db=_FakeDb(),
+        )
+
+        metrics = queue_router.get_queue_metrics(
+            current_user=_FakeUser(user_id=1, username="admin", is_admin=True),
+        )
+
+        self.assertGreaterEqual(metrics.queue_depth_total, 1)
+        self.assertIn("queued", metrics.status_counts)
+        self.assertEqual(metrics.status_counts["queued"], 1)
 
 
 if __name__ == "__main__":

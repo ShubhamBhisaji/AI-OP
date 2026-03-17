@@ -137,6 +137,64 @@ class SupabaseJobStore:
         )
         return _rows_from_response(response)
 
+    def try_claim_job_execution(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        lease_seconds: int,
+        retry_count: int | None = None,
+        max_retries: int | None = None,
+    ) -> bool:
+        now = _utc_now()
+        now_iso = now.isoformat()
+        lease = _coerce_int(lease_seconds, 1800, minimum=30)
+        normalized_worker_id = str(worker_id or "").strip()
+        claim_expires_at = (now + datetime.timedelta(seconds=lease)).isoformat()
+
+        metadata_updates: dict[str, Any] = {
+            "last_started_at": now_iso,
+            "execution_claim": {
+                "worker_id": normalized_worker_id,
+                "claimed_at": now_iso,
+                "claim_expires_at": claim_expires_at,
+                "lease_seconds": lease,
+            },
+        }
+        if retry_count is not None:
+            metadata_updates["retry_count"] = _coerce_int(retry_count, 0, minimum=0)
+        if max_retries is not None:
+            metadata_updates["max_retries"] = _coerce_int(max_retries, 0, minimum=0)
+
+        response = self.supabase.update_rows(
+            table=self.table_name,
+            values={
+                "status": "running",
+                "started_at": now_iso,
+                "updated_at": now_iso,
+                "error": None,
+                "metadata": self._metadata_with_updates(job_id, metadata_updates),
+            },
+            filters={
+                self.id_column: f"eq.{job_id}",
+                "status": "eq.queued",
+            },
+            use_service_role=True,
+        )
+        rows = _rows_from_response(response)
+        if rows:
+            return True
+
+        existing = self.get_job(job_id)
+        if not isinstance(existing, dict):
+            return False
+        if str(existing.get("status") or "") != "running":
+            return False
+
+        metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+        claim = metadata.get("execution_claim") if isinstance(metadata.get("execution_claim"), dict) else {}
+        return str(claim.get("worker_id") or "").strip() == normalized_worker_id
+
     def mark_running(self, job_id: str, *, retry_count: int | None = None, max_retries: int | None = None) -> None:
         now = _utc_now_iso()
         metadata_updates: dict[str, Any] = {
@@ -346,6 +404,30 @@ class SupabaseJobStore:
             deleted += 1
 
         return deleted
+
+    def status_counts(
+        self,
+        *,
+        statuses: tuple[str, ...] = ("queued", "running", "completed", "failed"),
+        per_status_limit: int = 5000,
+    ) -> dict[str, int]:
+        max_rows = _coerce_int(per_status_limit, 5000, minimum=1)
+        counts: dict[str, int] = {}
+        for status in statuses:
+            normalized = str(status or "").strip().lower()
+            if not normalized:
+                continue
+
+            response = self.supabase.query_rows(
+                table=self.table_name,
+                select=self.id_column,
+                filters={"status": f"eq.{normalized}"},
+                limit=max_rows,
+                use_service_role=True,
+            )
+            counts[normalized] = len(_rows_from_response(response))
+
+        return counts
 
     def _update(self, job_id: str, values: Mapping[str, Any]) -> None:
         self.supabase.update_rows(

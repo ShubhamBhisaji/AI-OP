@@ -79,6 +79,8 @@ class WorkerShutdownTests(unittest.TestCase):
             queue=_NoopQueue(),
             store=store,
             run_job=lambda _task_type, _task_data: (_ for _ in ()).throw(KeyboardInterrupt()),
+            worker_id="test-worker",
+            claim_lease_seconds=60,
             max_retries=1,
             retry_backoff_base_seconds=0.0,
             retry_backoff_max_seconds=0.0,
@@ -121,6 +123,46 @@ class WorkerShutdownTests(unittest.TestCase):
         self.assertGreaterEqual(len(store.failed), 1)
         self.assertEqual(store.failed[0][0], "job-1")
         self.assertIn("interrupt", store.failed[0][1].lower())
+
+    def test_process_job_payload_skips_when_claim_not_acquired(self):
+        class _ClaimRejectingStore:
+            def get_job(self, job_id):
+                return {
+                    "id": job_id,
+                    "status": "queued",
+                    "task_type": "goal",
+                    "task_payload": {"goal": "skip"},
+                    "metadata": {},
+                }
+
+            def try_claim_job_execution(self, job_id, *, worker_id, lease_seconds, retry_count=None, max_retries=None):
+                del job_id, worker_id, lease_seconds, retry_count, max_retries
+                return False
+
+            def append_stream_event(self, *_args, **_kwargs):
+                return None
+
+        called = []
+
+        def _run_job(_task_type, _task_data):
+            called.append(True)
+            return {"ok": True}
+
+        ok = upstash_job_worker._process_job_payload(
+            payload={"jobId": "job-skip", "taskType": "goal", "task": {"goal": "skip"}},
+            queue=_NoopQueue(),
+            store=_ClaimRejectingStore(),
+            run_job=_run_job,
+            worker_id="test-worker",
+            claim_lease_seconds=60,
+            max_retries=1,
+            retry_backoff_base_seconds=0.0,
+            retry_backoff_max_seconds=0.0,
+            dlq_queue_name="job_queue_dlq",
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(called, [])
 
 
 if __name__ == "__main__":
