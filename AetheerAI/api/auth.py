@@ -30,7 +30,19 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
+from api.customer_supabase import (
+    get_customer_ai_api_settings,
+    get_customer_setup_status,
+    get_customer_supabase_config,
+    get_customer_supabase_setup_sql,
+    get_platform_supabase_setup_sql,
+    redact_customer_supabase_config,
+    save_customer_ai_api_settings,
+    save_customer_supabase_config,
+)
 from api.database import ActivityLog, User, get_db
+from integrations.errors import APIRequestError
+from integrations.supabase_client import SupabaseClient
 
 logger = logging.getLogger("aetheer.api.auth")
 
@@ -128,6 +140,23 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: dict
+    requires_supabase_setup: bool = False
+    customer_supabase_configured: bool = False
+
+
+class CustomerSupabaseSetupRequest(BaseModel):
+    supabase_url: str = Field(..., min_length=1, max_length=1024)
+    supabase_anon_key: str = Field(..., min_length=8, max_length=4096)
+    supabase_service_role_key: str | None = Field(default=None, min_length=8, max_length=4096)
+    schema: str = Field(default="public", min_length=1, max_length=120)
+
+
+class AIAPISettingsRequest(BaseModel):
+    provider: str = Field(..., min_length=1, max_length=64)
+    model: str | None = Field(default=None, max_length=256)
+    api_key: str | None = Field(default=None, max_length=4096)
+    base_url: str | None = Field(default=None, max_length=1024)
+    extra: dict = Field(default_factory=dict)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -246,6 +275,31 @@ def get_current_user(
     return user
 
 
+def authenticate_bearer_token(token: str, db: Session) -> User:
+    """Resolve an active user from a raw bearer token string."""
+    payload = _decode_token(str(token or "").strip())
+    user_id = int(payload.get("sub", 0))
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    return user
+
+
+def resolve_bearer_user_from_request(request: Request, db: Session) -> User:
+    """Resolve a bearer user from Authorization header in an HTTP request."""
+    auth_header = (request.headers.get("Authorization") or "").strip()
+    if not auth_header:
+        raise HTTPException(status_code=401, detail="Login required")
+
+    if not auth_header.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Bearer token required")
+
+    token = auth_header[7:].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Bearer token required")
+    return authenticate_bearer_token(token, db)
+
+
 def get_optional_user(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     db:    Annotated[Session, Depends(get_db)],
@@ -269,47 +323,112 @@ def require_admin(current_user: Annotated[User, Depends(get_current_user)]) -> U
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 def register(req: RegisterRequest, request: Request, db: Session = Depends(get_db)):
-    if db.query(User).filter(
-        (User.username == req.username) | (User.email == req.email)
-    ).first():
-        raise HTTPException(status_code=409, detail="Username or email already in use")
+    try:
+        # Check if user already exists
+        if db.query(User).filter(
+            (User.username == req.username) | (User.email == req.email)
+        ).first():
+            raise HTTPException(status_code=409, detail="Username or email already in use")
 
-    # First user ever becomes admin
-    is_first = db.query(User).count() == 0
-    user = User(
-        username  = req.username,
-        email     = req.email,
-        hashed_pw = _pwd_ctx.hash(req.password),
-        is_admin  = is_first,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+        # Use Supabase Auth for registration
+        supabase = SupabaseClient()
+        
+        # Check if first user (for admin role)
+        is_first = db.query(User).count() == 0
+        role = "admin" if is_first else "user"
+        
+        # Register with Supabase
+        supabase_user = supabase.sign_up(
+            email=req.email,
+            password=req.password,
+            metadata={"username": req.username, "role": role}
+        )
+        
+        # Create local user record
+        user = User(
+            supabase_user_id=supabase_user["user"]["id"],  # Store Supabase UUID
+            username=req.username,
+            email=req.email,
+            hashed_pw="",  # Not used with Supabase Auth
+            is_admin=is_first,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
-    _log(db, user.id, "register", {"username": user.username}, _ip(request))
-    token = _make_token(user.id, user.username, user.is_admin)
-    return TokenResponse(access_token=token, user=user.to_dict())
+        _log(db, user.id, "register", {"username": user.username, "supabase_id": supabase_user["user"]["id"]}, _ip(request))
+        
+        # Generate local JWT token
+        token = _make_token(user.id, user.username, user.is_admin)
+        
+        return TokenResponse(access_token=token, user=user.to_dict())
+        
+    except APIRequestError as e:
+        logger.error(f"Supabase registration error: {e}")
+        if e.status_code == 429:
+            raise HTTPException(status_code=429, detail="Sign-up rate limit exceeded (Supabase). Please try again later.")
+        # Pass through the error detail from supabase (e.g. password too weak)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Registration failed: {e}")
+        raise HTTPException(status_code=400, detail="Registration failed")
 
 
 @router.post("/login", response_model=TokenResponse)
 def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    ip_addr = _ip(request)
-    allowed, retry_after = _consume_login_attempt(req.username, ip_addr)
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Too many login attempts. Retry in {retry_after} seconds.",
+    try:
+        # Find user by username or email
+        user = db.query(User).filter(
+            (User.username == req.username) | (User.email == req.username),
+            User.is_active == True
+        ).first()
+        
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        # Handle legacy users without Supabase ID
+        if not user.supabase_user_id:
+            # For legacy users, use local password verification
+            if not _pwd_ctx.verify(req.password, user.hashed_pw):
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+            _log(db, user.id, "login", {"username": user.username, "legacy_auth": True}, _ip(request))
+            
+            # Generate local JWT token
+            token = _make_token(user.id, user.username, user.is_admin)
+            
+            setup_status = get_customer_setup_status(user.id)
+            return TokenResponse(
+                access_token=token,
+                user=user.to_dict(),
+                requires_supabase_setup=bool(setup_status.get("requires_setup", False)),
+                customer_supabase_configured=bool(setup_status.get("configured", False)),
+            )
+        
+        # Use Supabase Auth for users with Supabase ID
+        supabase = SupabaseClient()
+        session = supabase.sign_in_with_password(email=user.email, password=req.password)
+        
+        # Verify the Supabase user matches
+        if session["user"]["id"] != user.supabase_user_id:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        _log(db, user.id, "login", {"username": user.username, "supabase_id": user.supabase_user_id}, _ip(request))
+        
+        # Generate local JWT token
+        token = _make_token(user.id, user.username, user.is_admin)
+        
+        setup_status = get_customer_setup_status(user.id)
+        return TokenResponse(
+            access_token=token,
+            user=user.to_dict(),
+            requires_supabase_setup=bool(setup_status.get("requires_setup", False)),
+            customer_supabase_configured=bool(setup_status.get("configured", False)),
         )
-
-    user = db.query(User).filter(User.username == req.username, User.is_active == True).first()
-    if not user or not _pwd_ctx.verify(req.password, user.hashed_pw):
-        _log(db, None, "login_failed", {"username": req.username}, ip_addr)
+        
+    except Exception as e:
+        logger.error(f"Login failed: {e}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    _reset_login_attempts(req.username, ip_addr)
-    _log(db, user.id, "login", {"username": user.username}, ip_addr)
-    token = _make_token(user.id, user.username, user.is_admin)
-    return TokenResponse(access_token=token, user=user.to_dict())
 
 
 @router.get("/me")
@@ -324,10 +443,11 @@ def update_me(
     current_user: User    = Depends(get_current_user),
     db:           Session = Depends(get_db),
 ):
+    # Note: Password changes should be handled through Supabase Auth directly
+    # This endpoint only handles email changes for now
+    
     if req.new_password:
-        if not req.old_password or not _pwd_ctx.verify(req.old_password, current_user.hashed_pw):
-            raise HTTPException(status_code=400, detail="Current password is incorrect")
-        current_user.hashed_pw = _pwd_ctx.hash(req.new_password)
+        raise HTTPException(status_code=400, detail="Password changes must be done through Supabase Auth")
 
     if req.email:
         exists = db.query(User).filter(User.email == req.email, User.id != current_user.id).first()
@@ -384,3 +504,113 @@ def activity_logs(
         .all()
     )
     return {"success": True, "data": [lg.to_dict() for lg in logs]}
+
+
+@router.get("/setup/status")
+def customer_supabase_setup_status(current_user: User = Depends(get_current_user)):
+    status_payload = get_customer_setup_status(current_user.id)
+    return {
+        "success": True,
+        "data": {
+            **status_payload,
+            "customer_sql_required": True,
+            "next_step": "Run SQL in customer Supabase, then call PUT /api/auth/setup/supabase.",
+        },
+    }
+
+
+@router.get("/setup/sql")
+def customer_supabase_sql(current_user: User = Depends(get_current_user)):
+    return {
+        "success": True,
+        "data": {
+            "customer_supabase_sql": get_customer_supabase_setup_sql(),
+            "platform_supabase_sql": get_platform_supabase_setup_sql(),
+            "note": "Run customer_supabase_sql in each customer's Supabase project. Run platform_supabase_sql once in AetheerAI Supabase.",
+        },
+    }
+
+
+@router.get("/setup/supabase")
+def get_my_customer_supabase_config(current_user: User = Depends(get_current_user)):
+    row = get_customer_supabase_config(current_user.id)
+    return {"success": True, "data": redact_customer_supabase_config(row)}
+
+
+@router.put("/setup/supabase")
+def upsert_my_customer_supabase_config(
+    req: CustomerSupabaseSetupRequest,
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        row = save_customer_supabase_config(
+            user_id=current_user.id,
+            username=current_user.username,
+            supabase_url=req.supabase_url,
+            supabase_anon_key=req.supabase_anon_key,
+            supabase_service_role_key=req.supabase_service_role_key,
+            schema=req.schema,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to save customer Supabase config in AetheerAI Supabase: {exc}",
+        ) from exc
+
+    return {
+        "success": True,
+        "message": "Customer Supabase details saved. Execute the SQL script in the customer project if not already done.",
+        "data": redact_customer_supabase_config(row),
+    }
+
+
+@router.get("/settings/ai-api")
+def get_my_ai_api_settings(current_user: User = Depends(get_current_user)):
+    try:
+        row = get_customer_ai_api_settings(user_id=current_user.id, include_secret=False)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to read AI API settings from customer Supabase: {exc}",
+        ) from exc
+
+    return {
+        "success": True,
+        "data": row,
+    }
+
+
+@router.put("/settings/ai-api")
+def update_my_ai_api_settings(
+    req: AIAPISettingsRequest,
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        row = save_customer_ai_api_settings(
+            user_id=current_user.id,
+            username=current_user.username,
+            provider=req.provider,
+            model=req.model,
+            api_key=req.api_key,
+            base_url=req.base_url,
+            extra=req.extra,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Failed to save AI API settings in customer Supabase. "
+                f"Ensure the bootstrap SQL was executed. Details: {exc}"
+            ),
+        ) from exc
+
+    if isinstance(row, dict):
+        row = dict(row)
+        if "api_key" in row:
+            row["api_key"] = "***"
+
+    return {
+        "success": True,
+        "message": "AI API settings saved in customer Supabase.",
+        "data": row,
+    }

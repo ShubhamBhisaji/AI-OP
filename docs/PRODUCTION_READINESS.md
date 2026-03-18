@@ -16,6 +16,8 @@ knobs available for running AetheerAI in production environments.
 7. [Async Worker Auto-Scaling](#async-worker-auto-scaling)
 8. [Environment Variable Reference](#environment-variable-reference)
 9. [Docker Health Checks](#docker-health-checks)
+10. [Vercel Serverless Gateway](#vercel-serverless-gateway)
+11. [Docker Build Hygiene](#docker-build-hygiene)
 
 ---
 
@@ -242,6 +244,8 @@ variant takes priority when both are set).
 | `AETHEER_INSTANCE_ID` | str | auto-generated | — |
 | `AETHEER_HEALTH_CACHE_TTL_SECONDS` | float | 2.0 | — |
 | `AETHEER_STATUS_CACHE_TTL_SECONDS` | float | 1.0 | — |
+| `AETHEER_EAGER_KERNEL_BOOT` | bool | auto (`false` on serverless) | — |
+| `AETHEER_READY_CHECK_KERNEL` | bool | auto (`false` on serverless) | — |
 | `LOG_JSON` | bool | false | — |
 | `AETHER_WORKERS` / `AETHEER_WORKERS` | int | 1 | 1 |
 | `AETHER_LIMIT_CONCURRENCY` | int | (unset) | — |
@@ -284,3 +288,49 @@ readinessProbe:
 
 For Docker Compose, the existing healthcheck targets `/api/health`, which is
 sufficient for single-node deployments.
+
+---
+
+## Vercel Serverless Gateway
+
+This repository now includes production-safe Vercel defaults:
+
+- `vercel.json`
+: Rewrites all incoming paths to the FastAPI gateway function at `/api/server` and
+  sets explicit function limits (`maxDuration`, `memory`).
+
+- `api/requirements.txt`
+: Dedicated, lean Python dependency set for the Vercel function runtime. This avoids
+  relying on workspace-wide dependency resolution and prevents missing-core-package
+  startup errors (for example `ModuleNotFoundError: fastapi`).
+
+- Serverless-aware API startup behavior
+: `AetheerAI/api/server.py` skips eager kernel boot and readiness kernel warmup by
+  default on serverless runtimes (`VERCEL=1`).
+
+Recommended Vercel environment variables:
+
+| Variable | Recommended |
+|---|---|
+| `AETHEER_DISABLE_VERCEL_DIRECT_GOALS` | `1` |
+| `AETHEER_EAGER_KERNEL_BOOT` | `0` |
+| `AETHEER_READY_CHECK_KERNEL` | `0` |
+| `AETHEER_REQUIRE_API_KEYS` | `1` |
+| `AETHER_API_KEYS` | `reader:...,writer:...,admin:...` |
+| `JWT_SECRET` | long random secret |
+
+Deploy flow:
+
+```bash
+vercel env ls
+vercel --prod
+vercel logs <deployment-id> --no-follow --limit 100 --expand
+```
+
+---
+
+## Docker Build Hygiene
+
+The root `.dockerignore` excludes local virtualenvs, VCS metadata, cached test
+artifacts, secrets, and non-runtime workspace folders. This keeps image build
+contexts smaller and more deterministic in CI/CD.

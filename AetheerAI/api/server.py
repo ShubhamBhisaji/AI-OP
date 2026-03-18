@@ -10,18 +10,19 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import threading
 import time
 import uuid
 import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 # Ensure local package imports work when running the module directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, BackgroundTasks, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -30,13 +31,22 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from agents.ceo_agent import CEOAgent, ProjectResult
-from ai.ai_adapter import AIAdapter
-from api.auth import router as auth_router
+from ai.ai_adapter import AIAdapter, SUPPORTED_PROVIDERS
+from api.auth import (
+    authenticate_bearer_token,
+    resolve_bearer_user_from_request,
+    router as auth_router,
+)
+from api.customer_supabase import (
+    is_customer_supabase_configured,
+    record_user_agent_profile_best_effort,
+    record_user_analytics_log_best_effort,
+    record_user_token_usage_best_effort,
+)
 from api.database import GoalRun, SessionLocal, SystemLog, Task, init_db
 from api.db_router import router as db_router
 from api.meta_webhook_router import router as meta_webhook_router
-from api.predict import router as predict_router
+from api.payu_webhook_router import router as payu_webhook_router
 from api.product_router import router as product_router
 from api.queue_router import (
     collect_queue_metrics_snapshot,
@@ -44,10 +54,23 @@ from api.queue_router import (
     router as queue_router,
 )
 from api.reports import router as reports_router
-from core.aetheerai_kernel import AetheerAiKernel
+from api.request_context import reset_request_user, set_request_user
 from core.env_loader import load_env
 from core.production_runtime import ProductionRuntime, RuntimeConfig, TTLResponseCache
 from use_cases import registry as use_case_registry
+
+try:
+    from api.predict import router as predict_router
+except Exception as predict_import_exc:  # pragma: no cover - startup guard
+    logging.getLogger("aetheer.api").error(
+        "Predict router disabled due import failure: %s",
+        predict_import_exc,
+    )
+    predict_router = APIRouter(tags=["Inference"])
+
+if TYPE_CHECKING:
+    from agents.ceo_agent import CEOAgent, ProjectResult
+    from core.aetheerai_kernel import AetheerAiKernel
 
 
 logger = logging.getLogger("aetheer.api")
@@ -61,16 +84,14 @@ load_env(_ENV)
 _boot_time = time.time()
 _projects: dict[str, dict[str, Any]] = {}
 _projects_lock = threading.Lock()
-_kernel: AetheerAiKernel | None = None
-_ceo: CEOAgent | None = None
+_kernel: "AetheerAiKernel | None" = None
+_ceo: "CEOAgent | None" = None
 _ml_engine = None
 _local_predictor = None
 _sqlite_log_handler: logging.Handler | None = None
 _ai_switch_lock = threading.RLock()
 
-_API_ROLE_ORDER = {"reader": 1, "writer": 2, "admin": 3}
-_api_keys_cache_raw: str | None = None
-_api_keys_cache: dict[str, str] = {}
+_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 def _env_int(name: str, default: int, minimum: int | None = None) -> int:
@@ -96,10 +117,13 @@ def _env_float(name: str, default: float, minimum: float | None = None) -> float
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
-    raw = (os.getenv(name) or "").strip().lower()
+    raw = (os.getenv(name) or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+        raw = raw[1:-1].strip()
+    raw = raw.lower()
     if not raw:
         return default
-    return raw in {"1", "true", "yes", "on"}
+    return raw in _TRUE_VALUES
 
 
 def _deployment_environment() -> str:
@@ -111,14 +135,52 @@ def _deployment_environment() -> str:
     )
 
 
-def _strict_api_keys_required() -> bool:
-    if os.getenv("AETHEER_REQUIRE_API_KEYS") is not None:
-        return _env_bool("AETHEER_REQUIRE_API_KEYS", default=False)
-    return _deployment_environment() in {"prod", "production"}
+def _login_required() -> bool:
+    if os.getenv("AETHEER_REQUIRE_LOGIN") is not None:
+        return _env_bool("AETHEER_REQUIRE_LOGIN", default=True)
+    return True
+
+
+def _enforce_customer_supabase_setup() -> bool:
+    if os.getenv("AETHEER_ENFORCE_CUSTOMER_SUPABASE_SETUP") is not None:
+        return _env_bool("AETHEER_ENFORCE_CUSTOMER_SUPABASE_SETUP", default=True)
+    return True
 
 
 def _trust_proxy_headers() -> bool:
     return _env_bool("AETHEER_TRUST_PROXY_HEADERS", default=False)
+
+
+def _is_serverless_runtime() -> bool:
+    if _env_bool("VERCEL", default=False) or _env_bool("AETHEER_SERVERLESS_MODE", default=False):
+        return True
+
+    for marker in ("VERCEL_URL", "AWS_LAMBDA_FUNCTION_NAME", "AWS_EXECUTION_ENV", "NOW_REGION"):
+        if (os.getenv(marker) or "").strip():
+            return True
+    return False
+
+
+def _extract_bearer_token(raw_value: str | None) -> str | None:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    if text.lower().startswith("bearer "):
+        token = text[7:].strip()
+        return token or None
+    return None
+
+
+def _eager_kernel_boot_enabled() -> bool:
+    if os.getenv("AETHEER_EAGER_KERNEL_BOOT") is not None:
+        return _env_bool("AETHEER_EAGER_KERNEL_BOOT", default=True)
+    return not _is_serverless_runtime()
+
+
+def _readiness_requires_kernel_boot() -> bool:
+    if os.getenv("AETHEER_READY_CHECK_KERNEL") is not None:
+        return _env_bool("AETHEER_READY_CHECK_KERNEL", default=True)
+    return not _is_serverless_runtime()
 
 
 _runtime = ProductionRuntime(RuntimeConfig.from_env())
@@ -190,18 +252,22 @@ def _resolve_ai_runtime() -> tuple[str, str]:
     return provider, model
 
 
-def _get_kernel() -> AetheerAiKernel:
+def _get_kernel() -> "AetheerAiKernel":
     global _kernel
     if _kernel is None:
+        from core.aetheerai_kernel import AetheerAiKernel
+
         provider, model = _resolve_ai_runtime()
         _kernel = AetheerAiKernel(ai_provider=provider, model=model)
         logger.info("Kernel booted (provider=%s model=%s)", provider, model)
     return _kernel
 
 
-def _get_ceo() -> CEOAgent:
+def _get_ceo() -> "CEOAgent":
     global _ceo
     if _ceo is None:
+        from agents.ceo_agent import CEOAgent
+
         kernel = _get_kernel()
         limits = _goal_runtime_limits()
         _ceo = CEOAgent(
@@ -229,12 +295,15 @@ def _build_goal_ceo(
     model: str | None = None,
     max_cost_usd: float | None = None,
     max_runtime_seconds: int | None = None,
-) -> CEOAgent:
+) -> "CEOAgent":
     limits = _goal_runtime_limits()
+    from agents.ceo_agent import CEOAgent
 
     if provider is None and model is None:
         kernel = _get_kernel()
     else:
+        from core.aetheerai_kernel import AetheerAiKernel
+
         resolved_provider, resolved_model = _resolve_ai_runtime()
         kernel = AetheerAiKernel(
             ai_provider=(provider or resolved_provider).strip().lower(),
@@ -512,7 +581,10 @@ async def lifespan(app: FastAPI):
         _sqlite_log_handler = _SQLiteLogHandler(level=logging.WARNING)
         logging.getLogger().addHandler(_sqlite_log_handler)
 
-    _get_ceo()
+    if _eager_kernel_boot_enabled():
+        _get_ceo()
+    else:
+        logger.info("Skipping eager kernel boot (serverless runtime detected)")
     yield
 
     if _sqlite_log_handler is not None:
@@ -533,13 +605,19 @@ stream live progress, chat directly with the LLM, inspect memory, and save/resto
 
 ### Authentication
 
-All endpoints (except `/`, `/docs`, `/redoc`, `/api/health`, and `/ui/*`) require an
-`X-API-Key` header **only when** the `AETHER_API_KEYS` environment variable is set.
-If that variable is unset the server runs in open dev mode.
+All endpoints (except `/`, `/docs`, `/redoc`, `/api/health`, and `/ui/*`) require
+a bearer token from `POST /api/auth/login`.
 
 ```
-X-API-Key: sk-aether-prod-abc123
+Authorization: Bearer <jwt-token>
 ```
+
+On first login, users must configure their customer Supabase credentials via:
+
+- `GET /api/auth/setup/sql` (returns SQL bootstrap script)
+- `PUT /api/auth/setup/supabase` (stores customer Supabase details in AetheerAI Supabase)
+
+After setup, data writes are mirrored to the customer's Supabase project.
 
 ---
 
@@ -574,7 +652,7 @@ _TAGS_METADATA = [
     {
         "name": "System",
         "description": "Health check, runtime status, and audit log endpoints. "
-                       "Always public — no API key required.",
+                       "Health is public; most system endpoints require login.",
     },
     {
         "name": "Goals",
@@ -659,6 +737,7 @@ app.include_router(reports_router)
 app.include_router(product_router)
 app.include_router(queue_router)
 app.include_router(meta_webhook_router)
+app.include_router(payu_webhook_router)
 
 # Serve built-in Web UI static files
 _UI_DIR = Path(__file__).resolve().parents[1] / "ui"
@@ -692,49 +771,10 @@ from api.routes_v2 import router as _v2_router  # noqa: E402
 app.include_router(_v2_router)
 
 
-def _parse_api_keys(raw: str) -> dict[str, str]:
-    """
-    Parse API keys from env.
-
-    Accepted formats:
-      - key1,key2                            (defaults to admin role)
-      - reader:key_r,writer:key_w,admin:key_a
-    """
-    out: dict[str, str] = {}
-    for chunk in (raw or "").split(","):
-        entry = chunk.strip()
-        if not entry:
-            continue
-
-        role = "admin"
-        key = entry
-        if ":" in entry:
-            left, right = entry.split(":", 1)
-            maybe_role = left.strip().lower()
-            if maybe_role in _API_ROLE_ORDER:
-                role = maybe_role
-                key = right.strip()
-
-        if key:
-            out[key] = role
-    return out
-
-
-def _configured_api_keys() -> dict[str, str]:
-    global _api_keys_cache_raw, _api_keys_cache
-
-    raw = (os.getenv("AETHER_API_KEYS") or "").strip()
-    if raw == _api_keys_cache_raw:
-        return _api_keys_cache
-
-    _api_keys_cache_raw = raw
-    _api_keys_cache = _parse_api_keys(raw)
-    return _api_keys_cache
-
-
 def _is_public_path(path: str) -> bool:
     if path in {
         "/",
+        "/favicon.ico",
         "/docs",
         "/redoc",
         "/openapi.json",
@@ -743,7 +783,11 @@ def _is_public_path(path: str) -> bool:
         "/api/metrics",
         "/status",
         "/api/meta/webhook",
+        "/api/payu/success",
+        "/api/payu/failure",
     }:
+        return True
+    if path.startswith("/api/payu/"):
         return True
     if path.startswith("/ui"):
         return True
@@ -752,44 +796,16 @@ def _is_public_path(path: str) -> bool:
     return False
 
 
-def _required_role_for(path: str, method: str) -> str:
-    upper_method = (method or "").upper()
-
-    if upper_method == "DELETE":
-        return "admin"
-
-    if path.startswith("/api/logs") or path.startswith("/api/db/logs"):
-        return "admin"
-
-    if upper_method in {"POST", "PUT", "PATCH"}:
-        return "writer"
-
-    return "reader"
-
-
 def _role_allows(role: str, required_role: str) -> bool:
-    current = _API_ROLE_ORDER.get(role, 0)
-    required = _API_ROLE_ORDER.get(required_role, 99)
-    return current >= required
-
-
-def _resolve_api_role(presented_key: str | None, configured: dict[str, str]) -> str | None:
-    key = (presented_key or "").strip()
-    if not key:
-        return None
-
-    for expected, role in configured.items():
-        if hmac.compare_digest(key, expected):
-            return role
-    return None
+    # Two-role system: admin and user
+    # Admin has access to everything
+    # User has access to everything except admin-only endpoints
+    if required_role == "admin":
+        return role == "admin"
+    return role in ("admin", "user")
 
 
 def _client_rate_limit_id(request: Request) -> str:
-    key = (request.headers.get("X-API-Key") or "").strip()
-    if key:
-        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
-        return f"key:{digest}"
-
     ip = ""
     if _trust_proxy_headers():
         forwarded = request.headers.get("X-Forwarded-For")
@@ -805,25 +821,57 @@ def _allow_request_under_rate_limit(client_id: str) -> tuple[bool, int]:
     return _runtime.allow_request(client_id)
 
 
-async def _authorize_websocket(websocket: WebSocket, required_role: str = "reader") -> bool:
-    configured = _configured_api_keys()
-    if not configured:
-        if _strict_api_keys_required():
+async def _authorize_websocket(websocket: WebSocket, required_role: str = "user") -> bool:
+    if _login_required():
+        token = (
+            _extract_bearer_token(websocket.headers.get("Authorization"))
+            or websocket.query_params.get("token")
+            or websocket.query_params.get("access_token")
+        )
+        if not token:
             await websocket.accept()
-            await websocket.close(code=1011, reason="Server misconfigured: API keys required")
+            await websocket.close(code=1008, reason="Login required")
             return False
-        websocket.state.api_role = "admin"
+
+        db: Session | None = None
+        try:
+            db = SessionLocal()
+            user = authenticate_bearer_token(token, db)
+        except Exception:
+            if db is not None:
+                db.close()
+            await websocket.accept()
+            await websocket.close(code=1008, reason="Unauthorized websocket")
+            return False
+        finally:
+            if db is not None:
+                db.close()
+
+        if _enforce_customer_supabase_setup() and not user.is_admin:
+            try:
+                configured = is_customer_supabase_configured(int(user.id))
+            except Exception:
+                configured = False
+            if not configured:
+                await websocket.accept()
+                await websocket.close(code=1008, reason="Customer Supabase setup required")
+                return False
+
+        role = "admin" if user.is_admin else "user"
+        if not _role_allows(role, required_role):
+            await websocket.accept()
+            await websocket.close(code=1008, reason="Insufficient role")
+            return False
+
+        websocket.state.api_role = role
+        websocket.state.current_user_id = int(user.id)
+        websocket.state.current_username = str(user.username)
         return True
 
-    presented = websocket.headers.get("X-API-Key") or websocket.query_params.get("api_key")
-    role = _resolve_api_role(presented, configured)
-    if role is None or not _role_allows(role, required_role):
-        await websocket.accept()
-        await websocket.close(code=1008, reason="Unauthorized websocket")
-        return False
-
-    websocket.state.api_role = role
-    return True
+    # No API key fallback - require JWT authentication
+    await websocket.accept()
+    await websocket.close(code=1008, reason="Authentication required")
+    return False
 
 
 @app.middleware("http")
@@ -867,25 +915,49 @@ async def security_middleware(request: Request, call_next):
         return JSONResponse(status_code=status_code, content=payload, headers=headers)
 
     start_perf = time.perf_counter()
+    user_context_tokens = None
 
     if _is_public_path(path):
         request.state.api_role = "public"
     else:
-        configured = _configured_api_keys()
-        if _strict_api_keys_required() and not configured:
-            return _build_rejection(503, "Server misconfigured: AETHER_API_KEYS required in production")
-
-        if configured:
-            role = _resolve_api_role(request.headers.get("X-API-Key"), configured)
-            if role is None:
+        if _login_required():
+            auth_db: Session | None = None
+            try:
+                auth_db = SessionLocal()
+                auth_user = resolve_bearer_user_from_request(request, auth_db)
+            except HTTPException as exc:
+                if auth_db is not None:
+                    auth_db.close()
+                return _build_rejection(exc.status_code, str(exc.detail))
+            except Exception:
+                if auth_db is not None:
+                    auth_db.close()
                 return _build_rejection(401, "Unauthorized")
+            finally:
+                if auth_db is not None:
+                    auth_db.close()
 
-            required_role = _required_role_for(path, request.method)
-            if not _role_allows(role, required_role):
-                return _build_rejection(403, f"{required_role} API key required")
-            request.state.api_role = role
+            request.state.current_user_id = int(auth_user.id)
+            request.state.current_username = str(auth_user.username)
+            request.state.api_role = "admin" if bool(auth_user.is_admin) else "writer"
+
+            if _enforce_customer_supabase_setup() and not bool(auth_user.is_admin):
+                try:
+                    configured = is_customer_supabase_configured(int(auth_user.id))
+                except Exception as exc:
+                    logger.warning("Customer Supabase setup check failed for user=%s: %s", auth_user.id, exc)
+                    configured = False
+                if not configured:
+                    return _build_rejection(
+                        428,
+                        "Customer Supabase setup required. Use /api/auth/setup/sql and /api/auth/setup/supabase.",
+                    )
+
+            user_context_tokens = set_request_user(int(auth_user.id), str(auth_user.username))
+            request.state.api_role = "admin" if auth_user.is_admin else "user"
         else:
-            request.state.api_role = "admin"
+            # No API key fallback - require JWT authentication
+            return _build_rejection(401, "Authentication required")
 
     should_throttle = path not in _non_throttled_paths
     acquired_slot = False
@@ -939,6 +1011,8 @@ async def security_middleware(request: Request, call_next):
         _dispatch_runtime_alert_if_needed()
         if acquired_slot:
             _request_slots.release()
+        if user_context_tokens is not None:
+            reset_request_user(user_context_tokens)
 
     if response is not None:
         response.headers["X-Request-ID"] = request_id
@@ -947,7 +1021,7 @@ async def security_middleware(request: Request, call_next):
 
 
 def custom_openapi() -> dict[str, Any]:
-    """Inject API key security scheme so Swagger documents authenticated calls."""
+    """Inject security schemes so Swagger documents authenticated calls."""
     if app.openapi_schema:
         return app.openapi_schema
 
@@ -960,11 +1034,17 @@ def custom_openapi() -> dict[str, Any]:
     )
     components = schema.setdefault("components", {})
     security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Bearer token returned by POST /api/auth/login.",
+    }
     security_schemes["ApiKeyHeader"] = {
         "type": "apiKey",
         "in": "header",
         "name": "X-API-Key",
-        "description": "Optional unless AETHER_API_KEYS is configured on the server.",
+        "description": "Legacy API-key auth (used only when AETHEER_REQUIRE_LOGIN=false).",
     }
 
     # Protected routes are gated by middleware even if they do not declare a
@@ -982,11 +1062,13 @@ def custom_openapi() -> dict[str, Any]:
                 continue
 
             security = operation.get("security")
+            desired = [{"BearerAuth": []}] if _login_required() else [{"ApiKeyHeader": []}]
             if isinstance(security, list):
-                if {"ApiKeyHeader": []} not in security:
-                    security.append({"ApiKeyHeader": []})
+                for item in desired:
+                    if item not in security:
+                        security.append(item)
             else:
-                operation["security"] = [{"ApiKeyHeader": []}]
+                operation["security"] = desired
 
     app.openapi_schema = schema
     return app.openapi_schema
@@ -1035,6 +1117,29 @@ class APIResponse(BaseModel):
                 "data": {"id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "status": "completed"},
                 "error": None,
                 "message": None,
+            }
+        }
+    }
+
+
+class AIRuntimeRequest(BaseModel):
+    """Payload to switch the active runtime AI provider/model."""
+
+    provider: str = Field(
+        ...,
+        min_length=1,
+        description="Target provider name. Must be one of SUPPORTED_PROVIDERS.",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Optional model override. When omitted, provider default model is used.",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "provider": "github",
+                "model": "gpt-4.1",
             }
         }
     }
@@ -1258,7 +1363,7 @@ class UseCaseRunRequest(BaseModel):
     )
 
 
-def _serialize_project_result(project_id: str, name: str, result: ProjectResult) -> dict[str, Any]:
+def _serialize_project_result(project_id: str, name: str, result: "ProjectResult") -> dict[str, Any]:
     total = max(1, result.total_tasks)
     return {
         "id": project_id,
@@ -1319,14 +1424,147 @@ def _as_utc_datetime(value: Any) -> datetime.datetime | None:
     return None
 
 
-def _persist_project_to_db(project_id: str, name: str, payload: dict[str, Any]) -> None:
+def _connection_state_value(connection: Any | None, name: str) -> Any:
+    state = getattr(connection, "state", None)
+    return getattr(state, name, None) if state is not None else None
+
+
+def _connection_user_id(connection: Any | None) -> int | None:
+    raw = _connection_state_value(connection, "current_user_id")
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _connection_username(connection: Any | None) -> str | None:
+    raw = _connection_state_value(connection, "current_username")
+    text = str(raw or "").strip()
+    return text or None
+
+
+def _connection_is_admin(connection: Any | None) -> bool:
+    role = str(_connection_state_value(connection, "api_role") or "").strip().lower()
+    return role == "admin"
+
+
+def _project_owner_user_id(project: dict[str, Any] | None) -> int | None:
+    raw = (project or {}).get("owner_user_id")
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _connection_can_access_project(connection: Any | None, project: dict[str, Any] | None) -> bool:
+    if _connection_is_admin(connection):
+        return True
+
+    current_user_id = _connection_user_id(connection)
+    if current_user_id is None:
+        return True
+
+    owner_user_id = _project_owner_user_id(project)
+    return owner_user_id is not None and owner_user_id == current_user_id
+
+
+def _adapter_usage_snapshot(kernel: "AetheerAiKernel") -> tuple[int, int, int]:
+    usage = getattr(getattr(kernel, "ai_adapter", None), "usage", {}) or {}
+    try:
+        prompt_tokens = max(0, int(usage.get("prompt_tokens", 0) or 0))
+        completion_tokens = max(0, int(usage.get("completion_tokens", 0) or 0))
+        total_tokens = max(0, int(usage.get("total_tokens", 0) or 0))
+    except Exception:
+        return 0, 0, 0
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + completion_tokens
+    return prompt_tokens, completion_tokens, total_tokens
+
+
+def _record_request_log_best_effort(
+    request: Request,
+    *,
+    event_type: str,
+    action: str,
+    status: str,
+    provider: str | None = None,
+    model: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    owner_user_id = _connection_user_id(request)
+    if owner_user_id is None:
+        return
+    try:
+        record_user_analytics_log_best_effort(
+            user_id=owner_user_id,
+            username=_connection_username(request),
+            event_type=event_type,
+            action=action,
+            status=status,
+            provider=provider,
+            model=model,
+            metadata=metadata,
+        )
+    except Exception:
+        # Best-effort analytics should not break API requests.
+        return
+
+
+def _record_request_ai_usage_best_effort(
+    request: Request,
+    *,
+    provider: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    owner_user_id = _connection_user_id(request)
+    if owner_user_id is None:
+        return
+    if max(int(prompt_tokens or 0), int(completion_tokens or 0), int(total_tokens or 0)) <= 0:
+        return
+    try:
+        record_user_token_usage_best_effort(
+            user_id=owner_user_id,
+            username=_connection_username(request),
+            provider=provider,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            metadata=metadata,
+        )
+    except Exception:
+        return
+
+
+def _persist_project_to_db(
+    project_id: str,
+    name: str,
+    payload: dict[str, Any],
+    *,
+    owner_user_id: int | None = None,
+) -> None:
     db = SessionLocal()
     try:
+        resolved_owner_user_id = owner_user_id
+        if resolved_owner_user_id is None:
+            resolved_owner_user_id = _project_owner_user_id(payload)
+
         row = db.query(GoalRun).filter(GoalRun.id == project_id).first()
         if row is None:
-            row = GoalRun(id=project_id, name=name, goal=str(payload.get("goal", "")))
+            row = GoalRun(
+                id=project_id,
+                owner_user_id=resolved_owner_user_id,
+                name=name,
+                goal=str(payload.get("goal", "")),
+            )
             db.add(row)
 
+        if resolved_owner_user_id is not None:
+            row.owner_user_id = resolved_owner_user_id
         row.name = name
         row.goal = str(payload.get("goal", ""))
         row.status = str(payload.get("status", "pending"))
@@ -1347,6 +1585,7 @@ def _persist_project_to_db(project_id: str, name: str, payload: dict[str, Any]) 
         for task in payload.get("tasks", []):
             db.add(
                 Task(
+                    owner_user_id=resolved_owner_user_id,
                     task_uuid=task.get("task_id"),
                     goal_id=project_id,
                     task_index=int(task.get("index") or 0),
@@ -1394,6 +1633,8 @@ def _find_task(task_id: str) -> dict[str, Any] | None:
         projects = list(_projects.values())
 
     for project in projects:
+        if not _connection_can_access_project(None, project):
+            continue
         for task in project.get("tasks", []):
             if str(task.get("task_id", "")) == task_id:
                 return {
@@ -1404,7 +1645,11 @@ def _find_task(task_id: str) -> dict[str, Any] | None:
     return None
 
 
-async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> APIResponse:
+async def _submit_goal(
+    req: GoalRequest,
+    background_tasks: BackgroundTasks,
+    request: Request | None = None,
+) -> APIResponse:
     if _env_bool("VERCEL", False) and _env_bool("AETHEER_DISABLE_VERCEL_DIRECT_GOALS", True):
         raise HTTPException(
             status_code=503,
@@ -1425,6 +1670,8 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
         )
 
     project_id = str(uuid.uuid4())
+    owner_user_id = _connection_user_id(request)
+    owner_username = _connection_username(request)
     with _projects_lock:
         _projects[project_id] = {
             "id": project_id,
@@ -1434,9 +1681,14 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
             "started_at": time.time(),
             "offline_local_mode": req.offline_local_mode,
             "fast_mode_collaboration": req.fast_mode_collaboration,
+            "owner_user_id": owner_user_id,
+            "owner_username": owner_username,
         }
 
     def _run_goal() -> None:
+        request_user_tokens = None
+        if owner_user_id is not None:
+            request_user_tokens = set_request_user(owner_user_id, owner_username)
         try:
             if req.offline_local_mode:
                 target_provider = os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama").strip().lower() or "ollama"
@@ -1480,7 +1732,12 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
                 snapshot = dict(_projects[project_id])
 
             try:
-                _persist_project_to_db(project_id, req.name, snapshot)
+                _persist_project_to_db(
+                    project_id,
+                    req.name,
+                    snapshot,
+                    owner_user_id=owner_user_id,
+                )
             except Exception as db_exc:
                 logger.warning("Goal %s persisted in-memory but DB write failed: %s", project_id, db_exc)
         except Exception as exc:
@@ -1492,9 +1749,17 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
                 snapshot = dict(_projects[project_id])
 
             try:
-                _persist_project_to_db(project_id, req.name, snapshot)
+                _persist_project_to_db(
+                    project_id,
+                    req.name,
+                    snapshot,
+                    owner_user_id=owner_user_id,
+                )
             except Exception as db_exc:
                 logger.warning("Goal %s failure state could not be persisted: %s", project_id, db_exc)
+        finally:
+            if request_user_tokens is not None:
+                reset_request_user(request_user_tokens)
 
     if req.background:
         background_tasks.add_task(_run_goal)
@@ -1511,7 +1776,7 @@ async def _submit_goal(req: GoalRequest, background_tasks: BackgroundTasks) -> A
 @app.get("/api/health", tags=["System"], response_model=APIResponse,
          summary="Health check",
          description="Lightweight liveness probe. Always returns `200 OK` with the active "
-                     "provider and model. **No API key required.**")
+                     "provider and model. **No login required.**")
 def health_check():
     def _payload() -> dict[str, Any]:
         provider, model = _runtime_active_provider_model()
@@ -1530,6 +1795,7 @@ def health_check():
             in {"1", "true", "yes", "on"},
             "offline_provider": os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama"),
             "offline_model": os.getenv("AETHEER_OFFLINE_MODEL", "llama3.2:1b"),
+            "supported_providers": list(SUPPORTED_PROVIDERS),
             "load": {
                 "in_flight": metrics["in_flight"],
                 "max_concurrent_requests": metrics["max_concurrent_requests"],
@@ -1560,12 +1826,15 @@ def readiness_check():
         if db is not None:
             db.close()
 
-    try:
-        _get_kernel()
-        checks["kernel"] = "ok"
-    except Exception as exc:
-        ready = False
-        checks["kernel"] = f"error: {exc}"
+    if _readiness_requires_kernel_boot():
+        try:
+            _get_kernel()
+            checks["kernel"] = "ok"
+        except Exception as exc:
+            ready = False
+            checks["kernel"] = f"error: {exc}"
+    else:
+        checks["kernel"] = "skipped (serverless mode)"
 
     metrics = _runtime.metrics_snapshot()
     saturation = metrics["in_flight"] / max(1, metrics["max_concurrent_requests"])
@@ -1608,16 +1877,35 @@ def metrics_prometheus():
          summary="Full runtime status",
          description="Returns live counters for projects, agents, tools, and memory keys. "
                      "Use this as a rich dashboard data source.")
-def system_status():
+def system_status(request: Request):
     def _payload() -> dict[str, Any]:
-        kernel = _get_kernel()
         provider, model = _runtime_active_provider_model()
         with _projects_lock:
             projects = list(_projects.values())
+        visible_projects = [p for p in projects if _connection_can_access_project(request, p)]
 
         runtime_metrics = _runtime.metrics_snapshot()
+        kernel = None
+        kernel_error = None
+        try:
+            kernel = _get_kernel()
+        except Exception as exc:
+            kernel_error = str(exc)
+            logger.warning("system_status kernel unavailable: %s", exc)
+
+        if kernel is None:
+            agents_registered = 0
+            tools_registered = 0
+            memory_keys = 0
+            collaboration_sessions = 0
+        else:
+            agents_registered = len(kernel.registry.list_names())
+            tools_registered = len(kernel.tool_manager.list_tools())
+            memory_keys = len(kernel.memory.keys())
+            collaboration_sessions = len(kernel.collaboration_sessions(limit=1000))
+
         return {
-            "status": "ok",
+            "status": "ok" if kernel is not None else "degraded",
             "instance_id": _instance_id,
             "uptime_seconds": round(time.time() - _boot_time, 3),
             "provider": provider,
@@ -1630,18 +1918,21 @@ def system_status():
             in {"1", "true", "yes", "on"},
             "offline_provider": os.getenv("AETHEER_OFFLINE_PROVIDER", "ollama"),
             "offline_model": os.getenv("AETHEER_OFFLINE_MODEL", "llama3.2:1b"),
+            "supported_providers": list(SUPPORTED_PROVIDERS),
             "projects": {
-                "total": len(projects),
-                "running": len([p for p in projects if p.get("status") == "running"]),
-                "completed": len([p for p in projects if p.get("status") == "completed"]),
-                "partial": len([p for p in projects if p.get("status") == "partial"]),
-                "failed": len([p for p in projects if p.get("status") == "failed"]),
-                "cancelled": len([p for p in projects if p.get("status") == "cancelled"]),
+                "total": len(visible_projects),
+                "running": len([p for p in visible_projects if p.get("status") == "running"]),
+                "completed": len([p for p in visible_projects if p.get("status") == "completed"]),
+                "partial": len([p for p in visible_projects if p.get("status") == "partial"]),
+                "failed": len([p for p in visible_projects if p.get("status") == "failed"]),
+                "cancelled": len([p for p in visible_projects if p.get("status") == "cancelled"]),
             },
-            "agents_registered": len(kernel.registry.list_names()),
-            "tools_registered": len(kernel.tool_manager.list_tools()),
-            "memory_keys": len(kernel.memory.keys()),
-            "collaboration_sessions": len(kernel.collaboration_sessions(limit=1000)),
+            "kernel_available": kernel is not None,
+            "kernel_error": kernel_error,
+            "agents_registered": agents_registered,
+            "tools_registered": tools_registered,
+            "memory_keys": memory_keys,
+            "collaboration_sessions": collaboration_sessions,
             "runtime_metrics": runtime_metrics,
             "observability": {
                 "settings": _observability_settings(),
@@ -1651,13 +1942,68 @@ def system_status():
             "failover": _runtime.failover_state(provider, model),
         }
 
-    return APIResponse(data=_cached_payload("system_status", _status_cache_ttl, _payload))
+    if _connection_is_admin(request) or _connection_user_id(request) is None:
+        return APIResponse(data=_cached_payload("system_status", _status_cache_ttl, _payload))
+    return APIResponse(data=_payload())
+
+
+@app.post(
+    "/api/system/ai/runtime",
+    tags=["System"],
+    response_model=APIResponse,
+    summary="Switch active AI runtime",
+    description="Hot-switch the in-memory AI provider/model for this running server process. "
+    "Requires an admin user session. Changes are not persisted across restarts.",
+)
+def switch_ai_runtime(req: AIRuntimeRequest, request: Request):
+    role = (getattr(request.state, "api_role", "") or "").lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    target_provider = (req.provider or "").strip().lower()
+    supported = set(SUPPORTED_PROVIDERS)
+    if target_provider not in supported:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported provider '{target_provider}'. Supported providers: {sorted(supported)}",
+        )
+
+    target_model = (req.model or "").strip() or None
+
+    try:
+        with _ai_switch_lock:
+            if _kernel is not None:
+                _kernel.ai_adapter.switch(target_provider, target_model)
+                active_provider = _kernel.ai_adapter.provider
+                active_model = _kernel.ai_adapter.model
+            else:
+                active_provider = target_provider
+                active_model = target_model or AIAdapter._default_model(target_provider)
+
+            os.environ["AI_PROVIDER"] = active_provider
+            os.environ["AI_MODEL"] = active_model
+            _response_cache.invalidate("health")
+            _response_cache.invalidate("system_status")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Runtime switch failed: {exc}")
+
+    return APIResponse(
+        data={
+            "provider": active_provider,
+            "model": active_model,
+            "supported_providers": list(SUPPORTED_PROVIDERS),
+            "persisted": False,
+        },
+        message="Runtime AI settings updated for this server process.",
+    )
 
 
 @app.get("/api/system/traces", tags=["System"], response_model=APIResponse,
          summary="Recent request traces",
          description="Returns the most recent HTTP request traces captured by middleware instrumentation.")
-def system_traces(limit: int = 100):
+def system_traces(request: Request, limit: int = 100):
+    if not _connection_is_admin(request):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
     safe_limit = max(1, min(limit, 500))
     return APIResponse(data={"instance_id": _instance_id, "traces": _runtime.recent_traces(safe_limit)})
 
@@ -1665,7 +2011,9 @@ def system_traces(limit: int = 100):
 @app.get("/api/system/failover", tags=["System"], response_model=APIResponse,
          summary="Failover state",
          description="Returns automatic failover configuration and current activation state.")
-def system_failover_state():
+def system_failover_state(request: Request):
+    if not _connection_is_admin(request):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
     provider, model = _runtime_active_provider_model()
     return APIResponse(data=_runtime.failover_state(provider, model))
 
@@ -1673,7 +2021,9 @@ def system_failover_state():
 @app.get("/api/system/observability", tags=["System"], response_model=APIResponse,
          summary="Observability state",
          description="Returns observability thresholds, monitoring hook status, and recent alerts.")
-def system_observability(limit: int = 25):
+def system_observability(request: Request, limit: int = 25):
+    if not _connection_is_admin(request):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
     safe_limit = max(1, min(limit, 50))
     return APIResponse(
         data={
@@ -1736,17 +2086,18 @@ The primary entry point. Send a high-level natural-language goal and AetheerAI w
 Set `background: true` to return immediately with a goal ID and stream progress via
 `GET /api/goals/{id}/stream` (SSE) or `ws://host/ws/goals/{id}` (WebSocket).
 """)
-async def submit_goal(req: GoalRequest, background_tasks: BackgroundTasks):
-    return await _submit_goal(req, background_tasks)
+async def submit_goal(req: GoalRequest, background_tasks: BackgroundTasks, request: Request):
+    return await _submit_goal(req, background_tasks, request)
 
 
 @app.get("/api/goals", tags=["Goals"], response_model=APIResponse,
          summary="List all goals",
          description="Returns all goals sorted newest-first. Each item includes `status`, "
                      "`progress`, `spent_usd`, and a task breakdown.")
-def list_goals():
+def list_goals(request: Request):
     with _projects_lock:
-        items = sorted(_projects.values(), key=lambda p: p.get("started_at", 0), reverse=True)
+        items = [p for p in _projects.values() if _connection_can_access_project(request, p)]
+        items = sorted(items, key=lambda p: p.get("started_at", 0), reverse=True)
         return APIResponse(data=list(items))
 
 
@@ -1754,10 +2105,10 @@ def list_goals():
          summary="Get goal by ID",
          description="Returns the full goal record including all task results, cost, "
                      "elapsed time, and the CEO's plan summary.")
-def get_goal(goal_id: str):
+def get_goal(goal_id: str, request: Request):
     with _projects_lock:
         project = _projects.get(goal_id)
-        if project is None:
+        if project is None or not _connection_can_access_project(request, project):
             raise HTTPException(status_code=404, detail=f"Goal '{goal_id}' not found.")
         return APIResponse(data=dict(project))
 
@@ -1766,10 +2117,10 @@ def get_goal(goal_id: str):
          summary="List tasks for a goal",
          description="Returns the ordered list of sub-tasks created by the CEO agent. "
                      "Each task has `status`, `result`, `agent_type`, `priority`, and `attempts`.")
-def get_goal_tasks(goal_id: str):
+def get_goal_tasks(goal_id: str, request: Request):
     with _projects_lock:
         project = _projects.get(goal_id)
-        if project is None:
+        if project is None or not _connection_can_access_project(request, project):
             raise HTTPException(status_code=404, detail=f"Goal '{goal_id}' not found.")
         return APIResponse(data=project.get("tasks", []))
 
@@ -1777,8 +2128,24 @@ def get_goal_tasks(goal_id: str):
 @app.get("/api/tasks/{task_id}", tags=["Goals"], response_model=APIResponse,
          summary="Get a single task",
          description="Look up one sub-task by its UUID across all goals.")
-def get_task(task_id: str):
-    task = _find_task(task_id)
+def get_task(task_id: str, request: Request):
+    with _projects_lock:
+        projects = list(_projects.values())
+
+    task = None
+    for project in projects:
+        if not _connection_can_access_project(request, project):
+            continue
+        for candidate in project.get("tasks", []):
+            if str(candidate.get("task_id", "")) == task_id:
+                task = {
+                    "project_id": project.get("id"),
+                    "project_name": project.get("name"),
+                    **candidate,
+                }
+                break
+        if task is not None:
+            break
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found.")
     return APIResponse(data=task)
@@ -1847,31 +2214,32 @@ def get_collaboration(session_id: str):
 @app.post("/api/projects", tags=["Projects"], response_model=APIResponse, status_code=201,
           summary="Submit a project (alias for POST /api/goals)",
           description="Identical to `POST /api/goals`. Provided for backward-compatibility.")
-async def create_project(req: GoalRequest, background_tasks: BackgroundTasks):
-    return await _submit_goal(req, background_tasks)
+async def create_project(req: GoalRequest, background_tasks: BackgroundTasks, request: Request):
+    return await _submit_goal(req, background_tasks, request)
 
 
 @app.get("/api/projects", tags=["Projects"], response_model=APIResponse,
          summary="List projects (alias for GET /api/goals)",
          description="Identical to `GET /api/goals`.")
-def list_projects():
-    return list_goals()
+def list_projects(request: Request):
+    return list_goals(request)
 
 
 @app.get("/api/projects/{project_id}", tags=["Projects"], response_model=APIResponse,
          summary="Get project by ID (alias)",
          description="Identical to `GET /api/goals/{goal_id}`.")
-def get_project(project_id: str):
-    return get_goal(project_id)
+def get_project(project_id: str, request: Request):
+    return get_goal(project_id, request)
 
 
 @app.delete("/api/projects/{project_id}", tags=["Projects"], response_model=APIResponse,
             summary="Delete a project",
             description="Removes the project record from the in-memory store. "
                         "This does not cancel a currently running goal.")
-def delete_project(project_id: str):
+def delete_project(project_id: str, request: Request):
     with _projects_lock:
-        if project_id not in _projects:
+        project = _projects.get(project_id)
+        if project is None or not _connection_can_access_project(request, project):
             raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found.")
         del _projects[project_id]
     return APIResponse(message=f"Project '{project_id}' deleted.")
@@ -1887,7 +2255,7 @@ use `POST /api/agents/design` instead.
 
 Returns 409 if an agent with the same name already exists.
 """)
-def create_agent(req: AgentRequest):
+def create_agent(req: AgentRequest, request: Request):
     kernel = _get_kernel()
     if kernel.registry.get(req.name):
         raise HTTPException(status_code=409, detail=f"Agent '{req.name}' already exists.")
@@ -1910,6 +2278,26 @@ def create_agent(req: AgentRequest):
             )
         if hasattr(agent, "attach_memory"):
             agent.attach_memory(kernel.memory)
+
+        owner_user_id = _connection_user_id(request)
+        if owner_user_id is not None:
+            try:
+                agent_dict = agent.to_dict() if hasattr(agent, "to_dict") else {}
+                record_user_agent_profile_best_effort(
+                    user_id=owner_user_id,
+                    username=_connection_username(request),
+                    agent_name=str((agent_dict or {}).get("name") or req.name),
+                    role=str((agent_dict or {}).get("role") or req.role),
+                    source="manual",
+                    tools=(agent_dict or {}).get("tools") or req.tools or [],
+                    skills=(agent_dict or {}).get("skills") or req.skills or [],
+                    objectives=(agent_dict or {}).get("objectives") or req.objectives or [],
+                    permission_level=(agent_dict or {}).get("permission_level") if isinstance(agent_dict, dict) else req.permission_level,
+                    metadata={"endpoint": "/api/agents", "mode": "manual"},
+                )
+            except Exception:
+                pass
+
         return APIResponse(data=agent.to_dict(), message=f"Agent '{req.name}' created.")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1923,7 +2311,7 @@ the AI will select the best tools, write standing objectives, and configure perm
 
 The resulting agent is registered and ready to use immediately.
 """)
-def design_agent(req: AgentDesignRequest):
+def design_agent(req: AgentDesignRequest, request: Request):
     kernel = _get_kernel()
     if kernel.registry.get(req.name):
         raise HTTPException(status_code=409, detail=f"Agent '{req.name}' already exists.")
@@ -1945,6 +2333,30 @@ def design_agent(req: AgentDesignRequest):
             )
         if hasattr(agent, "attach_memory"):
             agent.attach_memory(kernel.memory)
+
+        owner_user_id = _connection_user_id(request)
+        if owner_user_id is not None:
+            try:
+                agent_dict = agent.to_dict() if hasattr(agent, "to_dict") else {}
+                record_user_agent_profile_best_effort(
+                    user_id=owner_user_id,
+                    username=_connection_username(request),
+                    agent_name=str((agent_dict or {}).get("name") or req.name),
+                    role=str((agent_dict or {}).get("role") or req.role_description),
+                    source="ai_design",
+                    tools=(agent_dict or {}).get("tools") or [],
+                    skills=(agent_dict or {}).get("skills") or [],
+                    objectives=(agent_dict or {}).get("objectives") or [],
+                    permission_level=(agent_dict or {}).get("permission_level") if isinstance(agent_dict, dict) else req.permission_level,
+                    metadata={
+                        "endpoint": "/api/agents/design",
+                        "goal_chars": len(str(req.goal or "")),
+                        "context_keys": len(req.context or {}),
+                    },
+                )
+            except Exception:
+                pass
+
         return APIResponse(data=agent.to_dict(), message=f"Agent '{req.name}' designed and created.")
     except Exception as exc:
         _attempt_runtime_failover(exc)
@@ -1988,7 +2400,7 @@ Execute a single free-text task on a named agent and return the result synchrono
 The agent's configured tools and memory are available during execution.
 For long-running tasks consider using `POST /api/goals` and polling instead.
 """)
-def run_agent_task(agent_name: str, req: AgentRunRequest):
+def run_agent_task(agent_name: str, req: AgentRunRequest, request: Request):
     kernel = _get_kernel()
     agent = kernel.registry.get(agent_name)
     if agent is None:
@@ -2006,8 +2418,49 @@ def run_agent_task(agent_name: str, req: AgentRunRequest):
 
         result = agent.execute_task(req.task)
         _record_runtime_ai_success()
+
+        provider = str(getattr(kernel.ai_adapter, "provider", "") or "")
+        model = str(getattr(kernel.ai_adapter, "model", "") or "")
+        prompt_tokens, completion_tokens, total_tokens = _adapter_usage_snapshot(kernel)
+        _record_request_ai_usage_best_effort(
+            request,
+            provider=provider,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            metadata={
+                "endpoint": "/api/agents/{agent_name}/run",
+                "agent_name": agent_name,
+                "task_chars": len(str(req.task or "")),
+            },
+        )
+        _record_request_log_best_effort(
+            request,
+            event_type="agent",
+            action="run_task",
+            status="ok",
+            provider=provider,
+            model=model,
+            metadata={
+                "agent_name": agent_name,
+                "task_chars": len(str(req.task or "")),
+                "result_chars": len(str(result or "")),
+            },
+        )
         return APIResponse(data={"agent": agent_name, "result": result})
     except Exception as exc:
+        _record_request_log_best_effort(
+            request,
+            event_type="agent",
+            action="run_task",
+            status="error",
+            metadata={
+                "agent_name": agent_name,
+                "task_chars": len(str(req.task or "")),
+                "error": str(exc)[:220],
+            },
+        )
         _attempt_runtime_failover(exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -2021,7 +2474,7 @@ No CEO planning, no agents, no tools — just a raw chat completion.
 Optional `history` lets you maintain multi-turn context (last 20 turns are sent).
 Optional `system_prompt` overrides the default assistant persona for this request.
 """)
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, request: Request):
     kernel = _get_kernel()
     messages: list[dict[str, str]] = []
     if req.system_prompt:
@@ -2032,8 +2485,49 @@ def chat(req: ChatRequest):
     try:
         reply = kernel.ai_adapter.chat(messages)
         _record_runtime_ai_success()
+
+        provider = str(getattr(kernel.ai_adapter, "provider", "") or "")
+        model = str(getattr(kernel.ai_adapter, "model", "") or "")
+        prompt_tokens, completion_tokens, total_tokens = _adapter_usage_snapshot(kernel)
+        _record_request_ai_usage_best_effort(
+            request,
+            provider=provider,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            metadata={
+                "endpoint": "/api/chat",
+                "message_chars": len(str(req.message or "")),
+                "history_turns": len(req.history or []),
+            },
+        )
+        _record_request_log_best_effort(
+            request,
+            event_type="chat",
+            action="chat_request",
+            status="ok",
+            provider=provider,
+            model=model,
+            metadata={
+                "message_chars": len(str(req.message or "")),
+                "history_turns": len(req.history or []),
+                "reply_chars": len(str(reply or "")),
+            },
+        )
         return APIResponse(data={"reply": reply})
     except Exception as exc:
+        _record_request_log_best_effort(
+            request,
+            event_type="chat",
+            action="chat_request",
+            status="error",
+            metadata={
+                "message_chars": len(str(req.message or "")),
+                "history_turns": len(req.history or []),
+                "error": str(exc)[:220],
+            },
+        )
         _attempt_runtime_failover(exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -2068,8 +2562,29 @@ def delete_memory_key(key: str, namespace: str = "global"):
 
 
 # ── Snapshots directory ─────────────────────────────────────────────────────
-_SNAPSHOTS_DIR = Path(__file__).resolve().parents[1] / "memory" / "snapshots"
-_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+def _resolve_snapshots_dir() -> Path:
+    explicit_dir = (os.getenv("AETHEER_SNAPSHOTS_DIR") or "").strip()
+    if explicit_dir:
+        return Path(explicit_dir)
+
+    if _is_serverless_runtime():
+        return Path(tempfile.gettempdir()) / "aetheer_snapshots"
+
+    return Path(__file__).resolve().parents[1] / "memory" / "snapshots"
+
+
+def _ensure_snapshots_dir() -> Path:
+    preferred = _resolve_snapshots_dir()
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        return preferred
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "aetheer_snapshots"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+_SNAPSHOTS_DIR = _ensure_snapshots_dir()
 
 
 # ── Real-time: SSE stream for goal progress ──────────────────────────────────
@@ -2077,6 +2592,11 @@ _SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
          summary="Live SSE stream",
          description="Server-Sent Events stream — pushes JSON progress diffs until the goal is terminal.")
 async def stream_goal_sse(goal_id: str, request: Request):
+    with _projects_lock:
+        project = _projects.get(goal_id)
+    if project is None or not _connection_can_access_project(request, project):
+        raise HTTPException(status_code=404, detail=f"Goal '{goal_id}' not found.")
+
     async def _generate() -> AsyncGenerator[str, None]:
         last_sig: str | None = None
         while True:
@@ -2120,6 +2640,13 @@ async def stream_goal_sse(goal_id: str, request: Request):
 async def ws_goal_stream(websocket: WebSocket, goal_id: str):
     """WebSocket — pushes goal progress diffs until the goal reaches a terminal state."""
     if not await _authorize_websocket(websocket, required_role="reader"):
+        return
+
+    with _projects_lock:
+        project = _projects.get(goal_id)
+    if project is None or not _connection_can_access_project(websocket, project):
+        await websocket.accept()
+        await websocket.close(code=1008, reason="Goal not found")
         return
 
     await websocket.accept()
@@ -2590,7 +3117,7 @@ def status():
           summary="Create and run one task",
           description="Execute one task on a named agent or directly on the AI adapter. "
                       "Supports background mode for async execution.")
-async def create_task(req: TaskRequest, background_tasks: BackgroundTasks):
+async def create_task(req: TaskRequest, background_tasks: BackgroundTasks, request: Request):
     """Submit a task for execution by a named agent or the kernel AI adapter.
 
     - If *agent* is provided, the named agent's ``execute_task`` method is called.
@@ -2598,6 +3125,8 @@ async def create_task(req: TaskRequest, background_tasks: BackgroundTasks):
     - Set *background=true* to get an immediate task-ID response and run async.
     """
     task_id = str(uuid.uuid4())
+    owner_user_id = _connection_user_id(request)
+    owner_username = _connection_username(request)
 
     def _run_task() -> dict[str, Any]:
         kernel = _get_kernel()
@@ -2640,9 +3169,14 @@ async def create_task(req: TaskRequest, background_tasks: BackgroundTasks):
                 "goal": req.description,
                 "status": "pending",
                 "started_at": time.time(),
+                "owner_user_id": owner_user_id,
+                "owner_username": owner_username,
             }
 
         def _bg():
+            request_user_tokens = None
+            if owner_user_id is not None:
+                request_user_tokens = set_request_user(owner_user_id, owner_username)
             try:
                 payload = _run_task()
                 with _projects_lock:
@@ -2652,6 +3186,9 @@ async def create_task(req: TaskRequest, background_tasks: BackgroundTasks):
                 with _projects_lock:
                     _projects[task_id]["status"] = "failed"
                     _projects[task_id]["error"] = str(exc)
+            finally:
+                if request_user_tokens is not None:
+                    reset_request_user(request_user_tokens)
 
         background_tasks.add_task(_bg)
         return APIResponse(

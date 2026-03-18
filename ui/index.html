@@ -918,7 +918,12 @@ pre {
             <label>Backend API URL</label>
             <input id="settings-api-url" placeholder="http://localhost:8000" />
           </div>
-          <button class="btn btn-primary btn-sm" onclick="saveApiUrl()">Save &amp; Reconnect</button>
+          <div class="form-group mt12">
+            <label>API Key (X-API-Key header)</label>
+            <input id="settings-api-key" type="password" placeholder="sk-aether-..." autocomplete="off" />
+            <div style="font-size:12px;color:var(--text3);margin-top:6px">Required when server auth is enabled via AETHER_API_KEYS.</div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="saveApiUrl()">Save Connection</button>
         </div>
         <div class="card">
           <div class="card-title">System Info</div>
@@ -965,7 +970,12 @@ async function apiFetch(path, opts = {}) {
   const res = await fetch(url, { ...opts, headers });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = json.detail || json.error || `HTTP ${res.status}`;
+    let msg = json.detail || json.error || `HTTP ${res.status}`;
+    if (res.status === 401) {
+      msg = _API_KEY
+        ? 'Unauthorized (401): the configured API key was rejected. Check your key/role in Settings.'
+        : 'Unauthorized (401): set your API key in Settings to access protected endpoints.';
+    }
     throw new Error(msg);
   }
   return json;
@@ -1543,6 +1553,7 @@ function filterLogs() {
 /* ══ Settings ════════════════════════════════════════════════════════ */
 async function loadSettings() {
   document.getElementById('settings-api-url').value = API_BASE;
+  document.getElementById('settings-api-key').value = _API_KEY;
   const base = API_BASE;
   document.getElementById('link-swagger').href = base + '/docs';
   document.getElementById('link-redoc').href   = base + '/redoc';
@@ -1561,10 +1572,14 @@ async function loadSettings() {
 
 function saveApiUrl() {
   const url = document.getElementById('settings-api-url').value.trim().replace(/\/+$/, '');
+  const apiKey = document.getElementById('settings-api-key').value.trim();
   if (!url) return;
   API_BASE = url;
+  _API_KEY = apiKey;
   localStorage.setItem('aetheer_api_url', url);
-  toast('API URL saved — reconnecting…', 'success');
+  if (_API_KEY) localStorage.setItem('aetheer_api_key', _API_KEY);
+  else localStorage.removeItem('aetheer_api_key');
+  toast('Connection settings saved — reconnecting…', 'success');
   loadDashboard();
   loadSettings();
 }

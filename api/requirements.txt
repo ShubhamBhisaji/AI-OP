@@ -1,0 +1,19 @@
+# Lean dependency set for the Vercel Python function api/server.py.
+# Keep this list focused on API/runtime imports to reduce serverless build size.
+
+fastapi>=0.111.0
+pydantic>=2.0.0
+sqlalchemy>=2.0.0
+email-validator>=2.0.0
+python-multipart>=0.0.9
+python-jose[cryptography]>=3.3.0
+bcrypt>=4.1.0
+requests>=2.31.0
+redis>=5.0.0
+websocket-client>=1.8.0
+litellm>=1.67.0
+openai>=1.30.0
+anthropic>=0.25.0
+google-generativeai>=0.5.0
+ollama>=0.1.8
+pyyaml>=6.0.1

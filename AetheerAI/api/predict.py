@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import mimetypes
 import os
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -27,13 +28,59 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user, get_optional_user
+from api.customer_supabase import (
+    record_user_analytics_log_best_effort,
+    record_user_token_usage_best_effort,
+)
 from api.database import ActivityLog, Prediction, UploadedFile, User, get_db
 
 router = APIRouter(tags=["AI Features"])
 
 # ── Storage directory ──────────────────────────────────────────────────────
-_UPLOAD_DIR = Path(__file__).resolve().parents[1] / "data" / "uploads"
-_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def _env_bool(name: str) -> bool:
+    raw = (os.getenv(name) or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+        raw = raw[1:-1].strip()
+    return raw.lower() in _TRUE_VALUES
+
+
+def _is_serverless_runtime() -> bool:
+    if _env_bool("VERCEL") or _env_bool("AETHEER_SERVERLESS_MODE"):
+        return True
+
+    for marker in ("VERCEL_URL", "AWS_LAMBDA_FUNCTION_NAME", "AWS_EXECUTION_ENV", "NOW_REGION"):
+        if (os.getenv(marker) or "").strip():
+            return True
+    return False
+
+
+def _resolve_upload_dir() -> Path:
+    explicit_dir = (os.getenv("AETHEER_UPLOAD_DIR") or "").strip()
+    if explicit_dir:
+        return Path(explicit_dir)
+
+    if _is_serverless_runtime():
+        return Path(tempfile.gettempdir()) / "aetheer_uploads"
+
+    return Path(__file__).resolve().parents[1] / "data" / "uploads"
+
+
+def _ensure_upload_dir() -> Path:
+    preferred = _resolve_upload_dir()
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        return preferred
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "aetheer_uploads"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+_UPLOAD_DIR = _ensure_upload_dir()
 
 # Allowed upload MIME types (security: explicit allowlist)
 _ALLOWED_TYPES = {
@@ -106,9 +153,16 @@ def _confidence_from_logprobs(logprobs: list[float] | None) -> float | None:
     return round(min(max(math.exp(avg_lp), 0.0), 1.0), 4)
 
 
-def _run_single(kernel, prompt: str, system_prompt: str | None, provider: str, model: str,
-                temperature: float, max_tokens: int) -> tuple[str, float | None, int, float | None, int]:
-    """Return (result, confidence, latency_ms, cost_usd, tokens)."""
+def _run_single(
+    kernel,
+    prompt: str,
+    system_prompt: str | None,
+    provider: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+) -> tuple[str, float | None, int, float | None, int, int, int]:
+    """Return (result, confidence, latency_ms, cost_usd, total_tokens, prompt_tokens, completion_tokens)."""
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
@@ -130,11 +184,22 @@ def _run_single(kernel, prompt: str, system_prompt: str | None, provider: str, m
         result = kernel.ai_adapter.chat(messages)
         # Attempt to extract usage metadata if available
         tokens: int = 0
+        prompt_tokens: int = 0
+        completion_tokens: int = 0
         cost_usd: float | None = None
         confidence: float | None = None
+        usage: dict[str, Any] = {}
         if hasattr(kernel.ai_adapter, "last_usage"):
-            usage = kernel.ai_adapter.last_usage or {}
-            tokens = usage.get("total_tokens", 0)
+            usage = getattr(kernel.ai_adapter, "last_usage", {}) or {}
+        if not usage and hasattr(kernel.ai_adapter, "usage"):
+            usage = getattr(kernel.ai_adapter, "usage", {}) or {}
+
+        if usage:
+            prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+            tokens = int(usage.get("total_tokens", 0) or 0)
+            if tokens <= 0:
+                tokens = prompt_tokens + completion_tokens
             cost_usd = usage.get("cost_usd")
             confidence = usage.get("confidence") or _confidence_from_logprobs(usage.get("logprobs"))
     finally:
@@ -142,7 +207,35 @@ def _run_single(kernel, prompt: str, system_prompt: str | None, provider: str, m
             kernel.ai_adapter.switch(original[0], original[1])
 
     latency_ms = int((time.monotonic() - t0) * 1000)
-    return result, confidence, latency_ms, cost_usd, tokens
+    return result, confidence, latency_ms, cost_usd, tokens, prompt_tokens, completion_tokens
+
+
+def _record_ai_usage_analytics(
+    *,
+    current_user: User | None,
+    provider: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    metadata: Mapping[str, Any] | None,
+) -> None:
+    if current_user is None:
+        return
+    try:
+        record_user_token_usage_best_effort(
+            user_id=int(current_user.id),
+            username=str(current_user.username),
+            provider=str(provider or ""),
+            model=str(model or ""),
+            prompt_tokens=int(prompt_tokens or 0),
+            completion_tokens=int(completion_tokens or 0),
+            total_tokens=int(total_tokens or 0),
+            metadata=metadata,
+        )
+    except Exception:
+        # Best-effort analytics should never fail user-facing requests.
+        pass
 
 
 def _log_activity(db: Session, user_id: int | None, action: str, detail: dict, request: Request):
@@ -184,7 +277,15 @@ def predict(
     full_prompt = (extra_context + "\n\n" + req.prompt).strip() if extra_context else req.prompt
 
     try:
-        result, confidence, latency_ms, cost_usd, tokens = _run_single(
+        (
+            result,
+            confidence,
+            latency_ms,
+            cost_usd,
+            tokens,
+            prompt_tokens,
+            completion_tokens,
+        ) = _run_single(
             kernel, full_prompt, req.system_prompt, provider, model,
             req.temperature, req.max_tokens,
         )
@@ -195,6 +296,25 @@ def predict(
             model_used=model, provider=provider, status="failed", error=str(exc),
         )
         db.add(pred); db.commit(); db.refresh(pred)
+
+        if current_user is not None:
+            try:
+                record_user_analytics_log_best_effort(
+                    user_id=int(current_user.id),
+                    username=str(current_user.username),
+                    event_type="predict",
+                    action="prediction_failed",
+                    status="error",
+                    provider=provider,
+                    model=model,
+                    metadata={
+                        "prediction_id": int(pred.id),
+                        "latency_ms": 0,
+                        "error": str(exc)[:220],
+                    },
+                )
+            except Exception:
+                pass
         raise HTTPException(status_code=502, detail=f"AI provider error: {exc}") from exc
 
     pred = Prediction(
@@ -212,6 +332,21 @@ def predict(
     )
     db.add(pred); db.commit(); db.refresh(pred)
     _log_activity(db, pred.user_id, "predict", {"pred_id": pred.id, "model": model}, request)
+
+    _record_ai_usage_analytics(
+        current_user=current_user,
+        provider=provider,
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=tokens,
+        metadata={
+            "source": "predict_api",
+            "prediction_id": int(pred.id),
+            "status": pred.status,
+            "latency_ms": int(latency_ms),
+        },
+    )
 
     return {"success": True, "data": pred.to_dict()}
 
@@ -233,7 +368,7 @@ def compare_models(
         p = spec.get("provider", default_provider)
         m = spec.get("model", default_model)
         try:
-            res, conf, lat, cost, tok = _run_single(
+            res, conf, lat, cost, tok, prompt_tok, completion_tok = _run_single(
                 kernel, req.prompt, req.system_prompt, p, m,
                 req.temperature, req.max_tokens,
             )
@@ -242,8 +377,39 @@ def compare_models(
                 "confidence": conf, "latency_ms": lat,
                 "cost_usd": cost, "tokens": tok, "status": "ok",
             }
+
+            _record_ai_usage_analytics(
+                current_user=current_user,
+                provider=str(p),
+                model=str(m),
+                prompt_tokens=prompt_tok,
+                completion_tokens=completion_tok,
+                total_tokens=tok,
+                metadata={
+                    "source": "compare_api",
+                    "status": "ok",
+                },
+            )
         except Exception as exc:
             entry = {"provider": p, "model": m, "status": "error", "error": str(exc)}
+
+            if current_user is not None:
+                try:
+                    record_user_analytics_log_best_effort(
+                        user_id=int(current_user.id),
+                        username=str(current_user.username),
+                        event_type="compare",
+                        action="model_call_failed",
+                        status="error",
+                        provider=str(p),
+                        model=str(m),
+                        metadata={
+                            "source": "compare_api",
+                            "error": str(exc)[:220],
+                        },
+                    )
+                except Exception:
+                    pass
 
         alternatives.append(entry)
 

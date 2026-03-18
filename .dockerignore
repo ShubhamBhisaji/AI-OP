@@ -1,0 +1,43 @@
+# Git and editor metadata
+.git
+.gitignore
+.github/
+.vscode/
+.idea/
+.vercel/
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local env and secrets
+.env
+.env.*
+AetheerAI/.env
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+coverage.xml
+htmlcov/
+
+# Runtime artifacts
+logs/
+AetheerAI/logs/
+AetheerAI/memory/chroma_store/
+AetheerAI/data/uploads/
+
+# Large non-runtime workspace folders
+aether-os/
+projects/
+models/
+docs/
+supabase/
+ops/

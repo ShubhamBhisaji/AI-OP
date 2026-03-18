@@ -43,22 +43,29 @@ class SupabaseClient(BaseServiceClient):
         password: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Create a new user via the Admin API (service role) to bypass rate limits
+        and email confirmation requirements."""
         payload: dict[str, Any] = {
             "email": email,
             "password": password,
+            "email_confirm": True,
         }
         if metadata:
-            payload["data"] = dict(metadata)
+            payload["user_metadata"] = dict(metadata)
 
         response = self._request(
             "POST",
-            f"{self.config.auth_url}/signup",
-            headers=self._service_headers(use_service_role=False),
+            f"{self.config.auth_url}/admin/users",
+            headers=self._service_headers(use_service_role=True),
             json_body=payload,
             expected_statuses=(200, 201),
             error_context="Supabase sign-up failed",
         )
-        return _as_dict(response)
+        # Admin API returns {"user": {...}} — normalise to match signup shape
+        result = _as_dict(response)
+        if "user" not in result and "id" in result:
+            result = {"user": result}
+        return result
 
     def sign_in_with_password(self, *, email: str, password: str) -> dict[str, Any]:
         response = self._request(

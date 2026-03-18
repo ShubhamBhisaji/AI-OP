@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
+import tempfile
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -31,13 +34,62 @@ from sqlalchemy import (
     Text,
     create_engine,
     event,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
+from api.request_context import get_request_user_id
+
+
+logger = logging.getLogger("aetheer.api.database")
+
 # ── Database location ──────────────────────────────────────────────────────
-_DB_DIR = Path(__file__).resolve().parents[1] / "memory"
-_DB_DIR.mkdir(parents=True, exist_ok=True)
-_DB_URL = os.getenv("DATABASE_URL", f"sqlite:///{_DB_DIR / 'aetheer.db'}")
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def _env_bool(name: str) -> bool:
+    raw = (os.getenv(name) or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+        raw = raw[1:-1].strip()
+    return raw.lower() in _TRUE_VALUES
+
+
+def _is_serverless_runtime() -> bool:
+    if _env_bool("VERCEL") or _env_bool("AETHEER_SERVERLESS_MODE"):
+        return True
+
+    for marker in ("VERCEL_URL", "AWS_LAMBDA_FUNCTION_NAME", "AWS_EXECUTION_ENV", "NOW_REGION"):
+        if (os.getenv(marker) or "").strip():
+            return True
+    return False
+
+
+def _default_sqlite_url() -> str:
+    if _is_serverless_runtime():
+        db_dir = Path(tempfile.gettempdir()) / "aetheer_memory"
+    else:
+        db_dir = Path(__file__).resolve().parents[1] / "memory"
+    return f"sqlite:///{db_dir / 'aetheer.db'}"
+
+
+def _prepare_sqlite_directory(db_url: str) -> None:
+    if not db_url.startswith("sqlite:///"):
+        return
+
+    path_part = db_url[len("sqlite:///"):].strip()
+    if not path_part or path_part == ":memory:":
+        return
+
+    db_path = Path(path_part)
+    if not db_path.is_absolute():
+        db_path = (Path.cwd() / db_path).resolve()
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+_DB_URL = (os.getenv("DATABASE_URL") or _default_sqlite_url()).strip()
+_prepare_sqlite_directory(_DB_URL)
 
 engine = create_engine(
     _DB_URL,
@@ -59,12 +111,16 @@ class Base(DeclarativeBase):
     pass
 
 
+_MIRROR_HOOKS_ATTACHED = False
+
+
 # ── Models ─────────────────────────────────────────────────────────────────
 
 class User(Base):
     __tablename__ = "users"
 
     id         = Column(Integer, primary_key=True, index=True)
+    supabase_user_id = Column(String(36), unique=True, nullable=True, index=True)  # UUID from Supabase
     username   = Column(String(64), unique=True, nullable=False, index=True)
     email      = Column(String(200), unique=True, nullable=False, index=True)
     hashed_pw  = Column(String(256), nullable=False)
@@ -84,6 +140,7 @@ class User(Base):
             "id":         self.id,
             "username":   self.username,
             "email":      self.email,
+            "role":       "admin" if self.is_admin else "user",
             "is_admin":   self.is_admin,
             "is_active":  self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -324,6 +381,7 @@ class GoalRun(Base):
     __tablename__ = "goal_runs"
 
     id               = Column(String(64),  primary_key=True, index=True)   # UUID from server
+    owner_user_id    = Column(Integer,     nullable=True, index=True)
     name             = Column(String(256), nullable=False, index=True)
     goal             = Column(Text,        nullable=False)
     status           = Column(String(32),  nullable=False, default="pending", index=True)
@@ -381,6 +439,7 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id          = Column(Integer,     primary_key=True, index=True)
+    owner_user_id = Column(Integer,   nullable=True, index=True)
     task_uuid   = Column(String(64),  nullable=True,  index=True)   # task_id from CEOAgent
     goal_id     = Column(String(64),  ForeignKey("goal_runs.id", ondelete="CASCADE"),
                          nullable=False, index=True)
@@ -460,3 +519,185 @@ def get_db():
 def init_db() -> None:
     """Create all tables (idempotent — safe to call on every startup)."""
     Base.metadata.create_all(bind=engine)
+    _apply_runtime_schema_migrations()
+    _install_customer_mirror_hooks()
+
+
+def _quote_identifier(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _ensure_optional_column(
+    table_name: str,
+    column_name: str,
+    ddl: str,
+    *,
+    index_name: str | None = None,
+) -> None:
+    inspector = inspect(engine)
+    existing = {str(col.get("name") or "").strip() for col in inspector.get_columns(table_name)}
+    if column_name in existing:
+        return
+
+    table_sql = _quote_identifier(table_name)
+    column_sql = _quote_identifier(column_name)
+
+    with engine.begin() as conn:
+        conn.execute(text(f"ALTER TABLE {table_sql} ADD COLUMN {column_sql} {ddl}"))
+        if index_name:
+            index_sql = _quote_identifier(index_name)
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS {index_sql} ON {table_sql} ({column_sql})"))
+
+
+def _apply_runtime_schema_migrations() -> None:
+    try:
+        _ensure_optional_column(
+            "users",
+            "supabase_user_id",
+            "VARCHAR(36)",
+            index_name="idx_users_supabase_user_id",
+        )
+        _ensure_optional_column(
+            "goal_runs",
+            "owner_user_id",
+            "INTEGER",
+            index_name="idx_goal_runs_owner_user_id",
+        )
+        _ensure_optional_column(
+            "tasks",
+            "owner_user_id",
+            "INTEGER",
+            index_name="idx_tasks_owner_user_id",
+        )
+    except Exception as exc:
+        logger.warning("Runtime schema migration skipped: %s", exc)
+
+
+def _normalize_json_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (list, tuple, set)):
+        return [_normalize_json_value(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _normalize_json_value(v) for k, v in value.items()}
+    return str(value)
+
+
+def _row_payload(target: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    table = getattr(target, "__table__", None)
+    columns = getattr(table, "columns", [])
+    for col in columns:
+        name = str(getattr(col, "name", "")).strip()
+        if not name:
+            continue
+        try:
+            payload[name] = _normalize_json_value(getattr(target, name))
+        except Exception:
+            payload[name] = None
+    return payload
+
+
+def _owner_user_id_for_row(target: Any) -> int | None:
+    for attr in ("user_id", "owner_user_id"):
+        raw = getattr(target, attr, None)
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+
+    if isinstance(target, User):
+        try:
+            return int(target.id)
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        context_user_id = get_request_user_id()
+        if context_user_id is not None:
+            return int(context_user_id)
+    except Exception:
+        return None
+    return None
+
+
+def _source_row_id_for(target: Any) -> str:
+    for attr in ("id", "task_uuid", "code"):
+        raw = getattr(target, attr, None)
+        if raw not in (None, ""):
+            return str(raw)
+    return ""
+
+
+def _mirror_row_change(operation: str, target: Any) -> None:
+    owner_user_id = _owner_user_id_for_row(target)
+    if owner_user_id is None:
+        return
+
+    table_name = str(getattr(target, "__tablename__", "")).strip() or target.__class__.__name__.lower()
+    source_row_id = _source_row_id_for(target)
+    payload = _row_payload(target)
+
+    try:
+        from api.customer_supabase import mirror_db_entry_best_effort
+
+        mirror_db_entry_best_effort(
+            user_id=owner_user_id,
+            source_table=table_name,
+            operation=operation,
+            source_row_id=source_row_id,
+            payload=payload,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Local->customer Supabase mirror failed (table=%s op=%s user=%s): %s",
+            table_name,
+            operation,
+            owner_user_id,
+            exc,
+        )
+
+
+def _after_insert(_mapper, _connection, target) -> None:
+    _mirror_row_change("insert", target)
+
+
+def _after_update(_mapper, _connection, target) -> None:
+    _mirror_row_change("update", target)
+
+
+def _after_delete(_mapper, _connection, target) -> None:
+    _mirror_row_change("delete", target)
+
+
+def _install_customer_mirror_hooks() -> None:
+    global _MIRROR_HOOKS_ATTACHED
+    if _MIRROR_HOOKS_ATTACHED:
+        return
+
+    tracked_models = (
+        User,
+        Prediction,
+        UploadedFile,
+        ActivityLog,
+        BillingPlan,
+        Subscription,
+        BillingInvoice,
+        UsageEvent,
+        GoalRun,
+        Task,
+        SystemLog,
+    )
+
+    for model in tracked_models:
+        event.listen(model, "after_insert", _after_insert)
+        event.listen(model, "after_update", _after_update)
+        event.listen(model, "after_delete", _after_delete)
+
+    _MIRROR_HOOKS_ATTACHED = True
