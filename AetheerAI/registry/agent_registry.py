@@ -1,4 +1,4 @@
-﻿"""
+"""
 AgentRegistry — Central store for all active AETHEERAI agents.
 Supports registration, lookup, listing, and removal of agents.
 """

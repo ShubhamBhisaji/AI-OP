@@ -1,4 +1,4 @@
-﻿"""
+"""
 agent_window.py — Dedicated single-agent REPL window.
 
 Launched automatically by `open_agent <name>` from the main AETHEERAI CLI.

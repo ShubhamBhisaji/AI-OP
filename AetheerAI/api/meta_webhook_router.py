@@ -31,7 +31,7 @@ def _is_valid_signature(body: bytes, *, received: str, secret: str) -> bool:
     if not received_hash:
         return False
 
-    expected_hash = hmac.new(
+    expected_hash = hmac.HMAC(
         secret.encode("utf-8"),
         body,
         hashlib.sha256,

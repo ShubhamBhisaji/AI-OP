@@ -1,4 +1,4 @@
-﻿"""Reusable base class for all AetheerAI agents.
+"""Reusable base class for all AetheerAI agents.
 
 This class provides a stable contract for autonomous multi-agent workflows:
 - Identity and role metadata (name, role, objectives)

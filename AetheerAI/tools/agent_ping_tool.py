@@ -1,4 +1,4 @@
-﻿"""
+"""
 agent_ping_tool — Pattern 2: Direct Agent-to-Agent Communication.
 
 Allows any agent to call another registered agent mid-task and receive

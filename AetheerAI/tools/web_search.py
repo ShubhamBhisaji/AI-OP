@@ -1,4 +1,4 @@
-﻿"""
+"""
 web_search — Tool that performs a web search and returns summarized results.
 Uses the DuckDuckGo Instant Answer API (no API key required).
 Falls back to a mock response when the network is unavailable.

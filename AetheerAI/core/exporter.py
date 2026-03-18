@@ -1,4 +1,4 @@
-﻿"""Exporter service facade for agent/system export operations."""
+"""Exporter service facade for agent/system export operations."""
 
 from __future__ import annotations
 

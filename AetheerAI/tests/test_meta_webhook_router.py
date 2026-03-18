@@ -83,7 +83,7 @@ class MetaWebhookRouterTests(unittest.TestCase):
 
     def test_event_callback_accepts_valid_signature(self):
         body = b'{"object":"page","entry":[{"id":"1"}]}'
-        signature = hmac.new(
+        signature = hmac.HMAC(
             b"app-secret-123",
             body,
             hashlib.sha256,

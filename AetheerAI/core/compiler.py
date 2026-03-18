@@ -1,4 +1,4 @@
-﻿"""Compiler service facade for generated app build operations."""
+"""Compiler service facade for generated app build operations."""
 
 from __future__ import annotations
 

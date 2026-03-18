@@ -1,4 +1,4 @@
-﻿"""
+"""
 MemoryManager — Persistent and session memory for AetheerAI — An AI Master!!.
 Supports key-value storage, list appending, JSON file persistence,
 and optional semantic (vector) search via ChromaDB.

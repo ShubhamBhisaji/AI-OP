@@ -22,8 +22,10 @@ env/
 *.DS_Store
 Thumbs.db
 
-# Secrets / keys
+# Secrets / keys — block ALL .env variants
 .env
+.env.*
+!.env.example
 *.key
 *.pem
 
@@ -46,5 +48,3 @@ src/*.egg-info/
 dist/
 build/
 .vercel
-.env*.local
-.env.vercel.*.tmp

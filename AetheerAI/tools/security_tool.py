@@ -1,4 +1,4 @@
-﻿"""security_tool — Website security header and TLS configuration checker."""
+"""security_tool — Website security header and TLS configuration checker."""
 from __future__ import annotations
 import json, ssl, socket, logging
 import urllib.request, urllib.error

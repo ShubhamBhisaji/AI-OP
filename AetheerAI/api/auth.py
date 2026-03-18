@@ -173,7 +173,7 @@ def _make_token(user_id: int, username: str, is_admin: bool, supabase_user_id: s
         payload_part = base64.urlsafe_b64encode(
             json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
         ).decode("utf-8").rstrip("=")
-        signature = hmac.new(_SECRET.encode("utf-8"), payload_part.encode("utf-8"), hashlib.sha256).digest()
+        signature = hmac.HMAC(_SECRET.encode("utf-8"), payload_part.encode("utf-8"), hashlib.sha256).digest()
         sig_part = base64.urlsafe_b64encode(signature).decode("utf-8").rstrip("=")
         return f"{payload_part}.{sig_part}"
 
@@ -191,7 +191,7 @@ def _decode_token(token: str) -> dict:
         except ValueError as exc:
             raise HTTPException(status_code=401, detail="Invalid token") from exc
 
-        expected_sig = hmac.new(
+        expected_sig = hmac.HMAC(
             _SECRET.encode("utf-8"), payload_part.encode("utf-8"), hashlib.sha256
         ).digest()
         expected_sig_part = base64.urlsafe_b64encode(expected_sig).decode("utf-8").rstrip("=")

@@ -1,4 +1,4 @@
-﻿"""
+"""
 launcher.py -- AetheerAI — An AI Master!!  |  Silent GUI Launcher
 
 Double-click this (or its compiled .exe) to:

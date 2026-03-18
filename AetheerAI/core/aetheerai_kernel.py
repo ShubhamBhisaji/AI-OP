@@ -1,4 +1,4 @@
-﻿"""
+"""
 AetheerAiKernel — Central controller and orchestrator of AetheerAI — An AI Master!!.
 Manages all subsystems: agents, workflows, tools, memory, and AI adapters.
 """

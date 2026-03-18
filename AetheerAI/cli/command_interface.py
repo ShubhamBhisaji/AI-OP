@@ -1,4 +1,4 @@
-﻿"""
+"""
 CommandInterface — CLI for AetheerAI — An AI Master!!.
 Provides an interactive REPL and supports all core AETHEERAI commands.
 """

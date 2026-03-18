@@ -1,4 +1,4 @@
-﻿"""
+"""
 file_writer — Tool that writes text content to a file on disk.
 Agents use this to save generated code, reports, or any text output.
 

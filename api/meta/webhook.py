@@ -40,7 +40,7 @@ def _verify_signature(raw_body: bytes, signature_header: str, app_secret: str) -
     if not received_hash:
         return False
 
-    expected_hash = hmac.new(
+    expected_hash = hmac.HMAC(
         app_secret.encode("utf-8"),
         raw_body,
         hashlib.sha256,

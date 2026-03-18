@@ -1,4 +1,4 @@
-﻿"""
+"""
 app.py — AetheerAI — An AI Master!! Dashboard (Streamlit GUI)
 
 Run with:  python -m streamlit run app.py

@@ -1,4 +1,4 @@
-﻿"""media_tool — Image inspection, transformation, and basic video info.
+"""media_tool — Image inspection, transformation, and basic video info.
 
 Requires: Pillow (pip install Pillow) for image operations.
           moviepy or opencv-python for video operations (optional, gracefully skipped).

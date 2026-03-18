@@ -1,4 +1,4 @@
-﻿"""
+"""
 approval_gate.py — Human-in-the-loop approval for destructive / high-risk tool calls.
 
 Any tool marked as DESTRUCTIVE or HIGH_RISK requires explicit user confirmation

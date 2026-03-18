@@ -1,4 +1,4 @@
-﻿"""
+"""
 ToolManager — Central registry for all tools available to AETHEERAI agents.
 Tools are callable functions that agents can invoke during task execution.
 
