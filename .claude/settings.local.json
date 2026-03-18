@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(xargs ls:*)",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''AetheerAI/tools/plugin_loader.py''\\).read\\(\\)\\); print\\(''plugin_loader.py: OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''AetheerAI/tools/plugin_loader.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''plugin_loader.py: OK''\\)\")"
     ]
   }
 }

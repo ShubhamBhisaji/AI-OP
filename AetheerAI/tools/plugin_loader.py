@@ -37,6 +37,7 @@ Security
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import logging
@@ -52,8 +53,10 @@ logger = logging.getLogger(__name__)
 
 _PLUGINS_DIR = Path(__file__).parent / "plugins"
 _MANIFEST_FILE = "plugin_manifest.json"
+_TRUSTED_REGISTRY = "trusted_plugins.json"
 _MAX_PERMISSION_LEVEL = 3
 _SANDBOX_TIMEOUT_SEC = 30
+_TRUST_ALL = os.getenv("AETHEER_PLUGIN_TRUST_ALL", "").lower() in ("1", "true", "yes")
 
 
 class PluginValidationError(Exception):
@@ -122,7 +125,7 @@ class PluginLoader:
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    def load_all(self, *, sandbox: bool = False) -> list[str]:
+    def load_all(self, *, sandbox: bool = True) -> list[str]:
         """
         Scan the plugins directory, load all valid plugins, and register them
         with the ToolManager.  Returns a list of successfully loaded plugin names.
@@ -152,14 +155,14 @@ class PluginLoader:
         logger.info("PluginLoader: loaded %d plugin(s): %s", len(loaded_names), loaded_names)
         return loaded_names
 
-    def reload(self, *, sandbox: bool = False) -> list[str]:
+    def reload(self, *, sandbox: bool = True) -> list[str]:
         """Unregister all currently loaded plugins and re-scan the directory."""
         with self._lock:
             for name in list(self._loaded.keys()):
                 self._unregister(name)
         return self.load_all(sandbox=sandbox)
 
-    def load_single(self, plugin_dir: str | Path, *, sandbox: bool = False) -> str:
+    def load_single(self, plugin_dir: str | Path, *, sandbox: bool = True) -> str:
         """Load and register a single plugin by its directory path."""
         plugin_dir = Path(plugin_dir)
         manifest_path = plugin_dir / _MANIFEST_FILE
@@ -197,6 +200,34 @@ class PluginLoader:
 
         if not entry_file.exists():
             raise PluginValidationError(f"Entry file '{entry_file}' not found.")
+
+        # 2a. Trusted-plugin allow-list check
+        if not _TRUST_ALL:
+            trusted = self._load_trusted_registry()
+            if trusted is not None and name not in trusted:
+                raise PluginValidationError(
+                    f"Plugin '{name}' is not in the trusted_plugins.json allow-list. "
+                    f"Add it to {self.plugins_dir / _TRUSTED_REGISTRY} to enable loading."
+                )
+        else:
+            logger.warning(
+                "PluginLoader: AETHEER_PLUGIN_TRUST_ALL is enabled — "
+                "skipping allow-list check for '%s'. Do NOT use in production.",
+                name,
+            )
+
+        # 2b. SHA-256 hash verification (if manifest declares sha256)
+        declared_hash = manifest.get("sha256")
+        if declared_hash:
+            actual_hash = hashlib.sha256(
+                entry_file.read_bytes()
+            ).hexdigest()
+            if actual_hash != declared_hash:
+                raise PluginValidationError(
+                    f"SHA-256 mismatch for '{name}': manifest declares "
+                    f"{declared_hash[:16]}… but file hashes to {actual_hash[:16]}…. "
+                    f"The plugin file may have been tampered with."
+                )
 
         # 2. Import the plugin module dynamically
         module_key = f"_aetheerai_plugin_{name}"
@@ -317,6 +348,23 @@ class PluginLoader:
 
         sandboxed_call.__name__ = f"{plugin_name}_sandboxed"
         return sandboxed_call
+
+    # ── Trusted-plugin registry ─────────────────────────────────────────
+
+    def _load_trusted_registry(self) -> set[str] | None:
+        """Load the trusted_plugins.json allow-list. Returns None if file absent."""
+        registry_path = self.plugins_dir / _TRUSTED_REGISTRY
+        if not registry_path.exists():
+            return None  # No registry = allow all (for backwards compatibility)
+        try:
+            data = json.loads(registry_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or "trusted" not in data:
+                logger.warning("PluginLoader: invalid trusted_plugins.json format.")
+                return set()
+            return set(data["trusted"])
+        except Exception as exc:
+            logger.warning("PluginLoader: failed to read trusted registry: %s", exc)
+            return set()  # Fail closed — deny all if registry is unreadable
 
     # ── Manifest validator ────────────────────────────────────────────────
 

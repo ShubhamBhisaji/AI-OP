@@ -39,6 +39,7 @@ from __future__ import annotations
 import heapq
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -56,6 +57,11 @@ _JOB_STORE.parent.mkdir(parents=True, exist_ok=True)
 _MAX_WORKERS: int = 4
 _MAX_TASK_LEN: int = 2_000   # characters stored in job description
 _MAX_RESULT_LEN: int = 4_000
+_MAX_PENDING: int = max(1, int(os.getenv("AETHEER_MAX_PENDING_JOBS", "500") or "500"))
+
+
+class QueueFullError(RuntimeError):
+    """Raised when the pending job queue exceeds the backpressure limit."""
 
 
 # ── Job record ─────────────────────────────────────────────────────────────
@@ -81,6 +87,7 @@ class JobRecord:
     owner_user_id: int | None  = None
     owner_username: str        = ""
     owner_tenant_id: str       = ""
+    idempotency_key: str       = ""
     # These are NOT persisted
     _callable:    Callable | None = field(default=None, repr=False, compare=False)
 
@@ -109,6 +116,7 @@ class JobRecord:
             "owner_user_id": self.owner_user_id,
             "owner_username": self.owner_username,
             "owner_tenant_id": self.owner_tenant_id,
+            "idempotency_key": self.idempotency_key,
         }
 
     @classmethod
@@ -135,6 +143,7 @@ class JobRecord:
             ),
             owner_username=str(d.get("owner_username", "")),
             owner_tenant_id=str(d.get("owner_tenant_id", "")),
+            idempotency_key=str(d.get("idempotency_key", "")),
         )
 
     def elapsed(self) -> float | None:
@@ -185,6 +194,7 @@ class JobScheduler:
 
         self._heap: list[JobRecord] = []      # min-heap by (run_at, priority)
         self._jobs: dict[str, JobRecord] = {} # job_id → record (source of truth)
+        self._dlq: dict[str, JobRecord] = {}  # dead-letter queue for permanently failed jobs
         self._lock = threading.Lock()
         self._persist_lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -210,21 +220,48 @@ class JobScheduler:
         owner_user_id: int | None = None,
         owner_username: str | None = None,
         owner_tenant_id: str | None = None,
+        idempotency_key: str = "",
+        force: bool = False,
     ) -> str:
         """
         Enqueue a job and return its job_id.
 
         Parameters
         ----------
-        name        : Human-readable job label.
-        agent_name  : Agent to dispatch (passed to executor_fn).
-        task        : Task description for the agent.
-        priority    : 0–100; lower = higher priority (default 50).
-        run_at      : datetime or Unix timestamp; None = run immediately.
-        interval_sec: If > 0, re-schedule this job every N seconds after completion.
-        max_retries : How many times to retry on failure (default 1).
-        callable_fn : Optional override for executor_fn just for this job.
+        name            : Human-readable job label.
+        agent_name      : Agent to dispatch (passed to executor_fn).
+        task            : Task description for the agent.
+        priority        : 0–100; lower = higher priority (default 50).
+        run_at          : datetime or Unix timestamp; None = run immediately.
+        interval_sec    : If > 0, re-schedule this job every N seconds after completion.
+        max_retries     : How many times to retry on failure (default 1).
+        callable_fn     : Optional override for executor_fn just for this job.
+        idempotency_key : If set, deduplicates against pending/running jobs with same key.
+        force           : If True, bypass backpressure limit.
         """
+        # Idempotency: return existing job if a matching key is pending/running
+        if idempotency_key:
+            with self._lock:
+                for existing in self._jobs.values():
+                    if (
+                        existing.idempotency_key == idempotency_key
+                        and existing.status in ("pending", "running")
+                    ):
+                        logger.info(
+                            "JobScheduler: idempotency hit for key '%s' → existing job %s",
+                            idempotency_key, existing.job_id[:8],
+                        )
+                        return existing.job_id
+
+        # Backpressure: reject if too many pending jobs
+        if not force:
+            pending = self.pending_count()
+            if pending >= _MAX_PENDING:
+                raise QueueFullError(
+                    f"Pending job queue is full ({pending}/{_MAX_PENDING}). "
+                    f"Wait for jobs to complete or use force=True to bypass."
+                )
+
         now = time.time()
         if run_at is None:
             scheduled_ts = now
@@ -259,6 +296,7 @@ class JobScheduler:
             owner_user_id=resolved_owner_id,
             owner_username=str(owner_username or "")[:120],
             owner_tenant_id=str(owner_tenant_id or "")[:120],
+            idempotency_key=str(idempotency_key or "")[:200],
             _callable=callable_fn,
         )
 
@@ -334,6 +372,8 @@ class JobScheduler:
             "total": len(self._jobs),
             "by_status": counts,
             "running": len(self._active),
+            "dlq": len(self._dlq),
+            "max_pending": _MAX_PENDING,
             "executor": self._executor_name,
         }
 
@@ -439,12 +479,58 @@ class JobScheduler:
                 else:
                     job.status = "failed"
                     job.finished_at = time.time()
+                    # Move to dead-letter queue
+                    self._dlq[job.job_id] = job
+                    del self._jobs[job.job_id]
                     logger.error(
-                        "JobScheduler: job '%s' permanently failed after %d attempts: %s",
+                        "JobScheduler: job '%s' permanently failed after %d attempts "
+                        "(moved to DLQ): %s",
                         job.name, job.attempts, exc,
                     )
 
         self._persist()
+
+    # ── Dead-letter queue ──────────────────────────────────────────────
+
+    def list_dlq(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return metadata for all dead-letter jobs."""
+        with self._lock:
+            jobs = sorted(
+                self._dlq.values(),
+                key=lambda j: j.finished_at or 0,
+                reverse=True,
+            )
+        return [j.to_dict() for j in jobs[:limit]]
+
+    def dlq_count(self) -> int:
+        with self._lock:
+            return len(self._dlq)
+
+    def retry_dlq(self, job_id: str) -> str | None:
+        """Move a dead-letter job back to the pending queue. Returns new job_id or None."""
+        with self._lock:
+            job = self._dlq.pop(job_id, None)
+        if not job:
+            return None
+        return self.schedule(
+            name=job.name,
+            agent_name=job.agent_name,
+            task=job.task,
+            priority=job.priority,
+            max_retries=job.max_retries,
+            owner_user_id=job.owner_user_id,
+            owner_username=job.owner_username or None,
+            owner_tenant_id=job.owner_tenant_id or None,
+            force=True,
+        )
+
+    def clear_dlq(self) -> int:
+        """Remove all dead-letter jobs. Returns count removed."""
+        with self._lock:
+            count = len(self._dlq)
+            self._dlq.clear()
+        self._persist()
+        return count
 
     # ── Persistence ───────────────────────────────────────────────────────
 
@@ -453,7 +539,10 @@ class JobScheduler:
         try:
             with self._persist_lock:
                 with self._lock:
-                    data = {"jobs": [j.to_dict() for j in self._jobs.values()]}
+                    data = {
+                        "jobs": [j.to_dict() for j in self._jobs.values()],
+                        "dlq": [j.to_dict() for j in self._dlq.values()],
+                    }
 
                 # Use a unique temp file per flush to avoid cross-thread collisions,
                 # especially on Windows where replace() can fail on shared temp names.
@@ -478,9 +567,13 @@ class JobScheduler:
                 self._jobs[job.job_id] = job
                 if job.status == "pending":
                     heapq.heappush(self._heap, job)
+            # Load dead-letter queue
+            for d in raw.get("dlq", []):
+                dlq_job = JobRecord.from_dict(d)
+                self._dlq[dlq_job.job_id] = dlq_job
             logger.info(
-                "JobScheduler: loaded %d jobs from store (%d pending).",
-                len(self._jobs), self.pending_count(),
+                "JobScheduler: loaded %d jobs from store (%d pending, %d in DLQ).",
+                len(self._jobs), self.pending_count(), len(self._dlq),
             )
         except Exception as exc:
             logger.warning("JobScheduler: could not load job store: %s", exc)
