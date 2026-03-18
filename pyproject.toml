@@ -16,8 +16,8 @@ dependencies = []
 
 [project.scripts]
 # pip install -e .  →  these commands become available on the PATH
-aetheerai        = "app.cli:main"       # CLI entry point (delegates to AetheerAI/main.py)
-aetheerai-server = "app.server:main"    # REST API server
+aetheerai        = "aetheerai.cli:main"       # CLI entry point (delegates to AetheerAI/main.py)
+aetheerai-server = "aetheerai.server:main"    # REST API server
 
 # ── Package discovery ──────────────────────────────────────────────────────
 [tool.setuptools.packages.find]

@@ -90,6 +90,8 @@ _ml_engine = None
 _local_predictor = None
 _sqlite_log_handler: logging.Handler | None = None
 _ai_switch_lock = threading.RLock()
+_kill_switch_active = False
+_kill_switch_lock = threading.Lock()
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
@@ -769,9 +771,69 @@ app.add_middleware(
     minimum_size=_env_int("AETHEER_GZIP_MIN_BYTES", 1024, minimum=256),
 )
 
+
+# ── Security headers middleware ───────────────────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        host = (request.headers.get("host") or "").split(":")[0]
+        if host not in ("localhost", "127.0.0.1", "0.0.0.0", ""):
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+
 # ── v2 routers: planning, scheduling, risk, lifecycle ─────────────────────────
 from api.routes_v2 import router as _v2_router  # noqa: E402
 app.include_router(_v2_router)
+
+
+# ── Kill switch endpoints (admin only) ────────────────────────────────────────
+from api.auth import get_current_user, require_admin  # noqa: E402
+from api.database import User, get_db  # noqa: E402
+
+_admin_router = APIRouter(prefix="/api/admin", tags=["Admin"])
+
+
+@_admin_router.get("/kill-switch", summary="Check kill switch status")
+def get_kill_switch_status(admin: User = Depends(require_admin)):
+    return {"active": _kill_switch_active}
+
+
+@_admin_router.post("/kill-switch", summary="Activate kill switch — block all new goals and cancel running ones")
+def activate_kill_switch(admin: User = Depends(require_admin)):
+    global _kill_switch_active
+    with _kill_switch_lock:
+        _kill_switch_active = True
+    cancelled = 0
+    with _projects_lock:
+        for project in _projects.values():
+            if project.get("status") in {"pending", "running"}:
+                project["status"] = "cancelled"
+                project["error"] = "Cancelled by admin kill switch"
+                cancelled += 1
+    logger.warning("Kill switch activated by admin user_id=%s — cancelled %d projects", admin.id, cancelled)
+    return {"active": True, "cancelled_projects": cancelled}
+
+
+@_admin_router.delete("/kill-switch", summary="Deactivate kill switch — re-enable goal submissions")
+def deactivate_kill_switch(admin: User = Depends(require_admin)):
+    global _kill_switch_active
+    with _kill_switch_lock:
+        _kill_switch_active = False
+    logger.info("Kill switch deactivated by admin user_id=%s", admin.id)
+    return {"active": False}
+
+
+app.include_router(_admin_router)
 
 
 def _is_public_path(path: str) -> bool:
@@ -1459,16 +1521,23 @@ def _project_owner_user_id(project: dict[str, Any] | None) -> int | None:
         return None
 
 
-def _connection_can_access_project(connection: Any | None, project: dict[str, Any] | None) -> bool:
+def _connection_can_access_project(
+    connection: Any | None,
+    project: dict[str, Any] | None,
+    *,
+    _internal: bool = False,
+) -> bool:
     if _connection_is_admin(connection):
         return True
 
     current_user_id = _connection_user_id(connection)
     if current_user_id is None:
-        return True
+        # Deny by default when user identity is unknown.
+        # Internal lookups (no request context) may pass _internal=True.
+        return _internal
 
     owner_user_id = _project_owner_user_id(project)
-    return owner_user_id is not None and owner_user_id == current_user_id
+    return owner_user_id is None or owner_user_id == current_user_id
 
 
 def _adapter_usage_snapshot(kernel: "AetheerAiKernel") -> tuple[int, int, int]:
@@ -1636,7 +1705,7 @@ def _find_task(task_id: str) -> dict[str, Any] | None:
         projects = list(_projects.values())
 
     for project in projects:
-        if not _connection_can_access_project(None, project):
+        if not _connection_can_access_project(None, project, _internal=True):
             continue
         for task in project.get("tasks", []):
             if str(task.get("task_id", "")) == task_id:
@@ -1653,6 +1722,11 @@ async def _submit_goal(
     background_tasks: BackgroundTasks,
     request: Request | None = None,
 ) -> APIResponse:
+    if _kill_switch_active:
+        raise HTTPException(
+            status_code=503,
+            detail="Kill switch is active — all new goal submissions are blocked. Contact an admin.",
+        )
     if _env_bool("VERCEL", False) and _env_bool("AETHEER_DISABLE_VERCEL_DIRECT_GOALS", True):
         raise HTTPException(
             status_code=503,

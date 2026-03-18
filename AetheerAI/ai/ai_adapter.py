@@ -135,6 +135,18 @@ class AIAdapter:
         Send a list of messages to the configured AI provider and return
         the assistant's reply as a plain string.
         """
+        # Pre-flight prompt injection scan (warn only, does not block).
+        try:
+            from security.prompt_scanner import scan_messages
+            scan = scan_messages(messages)
+            if not scan.safe:
+                logger.warning(
+                    "Prompt injection flags detected before LLM call: %s",
+                    scan.flags,
+                )
+        except Exception:
+            pass
+
         dispatch = {
             "github": self._chat_github,
             "openai": self._chat_openai,
@@ -352,11 +364,15 @@ class AIAdapter:
     # litellm core call + token tracking
     # ------------------------------------------------------------------
 
+    _MAX_TOKENS_PER_CALL: int = max(1, int(os.getenv("AETHEER_MAX_TOKENS_PER_CALL", "16384") or "16384"))
+
     def _call(self, model: str, messages: list[dict], **kwargs) -> str:
         """Route a completion request through litellm and capture token usage."""
         litellm = _litellm()
         litellm.suppress_debug_info = True
         litellm.drop_params = True
+        if "max_tokens" not in kwargs:
+            kwargs["max_tokens"] = self._MAX_TOKENS_PER_CALL
         response = litellm.completion(model=model, messages=messages, **kwargs)
         usage = getattr(response, "usage", None)
         if usage:
@@ -372,7 +388,12 @@ class AIAdapter:
                     "Token usage — prompt: %d, completion: %d, total: %d (session: %d)",
                     pt, ct, tt, self._session_usage["total_tokens"],
                 )
-        return response.choices[0].message.content or ""
+        raw_content = response.choices[0].message.content or ""
+        try:
+            from security.output_redactor import redact_credentials
+            return redact_credentials(raw_content)
+        except Exception:
+            return raw_content
 
     # Fallback model list iterated when the primary GitHub model returns an
     # "unknown model" error — tries each candidate in order until one succeeds.
