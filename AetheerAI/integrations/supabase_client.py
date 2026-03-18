@@ -67,6 +67,24 @@ class SupabaseClient(BaseServiceClient):
             result = {"user": result}
         return result
 
+    def admin_get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        """Look up an existing Supabase user by email via Admin API. Returns None if not found."""
+        from urllib.parse import quote as _quote
+        response = self._request(
+            "GET",
+            f"{self.config.auth_url}/admin/users",
+            headers=self._service_headers(use_service_role=True),
+            params={"filter": f"email.eq.{email}", "page": 1, "per_page": 1},
+            expected_statuses=(200,),
+            error_context="Supabase admin list users failed",
+        )
+        result = _as_dict(response)
+        users = result.get("users") or []
+        for u in users:
+            if isinstance(u, dict) and u.get("email", "").lower() == email.lower():
+                return {"user": u}
+        return None
+
     def sign_in_with_password(self, *, email: str, password: str) -> dict[str, Any]:
         response = self._request(
             "POST",

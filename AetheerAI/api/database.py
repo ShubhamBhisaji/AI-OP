@@ -73,6 +73,20 @@ def _default_sqlite_url() -> str:
     return f"sqlite:///{db_dir / 'aetheer.db'}"
 
 
+def _sanitize_db_url(raw_url: str) -> str:
+    value = str(raw_url or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1].strip()
+
+    # Guard against accidental escaped newlines appended via shell piping.
+    while value.endswith("\\r\\n"):
+        value = value[:-4].rstrip()
+    while value.endswith("\\n") or value.endswith("\\r"):
+        value = value[:-2].rstrip()
+
+    return value.rstrip("\r\n").strip()
+
+
 def _prepare_sqlite_directory(db_url: str) -> None:
     if not db_url.startswith("sqlite:///"):
         return
@@ -88,7 +102,9 @@ def _prepare_sqlite_directory(db_url: str) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
 
-_DB_URL = (os.getenv("DATABASE_URL") or _default_sqlite_url()).strip()
+_DB_URL = _sanitize_db_url(os.getenv("DATABASE_URL") or _default_sqlite_url())
+if not _DB_URL:
+    _DB_URL = _default_sqlite_url()
 _prepare_sqlite_directory(_DB_URL)
 
 engine = create_engine(

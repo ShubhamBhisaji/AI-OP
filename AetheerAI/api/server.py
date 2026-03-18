@@ -572,7 +572,10 @@ async def lifespan(app: FastAPI):
     global _sqlite_log_handler
 
     logger.info("AetheerAI API startup")
-    init_db()
+    try:
+        init_db()
+    except Exception as _init_exc:
+        logger.error("init_db failed — DB may be unavailable: %s", _init_exc)
 
     if _alert_webhook_url:
         logger.info("Runtime alert webhook configured")

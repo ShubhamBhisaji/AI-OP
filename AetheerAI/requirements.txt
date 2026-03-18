@@ -5,6 +5,7 @@
 fastapi>=0.111.0               # FastAPI framework
 uvicorn[standard]>=0.29.0      # ASGI server (use: uvicorn api.server:app --reload)
 sqlalchemy>=2.0.0              # ORM/database engine used by API persistence layer
+pg8000>=1.30.0                 # PostgreSQL driver for sqlalchemy postgresql+pg8000 URLs
 email-validator>=2.0.0         # Required by pydantic EmailStr fields
 python-multipart>=0.0.9        # Required for FastAPI form/file upload endpoints
 

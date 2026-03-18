@@ -120,13 +120,12 @@ _bearer = HTTPBearer(auto_error=False)
 # ── Request / response schemas ─────────────────────────────────────────────
 
 class RegisterRequest(BaseModel):
-    username: str  = Field(..., min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_\-]+$")
     email:    EmailStr
-    password: str  = Field(..., min_length=8, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1)
+    email:    EmailStr
     password: str = Field(..., min_length=1)
 
 
@@ -161,13 +160,14 @@ class AIAPISettingsRequest(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-def _make_token(user_id: int, username: str, is_admin: bool) -> str:
+def _make_token(user_id: int, username: str, is_admin: bool, supabase_user_id: str = "") -> str:
     exp = datetime.datetime.utcnow() + datetime.timedelta(hours=_EXPIRE_H)
     if not _HAS_JOSE:
         payload = {
             "sub": str(user_id),
             "un": username,
             "adm": is_admin,
+            "sid": supabase_user_id,
             "exp": int(exp.timestamp()),
         }
         payload_part = base64.urlsafe_b64encode(
@@ -178,7 +178,7 @@ def _make_token(user_id: int, username: str, is_admin: bool) -> str:
         return f"{payload_part}.{sig_part}"
 
     return _jwt.encode(
-        {"sub": str(user_id), "un": username, "adm": is_admin, "exp": exp},
+        {"sub": str(user_id), "un": username, "adm": is_admin, "sid": supabase_user_id, "exp": exp},
         _SECRET,
         algorithm=_ALG,
     )
@@ -258,7 +258,110 @@ def _reset_login_attempts(username: str, ip_addr: str | None) -> None:
         _login_attempts.pop(key, None)
 
 
+# ── Supabase user store helpers ─────────────────────────────────────────────
+# Users are persisted in Supabase `aetheer_users` table (service role key).
+# The local SQLite User is a warm cache; it is rebuilt on cold starts.
+
+def _sb_get_user(*, email: str | None = None, username: str | None = None, supabase_user_id: str | None = None) -> dict | None:
+    """Fetch a row from Supabase aetheer_users by email, username, or supabase_user_id."""
+    try:
+        supabase = SupabaseClient()
+        if email:
+            filters = {"email": f"eq.{email}"}
+        elif username:
+            filters = {"username": f"eq.{username}"}
+        elif supabase_user_id:
+            filters = {"supabase_user_id": f"eq.{supabase_user_id}"}
+        else:
+            return None
+        rows = supabase.query_rows(table="aetheer_users", filters=filters, limit=1, use_service_role=True)
+        if isinstance(rows, list) and rows:
+            return rows[0]
+    except Exception as exc:
+        logger.warning("Supabase aetheer_users lookup failed: %s", exc)
+    return None
+
+
+def _sb_count_users() -> int:
+    try:
+        supabase = SupabaseClient()
+        rows = supabase.query_rows(table="aetheer_users", select="id", use_service_role=True)
+        return len(rows) if isinstance(rows, list) else 0
+    except Exception:
+        return 0
+
+
+def _sb_create_user(*, supabase_user_id: str, username: str, email: str, is_admin: bool) -> dict | None:
+    try:
+        supabase = SupabaseClient()
+        result = supabase.insert_row(
+            table="aetheer_users",
+            payload={"supabase_user_id": supabase_user_id, "username": username,
+                     "email": email, "is_admin": is_admin, "is_active": True},
+            use_service_role=True,
+        )
+        rows = result if isinstance(result, list) else ([result] if result else [])
+        return rows[0] if rows else None
+    except Exception as exc:
+        logger.warning("Supabase aetheer_users insert failed: %s", exc)
+    return None
+
+
+def _recover_local_user(db: Session, sb_row: dict) -> "User | None":
+    """Recreate a local SQLite User from a Supabase aetheer_users row (cold-start recovery)."""
+    if not sb_row:
+        return None
+    existing = db.query(User).filter(User.supabase_user_id == sb_row.get("supabase_user_id")).first()
+    if existing:
+        return existing
+    try:
+        import datetime as _dt
+        raw_ts = sb_row.get("created_at")
+        try:
+            created_at = _dt.datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")) if raw_ts else _dt.datetime.utcnow()
+        except Exception:
+            created_at = _dt.datetime.utcnow()
+        user = User(
+            supabase_user_id=sb_row.get("supabase_user_id"),
+            username=sb_row.get("username"),
+            email=sb_row.get("email"),
+            hashed_pw="",
+            is_admin=bool(sb_row.get("is_admin", False)),
+            is_active=bool(sb_row.get("is_active", True)),
+            created_at=created_at,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+    except Exception as exc:
+        logger.warning("Could not recover local user from Supabase row: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    return None
+
+
 # ── Auth dependency ────────────────────────────────────────────────────────
+
+def _resolve_user_from_payload(payload: dict, db: Session) -> "User":
+    """Find User in local DB; recover from Supabase on cold-start cache miss."""
+    user_id = int(payload.get("sub", 0))
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if user:
+        return user
+
+    # Cold-start recovery: local SQLite was wiped — rebuild from Supabase.
+    sid = str(payload.get("sid") or "").strip()
+    if sid:
+        sb_row = _sb_get_user(supabase_user_id=sid)
+        if sb_row:
+            user = _recover_local_user(db, sb_row)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    return user
+
 
 def get_current_user(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
@@ -268,21 +371,13 @@ def get_current_user(
     if creds is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     payload = _decode_token(creds.credentials)
-    user_id = int(payload.get("sub", 0))
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
-    return user
+    return _resolve_user_from_payload(payload, db)
 
 
 def authenticate_bearer_token(token: str, db: Session) -> User:
     """Resolve an active user from a raw bearer token string."""
     payload = _decode_token(str(token or "").strip())
-    user_id = int(payload.get("sub", 0))
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
-    return user
+    return _resolve_user_from_payload(payload, db)
 
 
 def resolve_bearer_user_from_request(request: Request, db: Session) -> User:
@@ -324,51 +419,73 @@ def require_admin(current_user: Annotated[User, Depends(get_current_user)]) -> U
 @router.post("/register", response_model=TokenResponse, status_code=201)
 def register(req: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     try:
-        # Check if user already exists
-        if db.query(User).filter(
-            (User.username == req.username) | (User.email == req.email)
-        ).first():
-            raise HTTPException(status_code=409, detail="Username or email already in use")
+        # Derive username from email local-part (e.g. "alice@example.com" → "alice")
+        derived_username = req.email.split("@")[0]
 
-        # Use Supabase Auth for registration
+        # Check if email already in local DB
+        if db.query(User).filter(User.email == req.email).first():
+            raise HTTPException(status_code=409, detail="Email already in use")
+
         supabase = SupabaseClient()
-        
-        # Check if first user (for admin role)
-        is_first = db.query(User).count() == 0
-        role = "admin" if is_first else "user"
-        
-        # Register with Supabase
-        supabase_user = supabase.sign_up(
-            email=req.email,
-            password=req.password,
-            metadata={"username": req.username, "role": role}
-        )
-        
-        # Create local user record
-        user = User(
-            supabase_user_id=supabase_user["user"]["id"],  # Store Supabase UUID
-            username=req.username,
-            email=req.email,
-            hashed_pw="",  # Not used with Supabase Auth
-            is_admin=is_first,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
 
-        _log(db, user.id, "register", {"username": user.username, "supabase_id": supabase_user["user"]["id"]}, _ip(request))
-        
-        # Generate local JWT token
-        token = _make_token(user.id, user.username, user.is_admin)
-        
+        supabase_user = None
+        try:
+            supabase_user = supabase.sign_up(
+                email=req.email,
+                password=req.password,
+                metadata={"role": "user"},
+            )
+        except APIRequestError as e:
+            if e.status_code == 422:
+                # Email already exists in Supabase — fetch and link.
+                logger.warning("Supabase 422 on sign_up for %s — fetching existing user", req.email)
+                supabase_user = supabase.admin_get_user_by_email(req.email)
+                if not supabase_user:
+                    body = e.response_body or {}
+                    msg = (body.get("msg") or body.get("message") or str(e)) if isinstance(body, dict) else str(e)
+                    raise HTTPException(status_code=400, detail=f"Registration failed: {msg}")
+            elif e.status_code == 429:
+                raise HTTPException(status_code=429, detail="Sign-up rate limit exceeded. Please try again later.")
+            else:
+                body = e.response_body or {}
+                msg = (body.get("msg") or body.get("message") or str(e)) if isinstance(body, dict) else str(e)
+                logger.error("Supabase registration error: %s | body: %s", e, body)
+                raise HTTPException(status_code=400, detail=f"Registration failed: {msg}")
+
+        sb_uid = supabase_user["user"]["id"]
+
+        # Persist to Supabase aetheer_users (survives cold starts).
+        is_first = _sb_count_users() == 0
+        _sb_create_user(supabase_user_id=sb_uid, username=derived_username,
+                        email=req.email, is_admin=is_first)
+
+        # Create / refresh local SQLite cache record.
+        user = db.query(User).filter(User.supabase_user_id == sb_uid).first()
+        if not user:
+            user = User(supabase_user_id=sb_uid, username=derived_username,
+                        email=req.email, hashed_pw="", is_admin=is_first)
+            db.add(user)
+            try:
+                db.commit()
+                db.refresh(user)
+            except Exception as db_exc:
+                logger.warning("Local DB user insert failed (non-fatal): %s", db_exc)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                user = User(supabase_user_id=sb_uid, username=derived_username,
+                            email=req.email, hashed_pw="", is_admin=is_first, id=0)
+
+        _log(db, getattr(user, "id", None), "register",
+             {"email": req.email, "supabase_id": sb_uid}, _ip(request))
+
+        token = _make_token(getattr(user, "id", 0), user.username, user.is_admin,
+                            supabase_user_id=sb_uid)
         return TokenResponse(access_token=token, user=user.to_dict())
-        
-    except APIRequestError as e:
-        logger.error(f"Supabase registration error: {e}")
-        if e.status_code == 429:
-            raise HTTPException(status_code=429, detail="Sign-up rate limit exceeded (Supabase). Please try again later.")
-        # Pass through the error detail from supabase (e.g. password too weak)
-        raise HTTPException(status_code=400, detail=str(e))
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=400, detail="Registration failed")
@@ -377,58 +494,92 @@ def register(req: RegisterRequest, request: Request, db: Session = Depends(get_d
 @router.post("/login", response_model=TokenResponse)
 def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
     try:
-        # Find user by username or email
-        user = db.query(User).filter(
-            (User.username == req.username) | (User.email == req.username),
-            User.is_active == True
-        ).first()
-        
-        if not user:
+        supabase = SupabaseClient()
+
+        # 1. Authenticate against Supabase Auth first — this is the source of truth.
+        try:
+            session = supabase.sign_in_with_password(email=req.email, password=req.password)
+        except APIRequestError as _sb_err:
+            logger.error("Supabase sign_in failed: status=%s body=%s", _sb_err.status_code, _sb_err.response_body)
             raise HTTPException(status_code=401, detail="Invalid credentials")
-        
-        # Handle legacy users without Supabase ID
+
+        sb_auth_user = session.get("user") or {}
+        sb_uid = str(sb_auth_user.get("id") or "")
+        if not sb_uid:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # 2. Find or restore local SQLite cache record.
+        user = (
+            db.query(User).filter(User.supabase_user_id == sb_uid, User.is_active == True).first()
+            or db.query(User).filter(User.email == req.email, User.is_active == True).first()
+        )
+
+        if not user:
+            # Cold-start: try aetheer_users table first, then fall back to Supabase Auth data.
+            sb_row = _sb_get_user(email=req.email)
+            if sb_row:
+                user = _recover_local_user(db, sb_row)
+
+        if not user:
+            # Last resort: rebuild from Supabase Auth user data.
+            is_first = _sb_count_users() == 0
+            derived_username = req.email.split("@")[0]
+            _sb_create_user(supabase_user_id=sb_uid, username=derived_username,
+                            email=req.email, is_admin=is_first)
+            user = User(supabase_user_id=sb_uid, username=derived_username,
+                        email=req.email, hashed_pw="", is_admin=is_first)
+            db.add(user)
+            try:
+                db.commit()
+                db.refresh(user)
+            except Exception as db_exc:
+                logger.warning("Local DB user recreate failed: %s", db_exc)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+
+        # 3. Legacy users (no Supabase ID) — verify local password only.
         if not user.supabase_user_id:
-            # For legacy users, use local password verification
             if not _pwd_ctx.verify(req.password, user.hashed_pw):
                 raise HTTPException(status_code=401, detail="Invalid credentials")
-            
-            _log(db, user.id, "login", {"username": user.username, "legacy_auth": True}, _ip(request))
-            
-            # Generate local JWT token
-            token = _make_token(user.id, user.username, user.is_admin)
-            
-            setup_status = get_customer_setup_status(user.id)
-            return TokenResponse(
-                access_token=token,
-                user=user.to_dict(),
-                requires_supabase_setup=bool(setup_status.get("requires_setup", False)),
-                customer_supabase_configured=bool(setup_status.get("configured", False)),
-            )
-        
-        # Use Supabase Auth for users with Supabase ID
-        supabase = SupabaseClient()
-        session = supabase.sign_in_with_password(email=user.email, password=req.password)
-        
-        # Verify the Supabase user matches
-        if session["user"]["id"] != user.supabase_user_id:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        
-        _log(db, user.id, "login", {"username": user.username, "supabase_id": user.supabase_user_id}, _ip(request))
-        
-        # Generate local JWT token
-        token = _make_token(user.id, user.username, user.is_admin)
-        
-        setup_status = get_customer_setup_status(user.id)
-        return TokenResponse(
-            access_token=token,
-            user=user.to_dict(),
-            requires_supabase_setup=bool(setup_status.get("requires_setup", False)),
-            customer_supabase_configured=bool(setup_status.get("configured", False)),
-        )
-        
+
+        _log(db, getattr(user, "id", None), "login",
+             {"email": req.email, "supabase_id": sb_uid}, _ip(request))
+        token = _make_token(getattr(user, "id", 0), user.username, user.is_admin,
+                            supabase_user_id=sb_uid)
+        setup_status = get_customer_setup_status(getattr(user, "id", 0))
+        return TokenResponse(access_token=token, user=user.to_dict(),
+                             requires_supabase_setup=bool(setup_status.get("requires_setup", False)),
+                             customer_supabase_configured=bool(setup_status.get("configured", False)))
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Login failed: {e}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@router.post("/logout")
+def logout(
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    current_user: User = Depends(get_current_user),
+):
+    """Sign out: revoke the Supabase session so the token is invalidated server-side."""
+    if creds and current_user.supabase_user_id:
+        try:
+            supabase = SupabaseClient()
+            supabase._request(
+                "POST",
+                f"{supabase.config.auth_url}/logout",
+                headers={**supabase._service_headers(use_service_role=False),
+                         "Authorization": f"Bearer {creds.credentials}"},
+                expected_statuses=(200, 204),
+                error_context="Supabase logout",
+            )
+        except Exception as exc:
+            logger.warning("Supabase logout failed (non-fatal): %s", exc)
+    return {"success": True, "message": "Signed out"}
 
 
 @router.get("/me")
