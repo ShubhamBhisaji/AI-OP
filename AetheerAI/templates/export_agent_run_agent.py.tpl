@@ -76,13 +76,25 @@ def main():
     parser.add_argument("--task", default=None)
     parser.add_argument("--provider", default=None)
     parser.add_argument("--model", default=None)
+    parser.add_argument("--setup", action="store_true", help="Re-run onboarding wizard")
     args = parser.parse_args()
 
     provider = args.provider or os.environ.get("AETHEERAI_DEFAULT_PROVIDER", "").strip()
     model = args.model or os.environ.get("AETHEERAI_DEFAULT_MODEL", "").strip() or None
 
-    if not provider:
-        provider, model = _first_time_setup()
+    if not provider or args.setup:
+        # Use the full onboarding wizard (handles integrations + AI provider)
+        try:
+            from cli.onboarding import run_onboarding
+            env = run_onboarding(
+                config_path=os.path.join(_ROOT, "config.json"),
+                env_path=os.path.join(_ROOT, ".env"),
+            )
+            provider = env.get("AETHEERAI_DEFAULT_PROVIDER", "") or provider
+            model = env.get("AETHEERAI_DEFAULT_MODEL", "") or model
+        except Exception:
+            # Fallback to inline setup if onboarding module is unavailable
+            provider, model = _first_time_setup()
 
     from cli.agent_window import run_agent_window
 

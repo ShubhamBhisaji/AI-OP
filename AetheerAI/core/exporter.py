@@ -50,16 +50,57 @@ class ExporterService:
         export_dir.mkdir(parents=True, exist_ok=True)
 
         files_written: list[str] = []
+
+        # agent_profile.json — full runtime profile
         self._write(export_dir / "agent_profile.json", json.dumps(agent.to_dict(), indent=2))
         files_written.append("agent_profile.json")
 
-        dirs_to_copy = ["agents", "ai", "core", "factory", "memory", "registry", "skills", "tools", "cli"]
+        # config.json — machine-readable spec for dynamic rebuilds / onboarding
+        spec_payload = agent.profile.get("spec") or {
+            "name": agent.name,
+            "purpose": agent.role,
+            "skills": agent.profile.get("skills", []),
+            "tools": agent.profile.get("tools", []),
+            "integrations": [],
+            "permissions": agent.profile.get("permissions", []),
+            "permission_level": agent.profile.get("permission_level", 1),
+            "knowledge": [],
+            "objectives": agent.profile.get("objectives", []),
+            "version": agent.profile.get("version", "1.0.0"),
+        }
+        self._write(export_dir / "config.json", json.dumps(spec_payload, indent=2))
+        files_written.append("config.json")
+
+        # Copy source packages — expanded to include all runtime dependencies
+        dirs_to_copy = [
+            "agents", "ai", "core", "factory", "memory", "registry",
+            "skills", "tools", "cli",
+            "integrations", "integrator", "knowledge",
+            "security", "utils", "workers",
+        ]
         for d in dirs_to_copy:
             src = project_root / d
             dst = export_dir / d
             if src.exists():
                 shutil.copytree(src, dst, dirs_exist_ok=True)
                 files_written.append(f"{d}/")
+
+        # Create knowledge/ placeholder if not already copied (no ChromaDB files yet)
+        knowledge_dir = export_dir / "knowledge"
+        knowledge_dir.mkdir(exist_ok=True)
+        knowledge_readme = (
+            "# Knowledge\n\n"
+            "Place documents here (TXT, PDF, CSV, MD) to inject them into the agent.\n\n"
+            "```python\n"
+            "from knowledge.loader import KnowledgeLoader\n"
+            "loader = KnowledgeLoader(memory_manager)\n"
+            "loader.load_files('__AGENT_NAME__', ['knowledge/faq.txt'])\n"
+            "```\n"
+        ).replace("__AGENT_NAME__", name)
+        knowledge_placeholder = knowledge_dir / "README.md"
+        if not knowledge_placeholder.exists():
+            self._write(knowledge_placeholder, knowledge_readme)
+            files_written.append("knowledge/README.md")
 
         blank_env = (
             "# AetheerAI — An AI Master!! Agent — AI Configuration\n"
@@ -105,12 +146,27 @@ class ExporterService:
         sys_dir = self._kernel._safe_child_path(exports_root, system_name, fallback="system")
         sys_dir.mkdir(parents=True, exist_ok=True)
 
-        dirs_to_copy = ["agents", "ai", "core", "factory", "memory", "registry", "skills", "tools", "cli"]
+        dirs_to_copy = [
+            "agents", "ai", "core", "factory", "memory", "registry",
+            "skills", "tools", "cli",
+            "integrations", "integrator", "knowledge",
+            "security", "utils", "workers",
+        ]
         for d in dirs_to_copy:
             src = project_root / d
             dst = sys_dir / d
             if src.exists():
                 shutil.copytree(src, dst, dirs_exist_ok=True)
+
+        # Knowledge placeholder
+        knowledge_dir = sys_dir / "knowledge"
+        knowledge_dir.mkdir(exist_ok=True)
+        knowledge_placeholder = knowledge_dir / "README.md"
+        if not knowledge_placeholder.exists():
+            self._write(
+                knowledge_placeholder,
+                "# Knowledge\n\nDrop documents here for agent RAG injection.\n",
+            )
 
         blank_env = (
             f"# {system_name} — AI System Configuration\n"

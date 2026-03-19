@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from agents.base_agent import BaseAgent
+from agents.agent_spec import AgentSpec
 from security.policy_engine import PermissionLevel
 from utils.json_parser import extract_json
 
@@ -452,6 +453,189 @@ class AgentFactory:
                     tmp_path.unlink()
                 except OSError:
                     pass
+
+    # ------------------------------------------------------------------
+    # Spec-driven assembly (GAP 2)
+    # ------------------------------------------------------------------
+
+    def build_from_spec(self, spec: AgentSpec) -> BaseAgent:
+        """
+        Assemble and register a fully custom agent from a formal AgentSpec.
+
+        This is the primary entry point for dynamic agent generation.
+        Resolution order for tools and skills:
+          1) Explicit values in spec
+          2) Skill catalogue look-ups via load_skills()
+          3) Integration defaults via load_integrations()
+
+        Parameters
+        ----------
+        spec : AgentSpec
+            A validated agent specification produced by the caller or by
+            an AI-assisted spec builder.
+
+        Returns
+        -------
+        BaseAgent
+            The assembled, registered agent instance.
+        """
+        errors = spec.validate()
+        if errors:
+            raise ValueError(f"AgentSpec validation failed: {'; '.join(errors)}")
+
+        if self.registry.get(spec.name):
+            raise ValueError(f"Agent '{spec.name}' already exists in the registry.")
+
+        # Resolve skills — merge spec skills with domain skills from catalogue
+        resolved_skills = self._merge_unique(
+            spec.skills,
+            self.load_skills(spec.skills),
+        )
+
+        # Resolve tools — use explicit tools or fall back to integration defaults
+        resolved_tools: list[str] = list(spec.tools) if spec.tools else []
+        for integration_tool in self.load_integrations(spec.integrations):
+            if integration_tool not in resolved_tools:
+                resolved_tools.append(integration_tool)
+
+        # Validate tools against registry
+        available_tools = set(self.tool_manager.list_tools())
+        for tool in list(resolved_tools):
+            if tool not in available_tools:
+                logger.warning(
+                    "AgentFactory.build_from_spec: tool '%s' not registered, skipping.", tool
+                )
+                resolved_tools.remove(tool)
+
+        # Default objectives if none provided
+        objectives = list(spec.objectives) if spec.objectives else [
+            f"Fulfil purpose: {spec.purpose[:100]}",
+            "Produce reliable, auditable outcomes",
+        ]
+
+        agent = BaseAgent(
+            name=spec.name,
+            role=spec.purpose,
+            objectives=objectives,
+            tools=resolved_tools,
+            skills=resolved_skills,
+            permissions=list(spec.permissions),
+            permission_level=self._normalize_permission_level(spec.permission_level),
+            ai_adapter=self.ai_adapter,
+            tool_manager=self.tool_manager,
+        )
+
+        # Attach spec metadata so it can be recovered later
+        agent.profile["spec"] = spec.to_dict()
+
+        self.registry.register(agent)
+        logger.info(
+            "AgentFactory.build_from_spec: created agent '%s' (v%s) level=%d, "
+            "skills=%d, tools=%d, integrations=%s.",
+            spec.name, spec.version,
+            self._normalize_permission_level(spec.permission_level),
+            len(resolved_skills), len(resolved_tools),
+            spec.integrations,
+        )
+        return agent
+
+    @staticmethod
+    def load_skills(skill_names: list[str]) -> list[str]:
+        """
+        Resolve skill names to a deduplicated, expanded skill list by
+        consulting modular skill packages under skills/<domain>/.
+
+        Each domain package exposes a SKILLS list of strings.  If a
+        skill_name matches a domain folder name the full domain skill list
+        is included; otherwise the name is passed through as-is.
+
+        Parameters
+        ----------
+        skill_names : list[str]
+            Raw skill names or domain names from the spec.
+
+        Returns
+        -------
+        list[str]
+            Expanded, deduplicated skill list.
+        """
+        from importlib import import_module
+
+        expanded: list[str] = []
+        for name in skill_names:
+            if name and name not in expanded:
+                expanded.append(name)
+            # Try to load domain module skills/<name>/__init__.py
+            try:
+                mod = import_module(f"skills.{name}")
+                domain_skills: list[str] = getattr(mod, "SKILLS", [])
+                for s in domain_skills:
+                    if s and s not in expanded:
+                        expanded.append(s)
+            except ModuleNotFoundError:
+                pass  # Not a domain module — skill name is used as-is
+            except Exception as exc:
+                logger.debug("AgentFactory.load_skills: could not load skills.%s: %s", name, exc)
+
+        return expanded
+
+    @staticmethod
+    def load_integrations(integration_names: list[str]) -> list[str]:
+        """
+        Map integration type names to the default tools they require.
+
+        Each integration package under integrations/<name>/ may expose a
+        REQUIRED_TOOLS list.  Falls back to a built-in mapping.
+
+        Parameters
+        ----------
+        integration_names : list[str]
+            Integration identifiers from the spec (e.g. "website", "crm").
+
+        Returns
+        -------
+        list[str]
+            Tool names that should be attached to the agent.
+        """
+        from importlib import import_module
+
+        # Built-in integration → tool mapping (fallback)
+        _INTEGRATION_TOOLS: dict[str, list[str]] = {
+            "website": ["http_client", "web_scraper"],
+            "api": ["http_client"],
+            "crm": ["http_client"],
+            "email": ["email_tool"],
+            "slack": ["slack_discord_tool"],
+            "database": ["sql_db_tool"],
+            "devops": ["terminal_tool", "github_tool"],
+            "ecommerce": ["http_client", "csv_tool"],
+            "analytics": ["csv_tool", "analytics_tool"],
+            "custom": [],
+        }
+
+        tools: list[str] = []
+        for name in integration_names:
+            # Try to load dynamic integration module
+            try:
+                mod = import_module(f"integrations.{name}")
+                required: list[str] = getattr(mod, "REQUIRED_TOOLS", [])
+                for t in required:
+                    if t and t not in tools:
+                        tools.append(t)
+                continue
+            except ModuleNotFoundError:
+                pass
+            except Exception as exc:
+                logger.debug(
+                    "AgentFactory.load_integrations: could not load integrations.%s: %s", name, exc
+                )
+
+            # Fall back to built-in mapping
+            for t in _INTEGRATION_TOOLS.get(name, []):
+                if t and t not in tools:
+                    tools.append(t)
+
+        return tools
 
     @staticmethod
     def list_presets() -> list[str]:
