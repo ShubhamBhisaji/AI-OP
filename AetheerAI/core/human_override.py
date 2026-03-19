@@ -533,3 +533,122 @@ class HumanOverrideController:
             f"patterns={len(self._required_approvals)}, "
             f"pending={sum(1 for r in self._approvals.values() if r.status == ApprovalStatus.PENDING)})"
         )
+
+    # ── Emergency Disable ─────────────────────────────────────────────────
+
+    def emergency_disable(
+        self,
+        operator: str = "system",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """
+        Hard disable — immediately kills all activity and locks the agent.
+
+        Unlike shutdown(mode="emergency"), this also:
+            1. Cancels all pending approvals
+            2. Blocks all future approval requests
+            3. Disables the action gate
+        """
+        result: dict[str, Any] = {
+            "action": "emergency_disable",
+            "agent": self.agent_name,
+        }
+
+        # Cancel all pending approvals
+        with self._lock:
+            cancelled = 0
+            for req in self._approvals.values():
+                if req.status == ApprovalStatus.PENDING:
+                    req.status = ApprovalStatus.REJECTED
+                    req.decided_by = operator
+                    req.decided_at = time.time()
+                    req.reason = f"Emergency disable: {reason}"
+                    cancelled += 1
+            result["approvals_cancelled"] = cancelled
+
+        # Kill switch
+        if self._kill_switch is not None:
+            try:
+                ks_result = self._kill_switch.emergency_stop(
+                    operator=operator, reason=reason
+                )
+                result["kill_switch"] = ks_result
+            except Exception as exc:
+                result["kill_switch_error"] = str(exc)
+
+        # Disable action gate
+        if self._action_gate is not None:
+            try:
+                self._action_gate.disable()
+                result["gate_disabled"] = True
+            except Exception as exc:
+                result["gate_error"] = str(exc)
+
+        self._record_event("emergency_disable", operator, {"reason": reason})
+        logger.critical(
+            "HumanOverride[%s]: EMERGENCY DISABLE by %s. Reason: %s",
+            self.agent_name, operator, reason,
+        )
+        return result
+
+    # ── Policy Hotswap ────────────────────────────────────────────────────
+
+    def policy_hotswap(
+        self,
+        policy: dict[str, Any],
+        operator: str = "system",
+    ) -> dict[str, Any]:
+        """
+        Replace agent policy without redeploy.
+
+        Accepts a policy dict that can include any combination of:
+            - "rules"                : GuardrailController rule updates
+            - "approval_patterns"    : Replace required approval patterns
+            - "rate_limits"          : EconomicGuardrails rate limit updates
+            - "quotas"              : EconomicGuardrails quota updates
+            - "budget_usd"          : Budget cap update
+
+        Returns a summary of what was applied.
+        """
+        applied: dict[str, Any] = {}
+        errors: list[str] = []
+
+        # Rules
+        if "rules" in policy and self._guardrails is not None:
+            try:
+                self._guardrails.update_rules(policy["rules"])
+                applied["rules"] = list(policy["rules"].keys())
+            except Exception as exc:
+                errors.append(f"rules: {exc}")
+
+        # Approval patterns (replace entirely)
+        if "approval_patterns" in policy:
+            with self._lock:
+                self._required_approvals = set(
+                    p.lower() for p in policy["approval_patterns"]
+                )
+            applied["approval_patterns"] = sorted(self._required_approvals)
+
+        # Forward rate limits / quotas / budget to control panel or guardrails
+        if self._control_panel is not None:
+            forward_keys = {"rate_limits", "quotas", "budget_usd"}
+            panel_updates = {
+                k: v for k, v in policy.items() if k in forward_keys
+            }
+            if panel_updates:
+                try:
+                    self._control_panel.update_config(panel_updates, operator=operator)
+                    applied["config"] = list(panel_updates.keys())
+                except Exception as exc:
+                    errors.append(f"config: {exc}")
+
+        self._record_event("policy_hotswap", operator, {
+            "policy_keys": list(policy.keys()),
+            "applied": applied,
+            "errors": errors,
+        })
+        logger.info(
+            "HumanOverride[%s]: policy hotswap by %s — applied: %s",
+            self.agent_name, operator, list(applied.keys()),
+        )
+        return {"status": "applied", "applied": applied, "errors": errors}

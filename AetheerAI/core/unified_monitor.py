@@ -561,3 +561,102 @@ class UnifiedMonitor:
             f"UnifiedMonitor(agent={self.agent_name!r}, "
             f"events={len(self._timeline)}, decisions={len(self._decisions)})"
         )
+
+    # ── Retry Tracking ───────────────────────────────────────────────────
+
+    def record_retry(
+        self,
+        action: str,
+        attempt: int,
+        max_attempts: int,
+        error: str = "",
+        outcome: str = "retrying",
+    ) -> None:
+        """
+        Record a retry event for visibility into retry storms.
+
+        Parameters
+        ----------
+        action       : The action being retried.
+        attempt      : Current attempt number (1-indexed).
+        max_attempts : Maximum attempts allowed.
+        error        : Error that triggered the retry.
+        outcome      : "retrying", "succeeded", "exhausted"
+        """
+        self.record_event(
+            source="retry",
+            event=f"retry:{action} ({attempt}/{max_attempts})",
+            level="warning" if outcome == "retrying" else (
+                "info" if outcome == "succeeded" else "error"
+            ),
+            details={
+                "action": action,
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "error": error[:200] if error else "",
+                "outcome": outcome,
+            },
+        )
+
+    def retry_summary(self) -> dict[str, Any]:
+        """Summarize retry activity — surfaces retry storms."""
+        retries = [
+            e for e in self._timeline
+            if e.source == "retry"
+        ]
+        by_action: dict[str, dict[str, int]] = {}
+        for r in retries:
+            action = r.details.get("action", "unknown")
+            if action not in by_action:
+                by_action[action] = {"attempts": 0, "exhausted": 0}
+            by_action[action]["attempts"] += 1
+            if r.details.get("outcome") == "exhausted":
+                by_action[action]["exhausted"] += 1
+
+        return {
+            "total_retries": len(retries),
+            "by_action": by_action,
+        }
+
+    # ── Actions Taken Report ─────────────────────────────────────────────
+
+    def actions_taken(self, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        Return a list of all actions taken (not just decisions).
+
+        Merges action proxy history with observability actions.
+        """
+        actions = []
+
+        # From proxy
+        if self._action_proxy is not None:
+            try:
+                hist = self._action_proxy.history(limit=limit)
+                for h in hist:
+                    actions.append({
+                        "source": "proxy",
+                        "action": h.get("action", ""),
+                        "category": h.get("category", ""),
+                        "allowed": h.get("allowed", False),
+                        "success": h.get("success", False),
+                        "duration": h.get("duration", 0),
+                        "ts": h.get("ts", 0),
+                    })
+            except Exception:
+                pass
+
+        # From timeline
+        for e in self._timeline:
+            if e.source == "action":
+                actions.append({
+                    "source": "timeline",
+                    "action": e.event,
+                    "category": "",
+                    "allowed": True,
+                    "success": e.level != "error",
+                    "duration": e.details.get("duration", 0),
+                    "ts": e.timestamp,
+                })
+
+        actions.sort(key=lambda a: a.get("ts", 0), reverse=True)
+        return actions[:limit]

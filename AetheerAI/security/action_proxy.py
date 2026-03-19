@@ -389,11 +389,16 @@ class ActionProxy:
                 logger.debug("ActionProxy: guardrails check failed: %s", exc)
 
         # Step 2: ActionGate authorization (mandatory — the single gate)
+        # ActionGate.execute_guarded expects fn(context) -> result
+        raw_fn = execute_fn or (lambda: {"dry_run": True})
+        def _wrapped_fn(ctx: dict) -> Any:
+            return raw_fn()
+
         try:
             gate_result = self._gate.execute_guarded(
                 agent_name=self.agent_name,
                 action=action,
-                fn=execute_fn or (lambda: {"dry_run": True}),
+                fn=_wrapped_fn,
                 context=context,
                 category=category.value,
                 timeout_seconds=timeout_seconds,
@@ -416,25 +421,16 @@ class ActionProxy:
 
         duration = time.time() - start
 
-        # Step 3: Build result from gate response
-        allowed = gate_result.allowed if hasattr(gate_result, "allowed") else gate_result.get("allowed", False)
-        success = gate_result.success if hasattr(gate_result, "success") else gate_result.get("success", False)
-        error = ""
-        fn_result = None
-
-        if hasattr(gate_result, "error"):
-            error = gate_result.error or ""
-        elif isinstance(gate_result, dict):
-            error = gate_result.get("error", "")
-
-        if hasattr(gate_result, "result"):
-            fn_result = gate_result.result
-        elif isinstance(gate_result, dict):
-            fn_result = gate_result.get("result")
+        # Step 3: Build result from gate response (GuardedResult dataclass)
+        # GuardedResult fields: success, result, error, denied, denial_reason, ...
+        denied = getattr(gate_result, "denied", False)
+        allowed = not denied
+        error = getattr(gate_result, "error", "") or ""
+        fn_result = getattr(gate_result, "result", None)
 
         if not allowed:
             self._total_blocked += 1
-        if error:
+        if error and allowed:
             self._total_errors += 1
 
         result = ProxyResult(
@@ -546,6 +542,128 @@ class ActionProxy:
             f"ActionProxy(agent={self.agent_name!r}, "
             f"calls={self._total_calls}, blocked={self._total_blocked})"
         )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GatedHTTPTransport — Intercepts ALL HTTP at the transport layer
+# ═════════════════════════════════════════════════════════════════════════════
+
+class GatedHTTPTransport:
+    """
+    Drop-in replacement for RequestsHTTPTransport that forces EVERY
+    HTTP request through ActionGate before it reaches the network.
+
+    Inject this into any BaseServiceClient to make bypass impossible:
+
+        gate = ActionGate(guardrail=gc)
+        gated = GatedHTTPTransport(agent_name="bot", action_gate=gate)
+        client = GenericAPIClient(transport=gated)
+        # Every client.call() now goes through the gate automatically.
+
+    The transport implements the HTTPTransport protocol so it works
+    with ALL integration clients (GenericAPIClient, WebsiteConnector,
+    Meta, Infobip, PayU, Supabase, Vercel, etc.).
+    """
+
+    def __init__(
+        self,
+        agent_name: str,
+        action_gate: Any,
+        inner_transport: Any = None,
+        guardrails: Any = None,
+    ) -> None:
+        self._agent_name = agent_name
+        self._gate = action_gate
+        self._guardrails = guardrails
+        # Lazy import to avoid circular dependency
+        if inner_transport is None:
+            from integrations.http import RequestsHTTPTransport
+            inner_transport = RequestsHTTPTransport(
+                service_name="gated",
+            )
+        self._inner = inner_transport
+        self._blocked_count = 0
+        self._total_count = 0
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Any = None,
+        params: Any = None,
+        json_body: Any = None,
+        data: Any = None,
+        files: Any = None,
+        timeout: int | None = None,
+    ) -> Any:
+        """
+        HTTPTransport-compatible request method.
+
+        Before the HTTP call reaches the network:
+            1. Economic guardrails check (if registered)
+            2. ActionGate authorization (mandatory)
+            3. Inner transport executes the actual HTTP call
+        """
+        self._total_count += 1
+        action_name = f"http.{method.upper()}:{_truncate_url(url)}"
+
+        # Economic guardrails pre-check
+        if self._guardrails is not None:
+            try:
+                check = self._guardrails.check_quota(
+                    agent_name=self._agent_name,
+                    category="api_call",
+                )
+                if check.get("allowed") is False:
+                    self._blocked_count += 1
+                    raise PermissionError(
+                        f"Economic guardrail blocked: {check.get('reason', 'quota exceeded')}"
+                    )
+            except PermissionError:
+                raise
+            except Exception:
+                pass
+
+        # ActionGate enforcement
+        def _do_request(ctx):
+            return self._inner.request(
+                method=method,
+                url=url,
+                headers=headers,
+                params=params,
+                json_body=json_body,
+                data=data,
+                files=files,
+                timeout=timeout,
+            )
+
+        gate_result = self._gate.execute_guarded(
+            agent_name=self._agent_name,
+            action=action_name,
+            fn=_do_request,
+            context={"method": method, "url": url},
+            category="api_call",
+            timeout_seconds=float(timeout) if timeout else 120.0,
+        )
+
+        if gate_result.denied:
+            self._blocked_count += 1
+            raise PermissionError(
+                f"ActionGate denied: {gate_result.denial_reason or gate_result.error}"
+            )
+
+        if not gate_result.success:
+            raise RuntimeError(gate_result.error or "Gated request failed")
+
+        return gate_result.result
+
+    @property
+    def stats(self) -> dict[str, int]:
+        return {
+            "total": self._total_count,
+            "blocked": self._blocked_count,
+        }
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

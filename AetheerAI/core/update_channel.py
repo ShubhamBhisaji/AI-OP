@@ -522,3 +522,157 @@ class UpdateChannel:
             f"current={self._vm.current_version!r}, "
             f"available={available})"
         )
+
+    # ── Patch Verification ────────────────────────────────────────────────
+
+    def verify_update(
+        self,
+        version: str,
+        verify_fn: Callable | None = None,
+    ) -> dict[str, Any]:
+        """
+        Verify an update before application.
+
+        Runs a verification function against the update to check
+        integrity, compatibility, and safety.
+
+        Parameters
+        ----------
+        version   : Version to verify.
+        verify_fn : (UpdateRecord) -> (bool, str) verification callable.
+                    Returns (passed, message).
+        """
+        record = self._updates.get(version)
+        if record is None:
+            return {"status": "error", "message": f"Update {version} not found."}
+
+        checks: list[dict[str, Any]] = []
+
+        # 1. Version format check
+        try:
+            from .version_manager import SemVer
+            SemVer.parse(version)
+            checks.append({"check": "version_format", "passed": True})
+        except (ValueError, ImportError):
+            checks.append({"check": "version_format", "passed": False, "error": "Invalid semver"})
+
+        # 2. Has changes listed
+        has_changes = bool(record.changes)
+        checks.append({"check": "changelog", "passed": has_changes})
+
+        # 3. Breaking changes documented
+        if record.update_type != "bugfix":
+            checks.append({
+                "check": "breaking_changes_documented",
+                "passed": True,  # informational
+                "breaking": record.breaking_changes,
+            })
+
+        # 4. Migration function provided for non-trivial updates
+        has_migration = record.migration_fn is not None
+        checks.append({
+            "check": "migration_fn",
+            "passed": has_migration or record.update_type == "bugfix",
+            "has_migration": has_migration,
+        })
+
+        # 5. Custom verification
+        if verify_fn is not None:
+            try:
+                passed, message = verify_fn(record)
+                checks.append({"check": "custom", "passed": passed, "message": message})
+            except Exception as exc:
+                checks.append({"check": "custom", "passed": False, "error": str(exc)})
+
+        all_passed = all(c["passed"] for c in checks)
+        return {
+            "status": "verified" if all_passed else "failed",
+            "version": version,
+            "checks": checks,
+            "all_passed": all_passed,
+        }
+
+    # ── Staged Rollout ────────────────────────────────────────────────────
+
+    def apply_staged(
+        self,
+        version: str,
+        pre_check_fn: Callable | None = None,
+        post_check_fn: Callable | None = None,
+    ) -> dict[str, Any]:
+        """
+        Apply an update with staged validation.
+
+        Steps:
+            1. Verify the update
+            2. Run pre-check (if provided)
+            3. Apply the update
+            4. Run post-check (if provided) — rollback on failure
+
+        Parameters
+        ----------
+        version       : Version to apply.
+        pre_check_fn  : () -> (bool, str) — runs before migration.
+        post_check_fn : () -> (bool, str) — runs after migration, rollback on fail.
+        """
+        # Step 1: Verify
+        verify_result = self.verify_update(version)
+        if not verify_result["all_passed"]:
+            return {
+                "status": "verification_failed",
+                "verification": verify_result,
+            }
+
+        # Step 2: Pre-check
+        if pre_check_fn is not None:
+            try:
+                passed, message = pre_check_fn()
+                if not passed:
+                    return {
+                        "status": "pre_check_failed",
+                        "message": message,
+                    }
+            except Exception as exc:
+                return {"status": "pre_check_error", "message": str(exc)}
+
+        prior_version = self._vm.current_version
+
+        # Step 3: Apply
+        apply_result = self.apply_update(version)
+        if apply_result.get("status") != "applied":
+            return apply_result
+
+        # Step 4: Post-check
+        if post_check_fn is not None:
+            try:
+                passed, message = post_check_fn()
+                if not passed:
+                    # Rollback
+                    logger.warning(
+                        "UpdateChannel[%s]: post-check failed for %s — rolling back. Reason: %s",
+                        self.agent_name, version, message,
+                    )
+                    self.rollback(prior_version)
+                    return {
+                        "status": "rolled_back",
+                        "reason": f"Post-check failed: {message}",
+                        "rolled_back_to": prior_version,
+                    }
+            except Exception as exc:
+                logger.error(
+                    "UpdateChannel[%s]: post-check error for %s — rolling back.",
+                    self.agent_name, version,
+                )
+                self.rollback(prior_version)
+                return {
+                    "status": "rolled_back",
+                    "reason": f"Post-check error: {exc}",
+                    "rolled_back_to": prior_version,
+                }
+
+        return {
+            "status": "applied",
+            "version": version,
+            "from": prior_version,
+            "staged": True,
+        }

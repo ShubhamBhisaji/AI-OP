@@ -518,3 +518,70 @@ class EconomicGuardrails:
             f"budget=${self.monthly_budget_usd:.2f}, "
             f"cost=${self._total_cost_usd:.4f})"
         )
+
+    # ── Throttle Control ─────────────────────────────────────────────────
+
+    def set_throttle(self, rate: float) -> None:
+        """
+        Throttle all operations to a fraction of normal rate.
+
+        Parameters
+        ----------
+        rate : 0.0 (fully blocked) to 1.0 (no throttle).
+               0.25 means only 25% of normal rate limits apply.
+        """
+        rate = max(0.0, min(1.0, rate))
+        with self._lock:
+            self._throttle_rate = rate
+            # Apply to all rate limiters
+            for cat, config in self._rate_configs.items():
+                self._rate_limiters[cat] = {
+                    "minute": _SlidingWindowCounter(
+                        max(1, int(config.max_per_minute * rate)), 60
+                    ),
+                    "hour": _SlidingWindowCounter(
+                        max(1, int(config.max_per_hour * rate)), 3600
+                    ),
+                    "day": _SlidingWindowCounter(
+                        max(1, int(config.max_per_day * rate)), 86400
+                    ),
+                }
+        logger.info("EconomicGuardrails: throttled to %.0f%%.", rate * 100)
+
+    @property
+    def throttle_rate(self) -> float:
+        return getattr(self, "_throttle_rate", 1.0)
+
+    # ── Per-Operation Cost Tracking ──────────────────────────────────────
+
+    def cost_by_category(self, hours: float = 24) -> dict[str, float]:
+        """Return cost breakdown by category over a time window."""
+        cutoff = time.time() - (hours * 3600)
+        costs: dict[str, float] = defaultdict(float)
+        for u in self._usage:
+            if u.timestamp > cutoff:
+                costs[u.category] += u.cost_usd
+        return {k: round(v, 4) for k, v in costs.items()}
+
+    def cost_by_agent(self, hours: float = 24) -> dict[str, float]:
+        """Return cost breakdown by agent over a time window."""
+        cutoff = time.time() - (hours * 3600)
+        costs: dict[str, float] = defaultdict(float)
+        for u in self._usage:
+            if u.timestamp > cutoff:
+                costs[u.agent_name] += u.cost_usd
+        return {k: round(v, 4) for k, v in costs.items()}
+
+    def top_cost_operations(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Return the most expensive individual operations."""
+        sorted_ops = sorted(self._usage, key=lambda u: u.cost_usd, reverse=True)
+        return [
+            {
+                "category": u.category,
+                "agent": u.agent_name,
+                "cost_usd": round(u.cost_usd, 4),
+                "tokens": u.tokens,
+                "ts": u.timestamp,
+            }
+            for u in sorted_ops[:limit]
+        ]
