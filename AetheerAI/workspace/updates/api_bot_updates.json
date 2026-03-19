@@ -1,0 +1,46 @@
+{
+  "agent_name": "api_bot",
+  "updates": {
+    "1.0.1": {
+      "version": "1.0.1",
+      "update_type": "bugfix",
+      "changes": [
+        "Fix bug"
+      ],
+      "description": "",
+      "severity": "normal",
+      "status": "rolled_back",
+      "from_version": "1.0.0",
+      "published_at": 1773921831.2331886,
+      "applied_at": 1773921831.237612,
+      "requires_restart": false,
+      "breaking_changes": [],
+      "min_version": "",
+      "cve": ""
+    }
+  },
+  "history": [
+    {
+      "version": "1.0.1",
+      "from": "1.0.0",
+      "status": "applied",
+      "update_type": "bugfix",
+      "timestamp": 1773921566.4052722
+    },
+    {
+      "version": "1.0.1",
+      "from": "1.0.0",
+      "status": "applied",
+      "update_type": "bugfix",
+      "timestamp": 1773921730.4985788
+    },
+    {
+      "version": "1.0.1",
+      "from": "1.0.0",
+      "status": "applied",
+      "update_type": "bugfix",
+      "timestamp": 1773921831.2396429
+    }
+  ],
+  "saved_at": 1773921831.2464013
+}

@@ -85,6 +85,10 @@ class Task:
     finished_at: float = 0.0
     tags: list[str] = field(default_factory=list)
     context: dict[str, Any] = field(default_factory=dict)
+    # Task dependency chain: this task cannot start until all listed task IDs are COMPLETED.
+    depends_on: list[str] = field(default_factory=list)
+    # Scheduled start: task will not be queued until this UTC timestamp is reached (0 = immediate).
+    run_after: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -93,10 +97,12 @@ class Task:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Task":
-        data = dict(data)
+        _known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+        data = {k: v for k, v in data.items() if k in _known}
         data["state"] = TaskState(data.get("state", "pending"))
         data["tags"] = list(data.get("tags", []))
         data["context"] = dict(data.get("context", {}))
+        data["depends_on"] = list(data.get("depends_on", []))
         return cls(**data)
 
 
@@ -243,8 +249,16 @@ class GoalManager:
         max_retries: int = 2,
         tags: list[str] | None = None,
         context: dict[str, Any] | None = None,
+        depends_on: list[str] | None = None,
+        run_after: float = 0.0,
     ) -> str:
-        """Add a task to a goal. Returns the task ID."""
+        """Add a task to a goal. Returns the task ID.
+
+        Parameters
+        ----------
+        depends_on : List of task IDs that must be COMPLETED before this task runs.
+        run_after  : Unix timestamp; task will not start before this time (0 = immediate).
+        """
         goal = self._goals.get(goal_id)
         if goal is None:
             raise ValueError(f"Goal '{goal_id}' not found.")
@@ -257,6 +271,8 @@ class GoalManager:
             max_retries=max_retries,
             tags=list(tags or []),
             context=dict(context or {}),
+            depends_on=list(depends_on or []),
+            run_after=max(0.0, float(run_after)),
         )
         self._tasks[task.id] = task
         goal.tasks.append(task.id)
@@ -324,8 +340,13 @@ class GoalManager:
         1. Retrying tasks (already started, need a retry)
         2. Pending tasks belonging to active goals (highest-priority first)
         3. Pending tasks from pending goals (to auto-activate the goal)
+
+        Filters:
+        - Tasks whose `depends_on` predecessors are not all COMPLETED are skipped.
+        - Tasks whose `run_after` timestamp is in the future are skipped.
         """
-        candidates: list[tuple[int, float, Task]] = []  # (sort_key, ts, task)
+        now = time.time()
+        candidates: list[tuple[tuple, float, Task]] = []  # (sort_key, ts, task)
 
         for task in self._tasks.values():
             if task.state not in (TaskState.PENDING, TaskState.RETRYING):
@@ -334,8 +355,22 @@ class GoalManager:
             goal = self._goals.get(task.goal_id)
             if goal is None:
                 continue
-            if goal.state in (GoalState.COMPLETED, GoalState.FAILED, GoalState.CANCELLED):
+            if goal.state in (GoalState.COMPLETED, GoalState.FAILED, GoalState.CANCELLED, GoalState.PAUSED):
                 continue
+
+            # Scheduled-start gate: skip if not yet time
+            if task.run_after > 0 and now < task.run_after:
+                continue
+
+            # Dependency gate: all predecessor tasks must be COMPLETED
+            if task.depends_on:
+                unmet = [
+                    dep_id for dep_id in task.depends_on
+                    if self._tasks.get(dep_id, Task(id="", goal_id="", description="")).state
+                    != TaskState.COMPLETED
+                ]
+                if unmet:
+                    continue
 
             urgency = 0 if task.state == TaskState.RETRYING else 1
             sort_key = (urgency, goal.priority, task.priority)
@@ -355,9 +390,40 @@ class GoalManager:
                 "state": task.state.value,
                 "retry_count": task.retry_count,
                 "context": task.context,
+                "depends_on": task.depends_on,
+                "run_after": task.run_after,
             })
 
         return result
+
+    def retry_failed_tasks(self, goal_id: str) -> int:
+        """Reset all FAILED tasks in a goal back to PENDING for re-execution.
+
+        Returns the number of tasks reset.
+        """
+        goal = self._goals.get(goal_id)
+        if goal is None:
+            return 0
+        reset = 0
+        for task_id in goal.tasks:
+            task = self._tasks.get(task_id)
+            if task and task.state == TaskState.FAILED:
+                task.state = TaskState.PENDING
+                task.retry_count = 0
+                task.error = ""
+                task.started_at = 0.0
+                task.finished_at = 0.0
+                reset += 1
+        if reset:
+            if goal.state == GoalState.FAILED:
+                goal.state = GoalState.ACTIVE
+            self._update_goal_progress(goal_id)
+            self._save()
+            logger.info(
+                "GoalManager[%s]: reset %d failed tasks in goal '%s'.",
+                self.agent_name, reset, goal_id,
+            )
+        return reset
 
     # ── Progress ──────────────────────────────────────────────────────────────
 

@@ -141,7 +141,9 @@ class GoalScheduler:
 
     Parameters
     ----------
-    goal_manager     : GoalManager instance.
+    goal_manager     : GoalManager instance (optional when using goal_manager_factory).
+    goal_manager_factory : Optional callable(agent_name) -> GoalManager for
+                           per-agent manager resolution.
     tick_interval    : How often to check for due goals (seconds).
     persist_path     : File to persist scheduled goals.
     on_dlq_alert     : Callback(DeadLetterEntry) when a goal is dead-lettered.
@@ -153,8 +155,10 @@ class GoalScheduler:
         tick_interval: float = 10.0,
         persist_path: str | Path | None = None,
         on_dlq_alert: Callable[[DeadLetterEntry], None] | None = None,
+        goal_manager_factory: Callable[[str], Any] | None = None,
     ) -> None:
         self._gm = goal_manager
+        self._goal_manager_factory = goal_manager_factory
         self._tick_interval = tick_interval
         self._persist_path = Path(persist_path) if persist_path else None
         self._on_dlq_alert = on_dlq_alert
@@ -166,6 +170,18 @@ class GoalScheduler:
         self._lock = threading.Lock()
 
         self._load()
+
+    def _resolve_goal_manager(self, agent_name: str) -> Any:
+        """Resolve the GoalManager for an agent.
+
+        If a per-agent factory is configured, it takes precedence.
+        Otherwise, falls back to the static manager passed at construction.
+        """
+        if self._goal_manager_factory is not None:
+            return self._goal_manager_factory(agent_name)
+        if self._gm is None:
+            raise RuntimeError("GoalScheduler has no GoalManager configured.")
+        return self._gm
 
     # ── Schedule goals ───────────────────────────────────────────────────
 
@@ -314,8 +330,10 @@ class GoalScheduler:
                 continue
 
             try:
+                gm = self._resolve_goal_manager(sg.agent_name)
+
                 # Create goal in GoalManager
-                goal_id = self._gm.add_goal(
+                goal_id = gm.add_goal(
                     description=sg.description,
                     priority=sg.priority,
                     tags=sg.tags,
@@ -328,14 +346,14 @@ class GoalScheduler:
 
                 # Add tasks
                 for task_desc in sg.tasks:
-                    self._gm.add_task(
+                    gm.add_task(
                         goal_id=goal_id,
                         description=task_desc,
                         priority=sg.priority,
                         max_retries=sg.max_retries,
                     )
 
-                self._gm.start_goal(goal_id)
+                gm.start_goal(goal_id)
 
                 # Update scheduled goal state
                 with self._lock:

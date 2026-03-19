@@ -1129,6 +1129,60 @@ class TestGovernanceRuntime:
         assert control["status_indicators"]["running_jobs"] == 1
         assert any(item["name"] == "nightly-sync" for item in control["current_tasks"])
 
+    def test_safe_mode_restricts_gate(self):
+        """Safe mode forces approval on all non-trivial action categories."""
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        # Enter safe mode
+        result = gov.safe_mode(operator="admin", reason="security audit")
+        assert result.get("status") == "safe_mode" or result.get("action") == "safe_mode"
+        # Kill switch mode should be safe_mode
+        assert gov.kill_switch.mode.value == "safe_mode"
+        # Action gate must be in safe mode
+        assert gov.action_gate.is_safe_mode is True
+        # control_plane reports the mode
+        cp = gov.control_plane_status()
+        assert cp["mode"] == "safe_mode"
+        cp_controls = cp["controls"]
+        assert cp_controls["safe_mode"] is True
+        assert cp_controls["restart"] is True
+
+    def test_restart_resets_to_normal(self):
+        """Restart cancels in-flight work and returns agent to NORMAL mode."""
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        # First enter safe mode so we have a non-normal state to come from
+        gov.safe_mode(operator="admin")
+        assert gov.kill_switch.mode.value == "safe_mode"
+        # Restart
+        result = gov.restart(operator="admin", reason="end of maintenance")
+        assert result.get("status") == "restarted" or result.get("action") == "restart"
+        assert gov.kill_switch.mode.value == "normal"
+        assert gov.action_gate.is_safe_mode is False
+        assert gov.action_gate.is_enabled is True
+
+    def test_manual_approval_trigger_creates_pending(self):
+        """trigger_manual_approval creates a pending approval for a named action."""
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        result = gov.trigger_manual_approval(
+            action="export_customer_data",
+            category="data_access",
+            context={"record_count": 5000},
+            operator="admin",
+            reason="GDPR compliance audit",
+        )
+        assert result["status"] == "pending"
+        assert result["action"] == "export_customer_data"
+        assert "request_id" in result
+        # Confirm it shows in pending approvals
+        pending = gov.human_override.pending_approvals()
+        assert any(p["id"] == result["request_id"] for p in pending)
+        # The action gate should now block a matching action
+        with pytest.raises(PermissionError, match="approval"):
+            gov.action_gate.enter(
+                "export_customer_data",
+                agent_name="bot",
+                category="data_access",
+            )
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # GOVERNANCE API — Endpoint tests using FastAPI TestClient
@@ -1364,6 +1418,58 @@ class TestGovernanceAPI:
         resp = client.post("/api/governance/updates/rollback", json={})
         assert resp.status_code == 200
         assert resp.json()["status"] in {"rolled_back", "error"}
+
+    def test_safe_mode_endpoint(self):
+        app, gov = _make_test_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/governance/safe-mode",
+            json={"operator": "admin", "reason": "security audit"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data.get("status") == "safe_mode" or data.get("action") == "safe_mode"
+        assert gov.kill_switch.mode.value == "safe_mode"
+        assert gov.action_gate.is_safe_mode is True
+
+    def test_restart_endpoint(self):
+        app, gov = _make_test_app()
+        # Put agent in safe mode first so restart has something to clear
+        gov.safe_mode(operator="admin")
+        client = TestClient(app)
+        resp = client.post(
+            "/api/governance/restart",
+            json={"operator": "admin", "reason": "maintenance complete"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data.get("status") == "restarted" or data.get("action") == "restart"
+        assert gov.kill_switch.mode.value == "normal"
+        assert gov.action_gate.is_safe_mode is False
+
+    def test_manual_approval_endpoint(self):
+        app, gov = _make_test_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/api/governance/manual-approval",
+            json={
+                "action": "bulk_delete_orders",
+                "category": "bulk_op",
+                "context": {"scope": "all_cancelled"},
+                "operator": "admin",
+                "reason": "end-of-quarter cleanup requires sign-off",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "pending"
+        assert data["action"] == "bulk_delete_orders"
+        assert "request_id" in data
+        # Confirm approval shows in the queue
+        approvals_resp = client.get("/api/governance/approvals")
+        assert approvals_resp.status_code == 200
+        ids = [a["id"] for a in approvals_resp.json()]
+        assert data["request_id"] in ids
 
     def test_503_when_no_governance(self):
         bare_app = FastAPI()

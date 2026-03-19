@@ -54,6 +54,7 @@ class AgentMode(str, Enum):
     SAFE_STOP   = "safe_stop"
     EMERGENCY   = "emergency"
     LOCKED      = "locked"
+    SAFE_MODE   = "safe_mode"   # Running under maximum restrictions
 
 
 @dataclass
@@ -324,6 +325,128 @@ class KillSwitch:
         """Current throttle rate (1.0 = normal, 0.0 = stopped)."""
         return self._throttle_rate
 
+    # ── 5. Safe Mode ─────────────────────────────────────────────────────
+
+    def safe_mode(self, operator: str = "system", reason: str = "") -> dict[str, Any]:
+        """
+        SAFE MODE — Agent keeps running with maximum restrictions.
+
+        All non-trivial actions (financial, external API, system, bulk,
+        data writes, communication) require manual approval before execution.
+        External HTTP calls are blocked at the transport layer.
+        Unlike safe_shutdown, the agent remains alive and responsive.
+
+        Use reset() to exit safe mode and return to normal operations.
+        """
+        with self._lock:
+            self._mode = AgentMode.SAFE_MODE
+
+        # Signal action gate to enter safe mode
+        if self._action_gate is not None:
+            try:
+                if hasattr(self._action_gate, "enter_safe_mode"):
+                    self._action_gate.enter_safe_mode()
+            except Exception as exc:
+                logger.warning("KillSwitch[%s]: gate safe_mode signal failed: %s", self.agent_name, exc)
+
+        event = KillSwitchEvent(
+            action="safe_mode",
+            operator=operator,
+            reason=reason,
+        )
+        self._record_event(event)
+        self._audit_log("safe_mode", operator, reason)
+
+        logger.warning("KillSwitch[%s]: SAFE MODE by %s. Reason: %s",
+                       self.agent_name, operator, reason)
+
+        return {
+            "status": "safe_mode",
+            "agent": self.agent_name,
+            "mode": self._mode.value,
+            "operator": operator,
+            "reason": reason,
+        }
+
+    # ── 6. Restart ────────────────────────────────────────────────────────
+
+    def restart(self, operator: str = "system", reason: str = "") -> dict[str, Any]:
+        """
+        RESTART — Stop all in-flight work cleanly, then resume normal operation.
+
+        1. Cancel all in-flight actions via ActionGate
+        2. Reset kill switch state to NORMAL (re-enables gate)
+        3. Exit safe mode if active
+        4. Resume or restart the autonomous loop
+
+        The agent resumes from scratch — no pending in-flight work carries over.
+        Use this instead of emergency_stop when you want a clean restart rather
+        than a permanent lockdown.
+        """
+        # 1. Cancel in-flight actions
+        cancelled = 0
+        if self._action_gate is not None:
+            try:
+                cancelled = self._action_gate.cancel_all(
+                    agent_name=self.agent_name,
+                    reason=f"Restart by {operator}: {reason}",
+                )
+            except Exception as exc:
+                logger.warning("KillSwitch[%s]: cancel_all failed during restart: %s", self.agent_name, exc)
+
+        # 2. Reset mode and throttle
+        with self._lock:
+            prev_mode = self._mode.value
+            self._mode = AgentMode.NORMAL
+            self._throttle_rate = 1.0
+
+        # 3. Re-enable gate and exit safe mode
+        if self._action_gate is not None:
+            try:
+                self._action_gate.enable()
+                if hasattr(self._action_gate, "exit_safe_mode"):
+                    self._action_gate.exit_safe_mode()
+            except Exception as exc:
+                logger.warning("KillSwitch[%s]: gate re-enable failed during restart: %s", self.agent_name, exc)
+
+        # 4. Resume loop
+        loop_restarted = False
+        if self._loop is not None:
+            try:
+                if hasattr(self._loop, "restart"):
+                    self._loop.restart()
+                else:
+                    self._loop.resume()
+                loop_restarted = True
+            except Exception as exc:
+                logger.warning("KillSwitch[%s]: loop resume failed during restart: %s", self.agent_name, exc)
+
+        event = KillSwitchEvent(
+            action="restart",
+            operator=operator,
+            reason=reason,
+            details={
+                "previous_mode": prev_mode,
+                "cancelled_actions": cancelled,
+                "loop_restarted": loop_restarted,
+            },
+        )
+        self._record_event(event)
+        self._audit_log("restart", operator, reason, {"previous_mode": prev_mode})
+
+        logger.warning("KillSwitch[%s]: RESTART by %s. Previous mode: %s.",
+                       self.agent_name, operator, prev_mode)
+
+        return {
+            "status": "restarted",
+            "agent": self.agent_name,
+            "mode": self._mode.value,
+            "previous_mode": prev_mode,
+            "cancelled_actions": cancelled,
+            "loop_restarted": loop_restarted,
+            "operator": operator,
+        }
+
     def throttle_delay(self) -> float:
         """
         Returns the delay (in seconds) to inject between operations
@@ -351,10 +474,12 @@ class KillSwitch:
             self._mode = AgentMode.NORMAL
             self._throttle_rate = 1.0
 
-        # Re-enable the action gate
+        # Re-enable the action gate and exit any safe mode
         if self._action_gate is not None:
             try:
                 self._action_gate.enable()
+                if hasattr(self._action_gate, "exit_safe_mode"):
+                    self._action_gate.exit_safe_mode()
             except Exception as exc:
                 logger.warning("KillSwitch[%s]: gate re-enable failed: %s", self.agent_name, exc)
 
@@ -401,7 +526,7 @@ class KillSwitch:
 
     def is_operational(self) -> bool:
         """Return True if the agent is in a mode that permits operations."""
-        return self._mode in (AgentMode.NORMAL, AgentMode.THROTTLED)
+        return self._mode in (AgentMode.NORMAL, AgentMode.THROTTLED, AgentMode.SAFE_MODE)
 
     # ── Event persistence ────────────────────────────────────────────────
 

@@ -270,6 +270,15 @@ class HumanOverrideController:
         with self._lock:
             return any(pat in action_lower for pat in self._required_approvals)
 
+    def has_pending_approval(self, action: str) -> bool:
+        """Return True if a pending (operator-staged) approval already exists for this action."""
+        self.expire_stale()
+        with self._lock:
+            return any(
+                r.action == action and r.status == ApprovalStatus.PENDING
+                for r in self._approvals.values()
+            )
+
     def request_approval(
         self,
         action: str,
@@ -647,6 +656,102 @@ class HumanOverrideController:
             self.agent_name, operator, reason,
         )
         return result
+
+    # ── Safe Mode ─────────────────────────────────────────────────────────
+
+    def safe_mode(self, operator: str = "system", reason: str = "") -> dict[str, Any]:
+        """
+        Enter safe mode — agent keeps running under maximum restrictions.
+
+        All non-trivial actions require manual approval before execution.
+        The agent remains alive but operates with minimum trust level.
+        Use resume() to exit safe mode.
+        """
+        result: dict[str, Any] = {"action": "safe_mode", "agent": self.agent_name}
+
+        if self._kill_switch is not None:
+            try:
+                ks_result = self._kill_switch.safe_mode(operator=operator, reason=reason)
+                result["kill_switch"] = ks_result
+                result["status"] = "safe_mode"
+            except Exception as exc:
+                result["kill_switch_error"] = str(exc)
+                result["status"] = "error"
+        else:
+            result["status"] = "safe_mode"
+
+        self._record_event("safe_mode", operator, {"reason": reason})
+        logger.warning("HumanOverride[%s]: SAFE MODE by %s. Reason: %s",
+                       self.agent_name, operator, reason)
+        return result
+
+    # ── Restart ───────────────────────────────────────────────────────────
+
+    def restart(self, operator: str = "system", reason: str = "") -> dict[str, Any]:
+        """
+        Restart the agent — cancel all in-flight work, reset kill switch,
+        re-enable gate, and resume the loop from a clean state.
+        """
+        result: dict[str, Any] = {"action": "restart", "agent": self.agent_name}
+
+        if self._kill_switch is not None:
+            try:
+                ks_result = self._kill_switch.restart(operator=operator, reason=reason)
+                result["kill_switch"] = ks_result
+                result["status"] = ks_result.get("status", "restarted")
+            except Exception as exc:
+                result["kill_switch_error"] = str(exc)
+                result["status"] = "error"
+        else:
+            result["status"] = "restarted"
+
+        self._record_event("restart", operator, {"reason": reason})
+        logger.warning("HumanOverride[%s]: RESTART by %s. Reason: %s",
+                       self.agent_name, operator, reason)
+        return result
+
+    # ── Manual Approval Trigger ───────────────────────────────────────────
+
+    def trigger_manual_approval(
+        self,
+        action: str,
+        category: str = "general",
+        context: dict[str, Any] | None = None,
+        operator: str = "system",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """
+        Operator-initiated approval gate: create a pending approval request
+        for a named action before the agent has a chance to execute it.
+
+        This is the proactive form — operators can pre-stage an approval
+        requirement for any action (e.g. ahead of a scheduled batch run,
+        a high-risk deployment window, or a sensitive data export).
+
+        Any matching action that reaches the ActionGate will be blocked
+        until this approval is resolved.
+        """
+        req = self.request_approval(
+            action=action,
+            category=category,
+            context=dict(context or {}),
+        )
+        self._record_event("trigger_manual_approval", operator, {
+            "action": action,
+            "request_id": req.id,
+            "reason": reason,
+        })
+        logger.info(
+            "HumanOverride[%s]: manual approval triggered for '%s' by %s (id=%s).",
+            self.agent_name, action[:40], operator, req.id,
+        )
+        return {
+            "status": "pending",
+            "request_id": req.id,
+            "action": action,
+            "category": category,
+            "expires_at": req.expires_at,
+        }
 
     # ── Policy Hotswap ────────────────────────────────────────────────────
 

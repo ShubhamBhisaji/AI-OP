@@ -755,6 +755,14 @@ app.include_router(payu_webhook_router)
 from api.governance_api import router as governance_router
 app.include_router(governance_router)
 
+# ── Telemetry API (BLOCKER 3 — decision-grade observability) ───────────────
+from api.telemetry_router import router as telemetry_router
+app.include_router(telemetry_router)
+
+# ── Mission / Goal Orchestration API (BLOCKER 6) ───────────────────────────
+from api.goal_router import router as goal_router
+app.include_router(goal_router)
+
 # Serve built-in Web UI static files
 _UI_DIR = Path(__file__).resolve().parents[1] / "ui"
 if _UI_DIR.is_dir():

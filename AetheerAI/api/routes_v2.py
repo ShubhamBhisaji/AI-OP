@@ -764,6 +764,145 @@ def compose_skills(agent_name: str, skills: list[str]):
     return {"success": True, "data": {"name": agent_name, "skills": updated}}
 
 
+# ── Agent Lifecycle: Version & Update Management ────────────────────────────
+
+
+class UpgradeRequest(BaseModel):
+    version: str = Field(..., min_length=1, max_length=32, description="Target semver (e.g. '1.2.0')")
+    dry_run: bool = Field(default=False, description="Validate compatibility without applying")
+
+
+class RollbackRequest(BaseModel):
+    to_version: str | None = Field(
+        default=None,
+        description="Target version to roll back to; omit to roll back to prior version",
+    )
+
+
+class BroadcastUpdateRequest(BaseModel):
+    version: str = Field(..., min_length=1, max_length=32)
+    update_type: str = Field(
+        default="feature",
+        pattern=r"^(security|feature|compatibility|bugfix)$",
+    )
+    changes: list[str] = Field(..., min_length=1, max_length=50)
+    description: str = Field(default="", max_length=500)
+    severity: str = Field(
+        default="normal",
+        pattern=r"^(low|normal|high|critical)$",
+    )
+    agent_names: list[str] = Field(
+        default_factory=list,
+        description="Agents to upgrade; leave empty to target all active agents",
+    )
+    dry_run: bool = Field(default=False)
+
+
+@router.get(
+    "/api/lifecycle/{agent_name}/version",
+    summary="Version status for one agent",
+    description=(
+        "Returns the deployed version, all pending updates, "
+        "version changelog, and current lifecycle state."
+    ),
+)
+def agent_version_status(agent_name: str):
+    """Full version + update status for a single agent."""
+    k = _kernel()
+    data = k.lifecycle_agent_version(agent_name)
+    return {"success": True, "data": data}
+
+
+@router.post(
+    "/api/lifecycle/{agent_name}/upgrade",
+    summary="Upgrade agent to a target version",
+    description=(
+        "Apply a published update to the agent via the UpdateChannel and "
+        "record the deployment in the lifecycle record. "
+        "Use dry_run=true to perform a compatibility check without applying."
+    ),
+)
+def upgrade_agent_version(
+    agent_name: str = Path(..., min_length=1, max_length=120),
+    body: UpgradeRequest = ...,
+):
+    k = _kernel()
+    try:
+        result = k.lifecycle_upgrade(
+            agent_name=agent_name,
+            version=body.version,
+            dry_run=body.dry_run,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message", "Upgrade failed"))
+    return {"success": True, "data": result}
+
+
+@router.post(
+    "/api/lifecycle/{agent_name}/rollback",
+    summary="Roll back agent to a previous version",
+    description=(
+        "Roll back the agent to the specified version (or the immediately "
+        "prior version if to_version is omitted). "
+        "Both the UpdateChannel state and the lifecycle record are updated."
+    ),
+)
+def rollback_agent_version(
+    agent_name: str = Path(..., min_length=1, max_length=120),
+    body: RollbackRequest = ...,
+):
+    k = _kernel()
+    try:
+        result = k.lifecycle_rollback(agent_name, body.to_version)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message", "Rollback failed"))
+    return {"success": True, "data": result}
+
+
+@router.get(
+    "/api/lifecycle/updates/fleet-scan",
+    summary="Fleet-wide security update scan",
+    description=(
+        "Scan all active agents for pending security updates. "
+        "Returns a health report: health, critical_count, agents_needing_update."
+    ),
+)
+def fleet_security_scan():
+    """Check all active agents for pending security patches."""
+    k = _kernel()
+    report = k.lifecycle_fleet_scan()
+    return {"success": True, "data": report}
+
+
+@router.post(
+    "/api/lifecycle/updates/broadcast",
+    summary="Push one update to multiple (or all) agents",
+    description=(
+        "Publish and apply the same update to a list of agents. "
+        "Leave agent_names empty to target all warm and idle agents."
+    ),
+)
+def broadcast_lifecycle_update(body: BroadcastUpdateRequest):
+    k = _kernel()
+    try:
+        results = k.lifecycle_broadcast_update(
+            version=body.version,
+            update_type=body.update_type,
+            changes=body.changes,
+            agent_names=body.agent_names,
+            dry_run=body.dry_run,
+            description=body.description,
+            severity=body.severity,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"success": True, "data": results}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ── Business Growth Engine ─────────────────────────────────────────────────────
 # ═══════════════════════════════════════════════════════════════════════════════

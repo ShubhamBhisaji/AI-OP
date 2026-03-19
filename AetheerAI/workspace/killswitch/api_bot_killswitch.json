@@ -124,5 +124,236 @@
     "details": {
       "rate": 0.5
     }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "test",
+    "timestamp": 1773921564.8982437,
+    "details": {}
+  },
+  {
+    "action": "reset",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921564.9168293,
+    "details": {
+      "previous_mode": "safe_stop"
+    }
+  },
+  {
+    "action": "emergency_stop",
+    "operator": "admin",
+    "reason": "breach",
+    "timestamp": 1773921565.0131378,
+    "details": {
+      "actions_cancelled": 0,
+      "errors": []
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921565.1334085,
+    "details": {}
+  },
+  {
+    "action": "disable_integrations",
+    "operator": "admin",
+    "reason": "maintenance",
+    "timestamp": 1773921565.2211018,
+    "details": {
+      "disconnected": 1,
+      "errors": []
+    }
+  },
+  {
+    "action": "throttle",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921565.287031,
+    "details": {
+      "rate": 0.5
+    }
+  },
+  {
+    "action": "safe_mode",
+    "operator": "admin",
+    "reason": "security audit",
+    "timestamp": 1773921566.6956017,
+    "details": {}
+  },
+  {
+    "action": "safe_mode",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921566.805852,
+    "details": {}
+  },
+  {
+    "action": "restart",
+    "operator": "admin",
+    "reason": "maintenance complete",
+    "timestamp": 1773921566.8130794,
+    "details": {
+      "previous_mode": "safe_mode",
+      "cancelled_actions": 0,
+      "loop_restarted": false
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "test",
+    "timestamp": 1773921729.6211295,
+    "details": {}
+  },
+  {
+    "action": "reset",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921729.6668715,
+    "details": {
+      "previous_mode": "safe_stop"
+    }
+  },
+  {
+    "action": "emergency_stop",
+    "operator": "admin",
+    "reason": "breach",
+    "timestamp": 1773921729.7395666,
+    "details": {
+      "actions_cancelled": 0,
+      "errors": []
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921729.798009,
+    "details": {}
+  },
+  {
+    "action": "disable_integrations",
+    "operator": "admin",
+    "reason": "maintenance",
+    "timestamp": 1773921729.8461268,
+    "details": {
+      "disconnected": 1,
+      "errors": []
+    }
+  },
+  {
+    "action": "throttle",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921729.9015367,
+    "details": {
+      "rate": 0.5
+    }
+  },
+  {
+    "action": "safe_mode",
+    "operator": "admin",
+    "reason": "security audit",
+    "timestamp": 1773921730.596702,
+    "details": {}
+  },
+  {
+    "action": "safe_mode",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921730.6685174,
+    "details": {}
+  },
+  {
+    "action": "restart",
+    "operator": "admin",
+    "reason": "maintenance complete",
+    "timestamp": 1773921730.6746244,
+    "details": {
+      "previous_mode": "safe_mode",
+      "cancelled_actions": 0,
+      "loop_restarted": false
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "test",
+    "timestamp": 1773921830.3958669,
+    "details": {}
+  },
+  {
+    "action": "reset",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921830.4047377,
+    "details": {
+      "previous_mode": "safe_stop"
+    }
+  },
+  {
+    "action": "emergency_stop",
+    "operator": "admin",
+    "reason": "breach",
+    "timestamp": 1773921830.4679422,
+    "details": {
+      "actions_cancelled": 0,
+      "errors": []
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921830.546615,
+    "details": {}
+  },
+  {
+    "action": "disable_integrations",
+    "operator": "admin",
+    "reason": "maintenance",
+    "timestamp": 1773921830.625407,
+    "details": {
+      "disconnected": 1,
+      "errors": []
+    }
+  },
+  {
+    "action": "throttle",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921830.6827526,
+    "details": {
+      "rate": 0.5
+    }
+  },
+  {
+    "action": "safe_mode",
+    "operator": "admin",
+    "reason": "security audit",
+    "timestamp": 1773921831.3118994,
+    "details": {}
+  },
+  {
+    "action": "safe_mode",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773921831.3700075,
+    "details": {}
+  },
+  {
+    "action": "restart",
+    "operator": "admin",
+    "reason": "maintenance complete",
+    "timestamp": 1773921831.3761268,
+    "details": {
+      "previous_mode": "safe_mode",
+      "cancelled_actions": 0,
+      "loop_restarted": false
+    }
   }
 ]

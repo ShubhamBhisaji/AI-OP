@@ -15,6 +15,7 @@ from agents.base_agent import BaseAgent
 from factory.agent_factory import AgentFactory
 from registry.agent_registry import AgentRegistry
 from skills.skill_engine import SkillEngine
+import tools  # ensures tools import hook installs before tool modules are loaded
 from core.workflow_engine import (
     WorkflowEngine,
     WorkflowCancelled,
@@ -58,12 +59,13 @@ from core.risk_assessor import RiskAssessor, RiskAction, RiskReport
 from core.business_growth_engine import BusinessGrowthEngine
 from factory.lifecycle_manager import AgentLifecycleManager
 from evals.benchmark_runner import BenchmarkRunner
-from tools.tool_manager import ToolManager
+from tools.tool_manager import ToolManager, TOOL_PERMISSIONS
 from ai.ai_adapter import AIAdapter
 from memory.memory_manager import MemoryManager
 from memory.tiered_memory import TieredMemoryManager
 from security.intent_manifest import ManifestGuard, IntentManifest, ManifestViolation
 from security.audit_logger import AuditLogger
+from security.enforcement_gate import EnforcementGate
 from utils.json_parser import extract_json, ParseError
 
 # setup_logging() is called once at process startup (main.py / start_api.py).
@@ -99,6 +101,14 @@ class AetheerAiKernel:
         _audit = AuditLogger.default()
         self.manifest_guard = ManifestGuard(audit_logger=_audit)
         self.tool_manager = ToolManager(audit_logger=_audit, manifest_guard=self.manifest_guard)
+        # BLOCKER 2: Install process-wide mandatory tool enforcement gate.
+        # Fail-closed by design: if install is skipped, all direct tool calls deny.
+        EnforcementGate.install(
+            policy_engine=self.tool_manager.policy_engine,
+            audit_logger=_audit,
+            tool_permissions=TOOL_PERMISSIONS,
+            default_permission=3,
+        )
         self.tool_layer = ToolIntegrationLayer(self.tool_manager)
         self.skill_engine = SkillEngine(registry=self.registry, ai_adapter=None)  # ai_adapter set below
         self.factory = AgentFactory(
@@ -255,6 +265,32 @@ class AetheerAiKernel:
         ))
         self.governance_runtime.attach_scheduler(self.scheduler)
         self.tool_manager.register_governance(self.governance_runtime)
+        # ── BLOCKER 3: Observability — wire decision-grade telemetry ─────
+        # Create per-kernel ObservabilityEngine and attach finops so the
+        # UnifiedMonitor inside GovernanceRuntime has full resource + action
+        # + decision visibility.
+        from core.observability import ObservabilityEngine
+        self.observability = ObservabilityEngine(agent_name="aetheerai")
+        self.governance_runtime.attach_observability(self.observability)
+        self.governance_runtime.attach_finops(self.finops)
+        # Convenience alias: callers can reach monitor via kernel.monitor
+        self.monitor = self.governance_runtime.monitor
+        # ── BLOCKER 4: LifecycleUpdater (version ⇔ lifecycle bridge) ─────
+        from core.lifecycle_updater import LifecycleUpdater
+        self.lifecycle_updater = LifecycleUpdater(
+            lifecycle=self.lifecycle,
+            governance=self.governance_runtime,
+            auto_scan=True,
+        )
+        # ── BLOCKER 6: MissionControl (persistent goals, task queues,
+        #               scheduling, retry, failure recovery, prioritization) ──
+        from core.mission_control import MissionControl
+        self.mission_control = MissionControl(
+            scheduler=self.scheduler,
+            execute_fn=self.run_agent,
+            governance=self.governance,
+        )
+        self.mission_control.start()
         logger.info("AetheerAI — An AI Master!! kernel ready.")
 
     def _bootstrap_constitution_defaults(self) -> None:
@@ -4211,6 +4247,78 @@ class AetheerAiKernel:
         return self.planning.resume_plan(plan_id, **kwargs)
 
     # ═══════════════════════════════════════════════════════════════════
+    # ── BLOCKER 6: MissionControl helpers ────────────────────────────
+
+    def launch_mission(
+        self,
+        agent_name: str,
+        goal: str,
+        tasks: list | None = None,
+        *,
+        priority: int = 5,
+        tags: list[str] | None = None,
+        metadata: dict | None = None,
+        max_retries_per_task: int = 2,
+    ) -> str:
+        """
+        Create a persistent goal with tasks and start a continuous worker loop
+        for an agent.  Returns the goal_id.
+
+        Each task item may be a plain string or a dict with keys:
+          description, priority, depends_on, run_after, max_retries,
+          tags, context.
+
+        Dependency syntax — depends_on within the same batch:
+          Use ``"task:0"`` to reference the 0th task in the list, or a raw
+          task ID string for cross-mission dependencies.
+        """
+        return self.mission_control.launch(
+            agent_name=agent_name,
+            goal=goal,
+            tasks=tasks,
+            priority=priority,
+            tags=tags,
+            metadata=metadata,
+            max_retries_per_task=max_retries_per_task,
+        )
+
+    def mission_status(self, agent_name: str) -> dict:
+        """Return the full mission status for an agent (loop state + goal/task summary)."""
+        if not hasattr(self, "mission_control") or self.mission_control is None:
+            raise RuntimeError("MissionControl is not initialized.")
+        return self.mission_control.status(agent_name)
+
+    def pause_mission(self, agent_name: str) -> bool:
+        """Pause the autonomous execution loop for an agent."""
+        if not hasattr(self, "mission_control") or self.mission_control is None:
+            raise RuntimeError("MissionControl is not initialized.")
+        return self.mission_control.pause(agent_name)
+
+    def resume_mission(self, agent_name: str) -> bool:
+        """Resume a paused autonomous execution loop."""
+        if not hasattr(self, "mission_control") or self.mission_control is None:
+            raise RuntimeError("MissionControl is not initialized.")
+        return self.mission_control.resume(agent_name)
+
+    def cancel_mission(self, agent_name: str, goal_id: str) -> bool:
+        """Cancel a goal and skip its remaining tasks."""
+        if not hasattr(self, "mission_control") or self.mission_control is None:
+            raise RuntimeError("MissionControl is not initialized.")
+        return self.mission_control.cancel(agent_name, goal_id)
+
+    def retry_failed_mission_tasks(self, agent_name: str, goal_id: str) -> int:
+        """Reset all failed tasks in a goal back to pending. Returns count reset."""
+        if not hasattr(self, "mission_control") or self.mission_control is None:
+            raise RuntimeError("MissionControl is not initialized.")
+        return self.mission_control.retry_failed(agent_name, goal_id)
+
+    def mission_health(self) -> dict:
+        """Aggregate health check across all agent execution loops."""
+        if not hasattr(self, "mission_control") or self.mission_control is None:
+            raise RuntimeError("MissionControl is not initialized.")
+        return self.mission_control.health_check()
+
+    # ═══════════════════════════════════════════════════════════════════
     # ── Feature 24: AgentLifecycleManager ────────────────────────────
     # ═══════════════════════════════════════════════════════════════════
 
@@ -4285,6 +4393,64 @@ class AetheerAiKernel:
     def lifecycle_summary(self) -> dict:
         """Return full lifecycle summary: per-state counts and performance."""
         return self.lifecycle.summary()
+
+    # ── Version / Update operations (LifecycleUpdater bridge) ──────────
+
+    def lifecycle_agent_version(self, agent_name: str) -> dict:
+        """
+        Full version + update status for one agent.
+        Includes lifecycle state, deployed version, pending updates, changelog.
+        """
+        return self.lifecycle_updater.full_status(agent_name)
+
+    def lifecycle_upgrade(
+        self,
+        agent_name: str,
+        version: str,
+        migration_fn=None,
+        dry_run: bool = False,
+    ) -> dict:
+        """
+        Upgrade an agent to target version.
+        Supply migration_fn to publish on-the-fly; dry_run=True for compatibility check.
+        """
+        return self.lifecycle_updater.upgrade_agent(
+            agent_name=agent_name,
+            version=version,
+            migration_fn=migration_fn,
+            dry_run=dry_run,
+        )
+
+    def lifecycle_rollback(
+        self,
+        agent_name: str,
+        to_version: str | None = None,
+    ) -> dict:
+        """Roll back an agent to the previous (or specified) version."""
+        return self.lifecycle_updater.rollback_agent(agent_name, to_version)
+
+    def lifecycle_fleet_scan(self) -> dict:
+        """Scan all active agents for pending security updates."""
+        return self.lifecycle_updater.fleet_security_scan()
+
+    def lifecycle_broadcast_update(
+        self,
+        version: str,
+        update_type: str,
+        changes: list[str],
+        agent_names: list[str] | None = None,
+        dry_run: bool = False,
+        **kwargs,
+    ) -> dict:
+        """Push the same update to multiple (or all) active agents."""
+        return self.lifecycle_updater.broadcast_update(
+            version=version,
+            update_type=update_type,
+            changes=changes,
+            agent_names=agent_names or [],
+            dry_run=dry_run,
+            **kwargs,
+        )
 
     # ═══════════════════════════════════════════════════════════════════
     # ── Feature 25: JobScheduler (persistent priority job queue) ─────

@@ -106,6 +106,9 @@ class LifecycleRecord:
     task_history: list[dict[str, Any]] = field(default_factory=list)
     composed_skills: list[str] = field(default_factory=list)
     specialization_applied: bool = False
+    # ── Version tracking ──────────────────────────────────────────────
+    current_version: str = ""          # semver of the currently deployed spec
+    version_history: list[dict[str, Any]] = field(default_factory=list)  # upgrade audit trail
 
     def success_rate(self) -> float:
         total = self.success_count + self.fail_count
@@ -124,6 +127,8 @@ class LifecycleRecord:
             "composed_skills": list(self.composed_skills),
             "specialization_applied": self.specialization_applied,
             "task_history": self.task_history[-20:],  # keep last 20
+            "current_version": self.current_version,
+            "version_history": self.version_history[-50:],  # keep last 50 upgrades
         }
 
     @classmethod
@@ -138,6 +143,8 @@ class LifecycleRecord:
         rec.composed_skills = list(d.get("composed_skills", []))
         rec.specialization_applied = bool(d.get("specialization_applied", False))
         rec.task_history = list(d.get("task_history", []))
+        rec.current_version = d.get("current_version", "")
+        rec.version_history = list(d.get("version_history", []))
         return rec
 
 
@@ -306,6 +313,80 @@ class AgentLifecycleManager:
             if skill in rec.composed_skills:
                 rec.composed_skills.remove(skill)
         self._save()
+
+    # ── Version tracking ──────────────────────────────────────────────────
+
+    def record_upgrade(
+        self,
+        agent_name: str,
+        to_version: str,
+        from_version: str = "",
+        update_type: str = "unknown",
+        changes: list[str] | None = None,
+    ) -> None:
+        """
+        Record that an agent was upgraded to a new version.
+
+        Called by LifecycleUpdater after a successful UpdateChannel.apply_update().
+        """
+        rec = self._get_or_create(agent_name)
+        with self._lock:
+            entry: dict[str, Any] = {
+                "from": from_version or rec.current_version,
+                "to": to_version,
+                "update_type": update_type,
+                "changes": list(changes or []),
+                "ts": time.time(),
+            }
+            rec.version_history.append(entry)
+            if len(rec.version_history) > 50:
+                rec.version_history = rec.version_history[-50:]
+            rec.current_version = to_version
+        self._save()
+        logger.info(
+            "LifecycleManager: agent '%s' version %s → %s (%s).",
+            agent_name, from_version or "(unknown)", to_version, update_type,
+        )
+
+    def record_rollback(
+        self,
+        agent_name: str,
+        to_version: str,
+        from_version: str = "",
+    ) -> None:
+        """Record that an agent was rolled back to a previous version."""
+        rec = self._get_or_create(agent_name)
+        with self._lock:
+            entry: dict[str, Any] = {
+                "from": from_version or rec.current_version,
+                "to": to_version,
+                "update_type": "rollback",
+                "changes": [f"Rolled back to {to_version}"],
+                "ts": time.time(),
+            }
+            rec.version_history.append(entry)
+            if len(rec.version_history) > 50:
+                rec.version_history = rec.version_history[-50:]
+            rec.current_version = to_version
+        self._save()
+        logger.warning(
+            "LifecycleManager: agent '%s' rolled back %s → %s.",
+            agent_name, from_version or "(unknown)", to_version,
+        )
+
+    def get_version(self, agent_name: str) -> str:
+        """Return the current deployed version of an agent (empty string if unversioned)."""
+        rec = self._records.get(agent_name)
+        return rec.current_version if rec else ""
+
+    def get_version_history(
+        self, agent_name: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Return the upgrade/rollback history for an agent, newest first."""
+        rec = self._records.get(agent_name)
+        if rec is None:
+            return []
+        return list(reversed(rec.version_history[-limit:]))
 
     # ── Automatic specialization ───────────────────────────────────────────
 

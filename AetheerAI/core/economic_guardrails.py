@@ -1,15 +1,17 @@
 """economic_guardrails.py — Hard economic constraints for agent operations.
 
-Closes GAP 5: Economic Guardrails Missing.
+Closes BLOCKER 5: Economic Safeguards Weak.
 
 Agents acting in business environments must respect:
-    1. Rate limits       — Max operations per time window
+    1. Rate limits       — Max operations per time window (sliding window)
     2. Cost constraints  — Hard budget caps with pre-spend checks
     3. Resource caps     — Max concurrent operations, memory, tokens
     4. Quotas            — Per-agent, per-category daily/hourly limits
+    5. Action caps       — Per-session / per-hour / per-day total action limits
+    6. Throttling        — Automatic slowdown as budget % climbs; manual throttle
 
-These are HARD constraints — operations are BLOCKED when limits are hit,
-not just logged.
+All six controls are HARD constraints — operations are BLOCKED when limits
+are hit, not just logged.
 
 Usage
 -----
@@ -114,6 +116,32 @@ class QuotaConfig:
         }
 
 
+# ── Action Cap Config ───────────────────────────────────────────────────────
+
+@dataclass
+class ActionCapConfig:
+    """Hard cap on the total number of external actions an agent may fire."""
+    agent_name: str
+    session_cap: int = 0     # 0 = unlimited; resets when reset() is called
+    hourly_cap: int = 0      # 0 = unlimited; auto-resets every 60 min
+    daily_cap: int = 0       # 0 = unlimited; auto-resets every 24 h
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent": self.agent_name,
+            "session_cap": self.session_cap,
+            "hourly_cap": self.hourly_cap,
+            "daily_cap": self.daily_cap,
+        }
+
+
+# ── Budget Warning Levels ───────────────────────────────────────────────────
+
+_BUDGET_WARN_PCT   = 0.50   # 50 % consumed → WARNING
+_BUDGET_ALERT_PCT  = 0.80   # 80 % consumed → ALERT (auto-throttle to 50 %)
+_BUDGET_CRITICAL_PCT = 0.95 # 95 % consumed → CRITICAL (auto-throttle to 10 %)
+
+
 # ── Usage Record ────────────────────────────────────────────────────────────
 
 @dataclass
@@ -171,6 +199,19 @@ class EconomicGuardrails:
         # Daily/hourly counters: (agent, category, window_key) -> count
         self._counters: dict[str, int] = defaultdict(int)
         self._counter_resets: dict[str, float] = {}
+
+        # ── Action Caps ─────────────────────────────────────────────────
+        # Per-agent config
+        self._action_caps: dict[str, ActionCapConfig] = {}
+        # action counts: agent -> {window_key -> count}
+        self._action_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self._action_resets: dict[str, dict[str, float]] = defaultdict(dict)
+        # Session counter: counts since last reset()
+        self._session_action_counts: dict[str, int] = defaultdict(int)
+
+        # ── Budget warning / auto-throttle ──────────────────────────────
+        self._auto_throttle_enabled: bool = True
+        self._throttle_rate: float = 1.0  # 1.0 = no throttle
 
     # ── 1. Rate Limits ────────────────────────────────────────────────────
 
@@ -321,6 +362,195 @@ class EconomicGuardrails:
 
         return {"allowed": True}
 
+    # ── 5. Action Caps ───────────────────────────────────────────────────
+
+    def set_action_cap(
+        self,
+        agent_name: str,
+        session_cap: int = 0,
+        hourly_cap: int = 0,
+        daily_cap: int = 0,
+    ) -> None:
+        """Set hard action-count caps for an agent.
+
+        Parameters
+        ----------
+        session_cap : Max total external actions per session (cleared on reset()).
+        hourly_cap  : Max external actions per rolling 60-minute window.
+        daily_cap   : Max external actions per rolling 24-hour window.
+        """
+        self._action_caps[agent_name] = ActionCapConfig(
+            agent_name=agent_name,
+            session_cap=session_cap,
+            hourly_cap=hourly_cap,
+            daily_cap=daily_cap,
+        )
+        logger.info(
+            "EconomicGuardrails: action cap set for '%s': session=%d, hourly=%d, daily=%d.",
+            agent_name, session_cap, hourly_cap, daily_cap,
+        )
+
+    def _check_action_cap(self, agent_name: str) -> dict[str, Any]:
+        """Check if this agent has exceeded any action-count cap."""
+        cap = self._action_caps.get(agent_name)
+        if cap is None:
+            return {"allowed": True}
+
+        now = time.time()
+
+        # Session cap
+        if cap.session_cap > 0:
+            used = self._session_action_counts[agent_name]
+            if used >= cap.session_cap:
+                return {
+                    "allowed": False,
+                    "reason": (
+                        f"Session action cap reached for '{agent_name}': "
+                        f"{used}/{cap.session_cap} actions this session."
+                    ),
+                    "cap_type": "session",
+                    "used": used,
+                    "limit": cap.session_cap,
+                }
+
+        windows = {}
+        if cap.hourly_cap > 0:
+            windows["hour"] = (cap.hourly_cap, 3600.0)
+        if cap.daily_cap > 0:
+            windows["day"] = (cap.daily_cap, 86400.0)
+
+        acounts = self._action_counts[agent_name]
+        aresets = self._action_resets[agent_name]
+
+        for window_name, (limit, window_secs) in windows.items():
+            reset_ts = aresets.get(window_name, 0.0)
+            if now - reset_ts > window_secs:
+                acounts[window_name] = 0
+                aresets[window_name] = now
+            used = acounts[window_name]
+            if used >= limit:
+                return {
+                    "allowed": False,
+                    "reason": (
+                        f"{window_name.capitalize()} action cap reached for '{agent_name}': "
+                        f"{used}/{limit} actions."
+                    ),
+                    "cap_type": window_name,
+                    "used": used,
+                    "limit": limit,
+                }
+
+        return {"allowed": True}
+
+    def _record_action(self, agent_name: str) -> None:
+        """Increment all action counters after a successful action."""
+        now = time.time()
+        cap = self._action_caps.get(agent_name)
+        self._session_action_counts[agent_name] += 1
+
+        if cap is None:
+            return
+
+        acounts = self._action_counts[agent_name]
+        aresets = self._action_resets[agent_name]
+
+        for window_name, window_secs in (("hour", 3600.0), ("day", 86400.0)):
+            reset_ts = aresets.get(window_name, 0.0)
+            if now - reset_ts > window_secs:
+                acounts[window_name] = 0
+                aresets[window_name] = now
+            acounts[window_name] += 1
+
+    def action_cap_status(self, agent_name: str) -> dict[str, Any]:
+        """Return current action-count usage for an agent."""
+        cap = self._action_caps.get(agent_name)
+        now = time.time()
+        acounts = self._action_counts[agent_name]
+        aresets = self._action_resets[agent_name]
+
+        def _count(window_name: str, secs: float) -> int:
+            reset_ts = aresets.get(window_name, 0.0)
+            if now - reset_ts > secs:
+                return 0
+            return acounts.get(window_name, 0)
+
+        return {
+            "agent": agent_name,
+            "session": {
+                "used": self._session_action_counts.get(agent_name, 0),
+                "limit": cap.session_cap if cap else 0,
+            },
+            "hour": {
+                "used": _count("hour", 3600.0),
+                "limit": cap.hourly_cap if cap else 0,
+            },
+            "day": {
+                "used": _count("day", 86400.0),
+                "limit": cap.daily_cap if cap else 0,
+            },
+        }
+
+    # ── 6. Budget Thresholds & Auto-Throttle ─────────────────────────────
+
+    def budget_threshold_check(self) -> dict[str, Any]:
+        """Return the current budget consumption level and any warning.
+
+        Levels:
+            OK       — < 50 % consumed
+            WARNING  — 50–79 % consumed
+            ALERT    — 80–94 % consumed  (auto-throttle to 50 %)
+            CRITICAL — ≥ 95 % consumed   (auto-throttle to 10 %)
+            EXCEEDED — over 100 %        (all operations blocked)
+        """
+        if self.monthly_budget_usd <= 0:
+            return {"level": "OK", "message": "No budget cap configured.", "throttle": 1.0}
+
+        spent = self._total_cost_usd
+        if self._finops is not None:
+            try:
+                fin_status = self._finops.status()
+                spent = float(fin_status.get("used_usd", spent))
+            except Exception:
+                pass
+
+        pct = spent / self.monthly_budget_usd
+
+        if pct >= 1.0:
+            level, msg, throttle = "EXCEEDED", "Monthly budget exhausted; all operations blocked.", 0.0
+        elif pct >= _BUDGET_CRITICAL_PCT:
+            level, msg, throttle = (
+                "CRITICAL",
+                f"Budget critical: {pct*100:.1f}% consumed — auto-throttled to 10%.",
+                0.10,
+            )
+        elif pct >= _BUDGET_ALERT_PCT:
+            level, msg, throttle = (
+                "ALERT",
+                f"Budget alert: {pct*100:.1f}% consumed — auto-throttled to 50%.",
+                0.50,
+            )
+        elif pct >= _BUDGET_WARN_PCT:
+            level, msg, throttle = (
+                "WARNING",
+                f"Budget warning: {pct*100:.1f}% consumed.",
+                1.0,
+            )
+        else:
+            level, msg, throttle = "OK", f"Budget healthy: {pct*100:.1f}% consumed.", 1.0
+
+        # Apply auto-throttle
+        if self._auto_throttle_enabled and throttle < self._throttle_rate:
+            self.set_throttle(throttle)
+
+        return {
+            "level": level,
+            "message": msg,
+            "spent_usd": round(spent, 4),
+            "budget_usd": self.monthly_budget_usd,
+            "percent": round(pct * 100, 2),
+            "throttle": throttle,
+        }
+
     # ── Unified Check ────────────────────────────────────────────────────
 
     def check_quota(
@@ -335,6 +565,14 @@ class EconomicGuardrails:
 
         This is the single entry point for enforcement.
         Returns {"allowed": True/False, "reason": "..."}.
+
+        Checks (in order):
+            1. Rate limit (per-category sliding window)
+            2. Budget (monthly cap + estimated cost)
+            3. Concurrent operations (if quota configured)
+            4. Per-agent/category quota (hourly/daily)
+            5. Per-action cost limit
+            6. Action cap (session/hourly/daily hard ceiling)
         """
         agent = agent_name or self.agent_name
 
@@ -372,6 +610,13 @@ class EconomicGuardrails:
             reason = f"Action cost ${estimated_cost:.4f} exceeds limit ${quota.max_cost_per_action:.4f}"
             logger.warning("EconomicGuardrails: BLOCKED %s/%s — %s", agent, category, reason)
             return {"allowed": False, "reason": reason}
+
+        # 6. Action cap check
+        cap_result = self._check_action_cap(agent)
+        if not cap_result["allowed"]:
+            logger.warning("EconomicGuardrails: BLOCKED %s/%s — %s",
+                          agent, category, cap_result["reason"])
+            return cap_result
 
         return {"allowed": True}
 
@@ -414,6 +659,13 @@ class EconomicGuardrails:
         if day_key not in self._counter_resets:
             self._counter_resets[day_key] = now
 
+        # Increment action cap counters
+        self._record_action(agent)
+
+        # Re-evaluate budget thresholds to trigger auto-throttle if needed
+        if self._auto_throttle_enabled and self.monthly_budget_usd > 0:
+            self.budget_threshold_check()
+
     def enter_operation(self, category: str) -> None:
         """Mark the start of a concurrent operation."""
         with self._lock:
@@ -428,6 +680,7 @@ class EconomicGuardrails:
 
     def status(self) -> dict[str, Any]:
         """Return full economic guardrails status."""
+        budget_info = self.budget_threshold_check() if self.monthly_budget_usd > 0 else {}
         return {
             "agent": self.agent_name,
             "total_cost_usd": round(self._total_cost_usd, 4),
@@ -436,11 +689,16 @@ class EconomicGuardrails:
             "budget_remaining_usd": round(
                 max(0, self.monthly_budget_usd - self._total_cost_usd), 4
             ) if self.monthly_budget_usd > 0 else None,
+            "budget_level": budget_info.get("level", "OK"),
+            "budget_percent": budget_info.get("percent", 0.0),
+            "throttle_rate": self.throttle_rate,
+            "auto_throttle_enabled": self._auto_throttle_enabled,
             "rate_limits": {k: v.to_dict() for k, v in self._rate_configs.items()},
             "quotas": {
                 f"{k[0]}/{k[1]}": v.to_dict()
                 for k, v in self._quotas.items()
             },
+            "action_caps": {k: v.to_dict() for k, v in self._action_caps.items()},
             "concurrent": dict(self._concurrent),
             "usage_records": len(self._usage),
         }
@@ -495,7 +753,7 @@ class EconomicGuardrails:
         }
 
     def reset(self) -> None:
-        """Reset all counters and usage (e.g. monthly rollover)."""
+        """Reset all counters and usage (e.g. monthly rollover or new session)."""
         with self._lock:
             self._total_cost_usd = 0.0
             self._total_tokens = 0
@@ -503,6 +761,12 @@ class EconomicGuardrails:
             self._counters.clear()
             self._counter_resets.clear()
             self._concurrent.clear()
+            # Reset action cap counters
+            self._session_action_counts.clear()
+            self._action_counts.clear()
+            self._action_resets.clear()
+            # Reset throttle
+            self._throttle_rate = 1.0
             # Recreate rate limiters with same configs
             for cat, config in self._rate_configs.items():
                 self._rate_limiters[cat] = {
@@ -516,7 +780,8 @@ class EconomicGuardrails:
         return (
             f"EconomicGuardrails(agent={self.agent_name!r}, "
             f"budget=${self.monthly_budget_usd:.2f}, "
-            f"cost=${self._total_cost_usd:.4f})"
+            f"cost=${self._total_cost_usd:.4f}, "
+            f"throttle={self.throttle_rate:.0%})"
         )
 
     # ── Throttle Control ─────────────────────────────────────────────────

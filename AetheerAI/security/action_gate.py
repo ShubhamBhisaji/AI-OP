@@ -166,7 +166,8 @@ class ActionGate:
         self._history: list[dict[str, Any]] = []
         self._max_history = 500
         self._lock = threading.Lock()
-        self._enabled = True  # Master switch
+        self._enabled = True   # Master switch
+        self._safe_mode = False  # Safe mode — all non-trivial categories require approval
 
     @classmethod
     def from_manifest(cls, manifest: Any, audit_logger: Any = None) -> "ActionGate":
@@ -190,6 +191,21 @@ class ActionGate:
     @property
     def is_enabled(self) -> bool:
         return self._enabled
+
+    def enter_safe_mode(self) -> None:
+        """Enter safe mode — all non-GENERAL categories require manual approval."""
+        self._safe_mode = True
+        logger.warning("ActionGate: SAFE MODE entered — all non-trivial actions require approval.")
+
+    def exit_safe_mode(self) -> None:
+        """Exit safe mode — return to normal approval policy."""
+        self._safe_mode = False
+        logger.info("ActionGate: SAFE MODE exited — normal policy resumed.")
+
+    @property
+    def is_safe_mode(self) -> bool:
+        """Return True if safe mode is active."""
+        return self._safe_mode
 
     def register_approval_controller(self, controller: Any) -> None:
         """Register a human approval controller used for policy-driven approvals."""
@@ -515,6 +531,7 @@ class ActionGate:
         cancelled = sum(1 for h in self._history if h.get("status") == "cancelled")
         return {
             "enabled": self._enabled,
+            "safe_mode": self._safe_mode,
             "total_decisions": total,
             "allowed": allowed,
             "denied": denied,
@@ -586,12 +603,24 @@ class ActionGate:
         if guardrail_requested:
             return True, guardrail_reason or "Guardrail policy requested approval."
 
+        # Safe mode: all non-trivial categories require manual approval
+        if self._safe_mode and category != ActionCategory.GENERAL.value and category != "general":
+            return True, "Safe mode: all non-trivial actions require operator approval."
+
         if controller is not None and hasattr(controller, "needs_approval"):
             try:
                 if controller.needs_approval(action):
                     return True, "Matched operator approval policy."
             except Exception as exc:
                 logger.debug("ActionGate: approval policy lookup failed: %s", exc)
+
+        # Check for operator-staged pending approval (trigger_manual_approval)
+        if controller is not None and hasattr(controller, "has_pending_approval"):
+            try:
+                if controller.has_pending_approval(action):
+                    return True, "Pre-staged approval gate: operator requires sign-off."
+            except Exception as exc:
+                logger.debug("ActionGate: pending approval check failed: %s", exc)
 
         return False, ""
 

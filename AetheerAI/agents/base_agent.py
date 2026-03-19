@@ -122,6 +122,7 @@ class BaseAgent:
         ai_adapter: Any | None = None,
         workflow_engine: Any | None = None,
         tool_manager: Any | None = None,
+        economic_guardrails: Any | None = None,
     ):
         # Clamp permission level to a safe range before validation.
         _level = max(0, min(5, int(permission_level)))
@@ -160,6 +161,7 @@ class BaseAgent:
         self._workflow_engine = workflow_engine
         self._tool_manager = tool_manager
         self._governance = None
+        self._economic_guardrails = economic_guardrails
         if memory_manager is not None:
             self.attach_memory(memory_manager)
 
@@ -271,6 +273,7 @@ class BaseAgent:
         workflow_engine: Any | None = None,
         tool_manager: Any | None = None,
         governance: Any | None = None,
+        economic_guardrails: Any | None = None,
     ) -> None:
         if ai_adapter is not None:
             self._ai_adapter = ai_adapter
@@ -280,6 +283,8 @@ class BaseAgent:
             self._tool_manager = tool_manager
         if governance is not None:
             self._governance = governance
+        if economic_guardrails is not None:
+            self._economic_guardrails = economic_guardrails
 
     def attach_memory(self, memory_manager: Any) -> None:
         namespace = self.name
@@ -345,6 +350,19 @@ class BaseAgent:
             gov_status = self._governance.status()
             if gov_status.get("paused"):
                 raise RuntimeError(f"Agent '{self.name}' is paused by governance.")
+
+        # Economic guardrails check — block if rate/quota/budget/action-cap exceeded
+        if self._economic_guardrails is not None:
+            verdict = self._economic_guardrails.check_quota(
+                agent_name=self.name,
+                category="task_execution",
+            )
+            if not verdict.get("allowed", True):
+                raise PermissionError(
+                    f"Agent '{self.name}' blocked by economic guardrails: "
+                    f"{verdict.get('reason', 'limit exceeded')}"
+                )
+
         self.status = "running"
         self.profile["last_task"] = task
         prepared_task = self._merge_context(task, context)
@@ -368,6 +386,12 @@ class BaseAgent:
             self.profile["last_error"] = "" if success else str(result)
             self.status = "completed" if success else "failed"
             self._persist_task_memory(task=task, result=str(result), success=success)
+            # Record usage against economic guardrails
+            if self._economic_guardrails is not None:
+                self._economic_guardrails.record_usage(
+                    category="task_execution",
+                    agent_name=self.name,
+                )
             return str(result)
         except Exception as exc:
             self.record_result(success=False)
@@ -400,12 +424,29 @@ class BaseAgent:
     def call_tool(self, tool_name: str, **kwargs: Any) -> Any:
         if self._tool_manager is None:
             raise RuntimeError(f"Agent '{self.name}' has no tool manager attached.")
-        return self._tool_manager.call(
+        # Economic guardrails check for tool calls
+        if self._economic_guardrails is not None:
+            verdict = self._economic_guardrails.check_quota(
+                agent_name=self.name,
+                category=f"tool:{tool_name}",
+            )
+            if not verdict.get("allowed", True):
+                raise PermissionError(
+                    f"Agent '{self.name}' tool call '{tool_name}' blocked by economic guardrails: "
+                    f"{verdict.get('reason', 'limit exceeded')}"
+                )
+        result = self._tool_manager.call(
             tool_name,
             agent_name=self.name,
             agent_level=self.permission_level,
             **kwargs,
         )
+        if self._economic_guardrails is not None:
+            self._economic_guardrails.record_usage(
+                category=f"tool:{tool_name}",
+                agent_name=self.name,
+            )
+        return result
 
     def _merge_context(self, task: str, context: dict[str, Any] | None) -> str:
         if not context:

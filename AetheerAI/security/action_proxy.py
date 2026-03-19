@@ -373,8 +373,6 @@ class ActionProxy:
                     category=category.value,
                     context=context,
                 )
-                if not quota_ok.get("allowed", True) is False:
-                    pass  # allowed
                 if quota_ok.get("allowed") is False:
                     self._total_blocked += 1
                     result = ProxyResult(
@@ -450,7 +448,17 @@ class ActionProxy:
 
         self._record(result)
 
-        # Step 4: Record to observability (if registered)
+        # Step 4: Record usage to economic guardrails (post-execution, on success)
+        if self._guardrails is not None and result.success:
+            try:
+                self._guardrails.record_usage(
+                    category=category.value,
+                    agent_name=self.agent_name,
+                )
+            except Exception as exc:
+                logger.debug("ActionProxy: guardrails record_usage failed: %s", exc)
+
+        # Step 5: Record to observability (if registered)
         if self._obs is not None:
             try:
                 self._obs.record_action(

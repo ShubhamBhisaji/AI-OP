@@ -17,12 +17,15 @@ Endpoints:
     POST /api/governance/resume        — Resume agent
     POST /api/governance/emergency-stop — Emergency kill
     POST /api/governance/safe-shutdown  — Graceful shutdown
+    POST /api/governance/safe-mode      — Restricted-but-running safe mode
+    POST /api/governance/restart        — Stop in-flight work, resume clean
     POST /api/governance/disable-integrations — Disable all external integrations
     POST /api/governance/throttle       — Set throttle rate
     POST /api/governance/policy         — Policy hotswap
     GET  /api/governance/approvals      — Pending approvals
     POST /api/governance/approve/{id}   — Approve action
     POST /api/governance/reject/{id}    — Reject action
+    POST /api/governance/manual-approval — Operator-initiated approval gate
     GET  /api/governance/decisions      — Decision log
     GET  /api/governance/actions        — Actions taken
     GET  /api/governance/costs          — Cost breakdown
@@ -73,6 +76,14 @@ class ApplyUpdateRequest(BaseModel):
 
 class RollbackUpdateRequest(BaseModel):
     version: str | None = Field(default=None, description="Optional rollback target version")
+
+
+class ManualApprovalRequest(BaseModel):
+    action: str = Field(description="Action name to require approval for")
+    category: str = Field(default="general", description="Action category")
+    context: dict[str, Any] = Field(default_factory=dict, description="Additional context")
+    operator: str = Field(default="api", description="Operator identifier")
+    reason: str = Field(default="", description="Reason for the manual gate")
 
 
 # ── Governance resolver ──────────────────────────────────────────────────────
@@ -187,6 +198,39 @@ def governance_safe_shutdown(
     )
 
 
+@router.post("/safe-mode")
+def governance_safe_mode(
+    request: Request, body: OperatorAction,
+) -> dict[str, Any]:
+    """
+    Enter safe mode — agent continues running under maximum restrictions.
+
+    All non-trivial actions (financial, external API, bulk, system) require
+    manual operator approval before execution. External HTTP transport is
+    blocked. Agent remains alive and responsive.
+    Use POST /resume to exit safe mode.
+    """
+    return _get_governance(request).safe_mode(
+        operator=body.operator, reason=body.reason,
+    )
+
+
+@router.post("/restart")
+def governance_restart(
+    request: Request, body: OperatorAction,
+) -> dict[str, Any]:
+    """
+    Restart the agent — cancel all in-flight work, re-enable the gate,
+    and resume the autonomous loop from a clean state.
+
+    Unlike emergency-stop, restart automatically re-enables normal operation.
+    Governance configuration, audit history, and memory are preserved.
+    """
+    return _get_governance(request).restart(
+        operator=body.operator, reason=body.reason,
+    )
+
+
 @router.post("/disable-integrations")
 def governance_disable_integrations(
     request: Request, body: OperatorAction,
@@ -245,6 +289,27 @@ def governance_reject(
     gov = _get_governance(request)
     return gov.human_override.reject(
         request_id, operator=body.operator, reason=body.reason,
+    )
+
+
+@router.post("/manual-approval")
+def governance_manual_approval(
+    request: Request, body: ManualApprovalRequest,
+) -> dict[str, Any]:
+    """
+    Operator-initiated approval gate: pre-stage a pending approval for
+    a named action before the agent has a chance to execute it.
+
+    Useful ahead of scheduled batch runs, sensitive data exports,
+    deployment windows, or any high-risk operation window.
+    The action is blocked at the ActionGate until approved or rejected.
+    """
+    return _get_governance(request).trigger_manual_approval(
+        action=body.action,
+        category=body.category,
+        context=body.context,
+        operator=body.operator,
+        reason=body.reason,
     )
 
 

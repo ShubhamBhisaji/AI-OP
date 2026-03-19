@@ -182,6 +182,11 @@ class ToolManager:
         """Register GovernanceRuntime so tool execution flows through ActionProxy."""
         self._governance = governance
 
+    @property
+    def policy_engine(self) -> PolicyEngine:
+        """Public accessor for the policy engine used by tool authorization."""
+        return self._policy
+
     def get(self, name: str) -> Callable[..., Any] | None:
         return self._tools.get(name)
 
@@ -263,8 +268,11 @@ class ToolManager:
         if accepts_var_kw:
             # If the function is decorated with @require_approval, this flag
             # prevents a second prompt after the centralized check above.
+            # _agent_level is forwarded so _GatedCallable can log it on the
+            # bypass path without needing a duplicate full check.
             kwargs["_approval_bypass_token"] = get_approval_bypass_token()
             kwargs["_agent_name"] = agent_name
+            kwargs["_agent_level"] = agent_level
 
         if self._governance is None:
             return fn(*args, **kwargs)

@@ -263,6 +263,51 @@ class GovernanceRuntime:
         """Graceful shutdown — finish current work, then stop."""
         return self.kill_switch.safe_shutdown(operator=operator, reason=reason)
 
+    def safe_mode(
+        self, operator: str = "system", reason: str = ""
+    ) -> dict[str, Any]:
+        """
+        Safe mode — agent keeps running under maximum restrictions.
+
+        All non-trivial actions require manual approval. External HTTP
+        calls are blocked at the transport. Use resume() to exit.
+        """
+        return self.human_override.safe_mode(operator=operator, reason=reason)
+
+    def restart(
+        self, operator: str = "system", reason: str = ""
+    ) -> dict[str, Any]:
+        """
+        Restart — cancel in-flight work, re-enable gate, resume loop.
+
+        Equivalent to a clean stop + start without redeploying.
+        Preserves all governance configuration and audit history.
+        """
+        return self.human_override.restart(operator=operator, reason=reason)
+
+    def trigger_manual_approval(
+        self,
+        action: str,
+        category: str = "general",
+        context: dict[str, Any] | None = None,
+        operator: str = "system",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """
+        Operator-initiated approval gate for a named action.
+
+        Pre-stages a human approval requirement before the agent
+        has a chance to execute the target action. Until the approval
+        is resolved, any matching action is blocked at the ActionGate.
+        """
+        return self.human_override.trigger_manual_approval(
+            action=action,
+            category=category,
+            context=context,
+            operator=operator,
+            reason=reason,
+        )
+
     def policy_update(
         self, policy: dict[str, Any], operator: str = "system"
     ) -> dict[str, Any]:
@@ -290,10 +335,15 @@ class GovernanceRuntime:
 
     def control_plane_status(self) -> dict[str, Any]:
         """Return the unified operator control-plane view."""
+        ks_mode = self.kill_switch.status().get("mode", "normal")
         return {
             "agent": self._agent_name,
+            "mode": ks_mode,
             "controls": {
                 "pause_resume": True,
+                "stop": True,
+                "restart": True,
+                "safe_mode": True,
                 "manual_approvals": True,
                 "policy_edits": True,
                 "disable_integrations": self._integrator is not None,
@@ -341,10 +391,12 @@ class GovernanceRuntime:
         """Quick status check."""
         ks_mode = self.kill_switch.status().get("mode", "normal")
         paused = ks_mode in ("safe_stop", "emergency", "locked")
+        safe = ks_mode == "safe_mode"
         return {
             "agent": self._agent_name,
             "kill_switch": ks_mode,
             "paused": paused,
+            "safe_mode": safe,
             "budget_remaining": self.economic_guardrails.status().get(
                 "remaining_budget_usd", 0
             ),
@@ -407,6 +459,10 @@ class GovernanceRuntime:
         """Register structured observability to enrich monitor and control views."""
         self._observability = observability
         self.monitor.register_observability(observability)
+
+    def attach_finops(self, finops: Any) -> None:
+        """Register the FinOps controller for cost/budget visibility in the monitor."""
+        self.monitor.register_finops(finops)
 
     # ── Serialization ────────────────────────────────────────────────────────
 
