@@ -1,0 +1,142 @@
+[
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "maintenance",
+    "timestamp": 1773901954.511911,
+    "details": {}
+  },
+  {
+    "action": "reset",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773901954.5134,
+    "details": {
+      "previous_mode": "safe_stop"
+    }
+  },
+  {
+    "action": "emergency_stop",
+    "operator": "admin",
+    "reason": "breach",
+    "timestamp": 1773901954.5248191,
+    "details": {
+      "actions_cancelled": 0,
+      "errors": []
+    }
+  },
+  {
+    "action": "throttle",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773901954.5400877,
+    "details": {
+      "rate": 0.5
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773901954.5887716,
+    "details": {}
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773901966.2153594,
+    "details": {}
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773901976.852999,
+    "details": {}
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "maintenance",
+    "timestamp": 1773902026.5708032,
+    "details": {}
+  },
+  {
+    "action": "reset",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902026.5737824,
+    "details": {
+      "previous_mode": "safe_stop"
+    }
+  },
+  {
+    "action": "emergency_stop",
+    "operator": "admin",
+    "reason": "breach",
+    "timestamp": 1773902026.586772,
+    "details": {
+      "actions_cancelled": 0,
+      "errors": []
+    }
+  },
+  {
+    "action": "throttle",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902026.6032598,
+    "details": {
+      "rate": 0.5
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902026.6443014,
+    "details": {}
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "maintenance",
+    "timestamp": 1773902039.1533217,
+    "details": {}
+  },
+  {
+    "action": "reset",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902039.1553488,
+    "details": {
+      "previous_mode": "safe_stop"
+    }
+  },
+  {
+    "action": "emergency_stop",
+    "operator": "admin",
+    "reason": "breach",
+    "timestamp": 1773902039.170291,
+    "details": {
+      "actions_cancelled": 0,
+      "errors": []
+    }
+  },
+  {
+    "action": "throttle",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902039.1873617,
+    "details": {
+      "rate": 0.5
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902039.2326949,
+    "details": {}
+  }
+]

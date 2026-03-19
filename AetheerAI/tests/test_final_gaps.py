@@ -949,3 +949,291 @@ class TestRisk5_ThrottleAndCostTracking:
         assert len(top) == 2
         assert top[0]["cost_usd"] == 5.0
         assert top[0]["category"] == "expensive"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GOVERNANCE RUNTIME — Full integration wiring tests
+# ═════════════════════════════════════════════════════════════════════════════
+
+from core.governance_runtime import GovernanceRuntime, GovernanceConfig
+
+
+class TestGovernanceRuntime:
+    """Test the unified governance compositor wires everything correctly."""
+
+    def test_creates_all_components(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="test_bot"))
+        assert gov.agent_name == "test_bot"
+        assert gov.guardrail_controller is not None
+        assert gov.action_gate is not None
+        assert gov.economic_guardrails is not None
+        assert gov.action_proxy is not None
+        assert gov.gated_transport is not None
+        assert gov.kill_switch is not None
+        assert gov.control_panel is not None
+        assert gov.human_override is not None
+        assert gov.monitor is not None
+        assert gov.update_channel is not None
+        assert gov.version_manager is not None
+
+    def test_status_returns_all_fields(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        status = gov.status()
+        assert "agent" in status
+        assert "kill_switch" in status
+        assert "paused" in status
+        assert "budget_remaining" in status
+        assert "actions_blocked" in status
+        assert "pending_approvals" in status
+
+    def test_dashboard_returns_all_sections(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        dash = gov.dashboard()
+        assert "governance" in dash
+        assert "monitor" in dash
+        assert "updates" in dash
+        assert "kill_switch" in dash["governance"]
+        assert "human_override" in dash["governance"]
+        assert "economic" in dash["governance"]
+        assert "action_proxy" in dash["governance"]
+        assert "transport" in dash["governance"]
+        assert "control_panel" in dash["governance"]
+
+    def test_pause_and_resume(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        result = gov.pause(operator="admin", reason="maintenance")
+        assert result.get("status") == "paused" or result.get("action") == "pause"
+        result = gov.resume(operator="admin")
+        assert result.get("status") == "resumed" or result.get("action") == "resume"
+
+    def test_emergency_stop(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        result = gov.emergency_stop(operator="admin", reason="breach")
+        assert "emergency_disable" in str(result.get("action", "")) or "approvals_cancelled" in result
+
+    def test_policy_update(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        result = gov.policy_update(
+            {"approval_patterns": ["delete_customer", "bulk_email"]},
+            operator="admin",
+        )
+        assert result["status"] == "applied"
+        assert gov.human_override.needs_approval("delete_customer") is True
+
+    def test_throttle(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        gov.economic_guardrails.set_rate_limit("api_call", max_per_minute=100)
+        gov.throttle(rate=0.5, operator="admin")
+        assert gov.economic_guardrails.throttle_rate == 0.5
+
+    def test_health_check(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        health = gov.health()
+        assert isinstance(health, dict)
+
+    def test_config_from_env(self):
+        config = GovernanceConfig.from_env(agent_name="env_bot")
+        assert config.agent_name == "env_bot"
+        assert config.monthly_budget_usd > 0
+
+    def test_get_transport_returns_gated(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        transport = gov.get_transport()
+        assert hasattr(transport, "request")
+        assert hasattr(transport, "stats")
+
+    def test_attach_to_agent(self):
+        from agents.base_agent import BaseAgent
+        agent = BaseAgent(name="test_agent", role="worker", tools=["search"])
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="test_agent"))
+        gov.attach_to_agent(agent)
+        assert agent._governance is gov
+
+    def test_approval_required_config(self):
+        gov = GovernanceRuntime(GovernanceConfig(
+            agent_name="bot",
+            approval_required=["refund_over_100", "bulk_email"],
+        ))
+        assert gov.human_override.needs_approval("refund_over_100") is True
+        assert gov.human_override.needs_approval("bulk_email") is True
+        assert gov.human_override.needs_approval("read_data") is False
+
+    def test_restricted_operations_config(self):
+        gov = GovernanceRuntime(GovernanceConfig(
+            agent_name="bot",
+            restricted_operations=["delete_customer"],
+        ))
+        gate = gov.action_gate
+        proxy = ActionProxy(agent_name="bot", action_gate=gate)
+        result = proxy.execute("delete_customer")
+        assert result.allowed is False
+
+    def test_repr(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        r = repr(gov)
+        assert "GovernanceRuntime" in r
+        assert "bot" in r
+
+    def test_agent_execute_blocked_when_paused(self):
+        from agents.base_agent import BaseAgent
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        agent = BaseAgent(name="bot", role="worker", tools=["search"])
+        gov.attach_to_agent(agent)
+        gov.pause(operator="admin")
+        with pytest.raises(RuntimeError, match="paused"):
+            agent.execute_task("do something")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GOVERNANCE API — Endpoint tests using FastAPI TestClient
+# ═════════════════════════════════════════════════════════════════════════════
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+# Import governance_api directly via importlib.util to avoid the parent-level
+# api/__init__.py which tries to import the full server module.
+import importlib.util as _ilu
+_gov_spec = _ilu.spec_from_file_location(
+    "governance_api",
+    str(ROOT / "api" / "governance_api.py"),
+)
+_gov_mod = _ilu.module_from_spec(_gov_spec)
+sys.modules["governance_api"] = _gov_mod  # Register so Pydantic can resolve types
+_gov_spec.loader.exec_module(_gov_mod)
+governance_router = _gov_mod.router
+
+
+def _make_test_app():
+    """Create a minimal FastAPI app with governance wired in."""
+    test_app = FastAPI()
+    test_app.include_router(governance_router)
+    gov = GovernanceRuntime(GovernanceConfig(agent_name="api_bot"))
+    test_app.state.governance = gov
+    return test_app, gov
+
+
+class TestGovernanceAPI:
+    """Test all governance REST endpoints."""
+
+    def test_status_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.get("/api/governance/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["agent"] == "api_bot"
+        assert "kill_switch" in data
+
+    def test_dashboard_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.get("/api/governance/dashboard")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "governance" in data
+        assert "monitor" in data
+
+    def test_health_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.get("/api/governance/health")
+        assert resp.status_code == 200
+
+    def test_pause_resume_endpoints(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.post("/api/governance/pause", json={"operator": "admin", "reason": "test"})
+        assert resp.status_code == 200
+
+        resp = client.post("/api/governance/resume", json={"operator": "admin"})
+        assert resp.status_code == 200
+
+    def test_emergency_stop_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.post("/api/governance/emergency-stop", json={"operator": "admin", "reason": "breach"})
+        assert resp.status_code == 200
+
+    def test_safe_shutdown_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.post("/api/governance/safe-shutdown", json={"operator": "admin"})
+        assert resp.status_code == 200
+
+    def test_throttle_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.post("/api/governance/throttle", json={"rate": 0.5, "operator": "admin"})
+        assert resp.status_code == 200
+        assert resp.json()["rate"] == "0.5"
+
+    def test_policy_endpoint(self):
+        app, gov = _make_test_app()
+        client = TestClient(app)
+        resp = client.post("/api/governance/policy", json={
+            "policy": {"approval_patterns": ["delete_all"]},
+            "operator": "admin",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "applied"
+        assert gov.human_override.needs_approval("delete_all") is True
+
+    def test_approvals_endpoint(self):
+        app, gov = _make_test_app()
+        client = TestClient(app)
+        gov.human_override.request_approval("test_action")
+        resp = client.get("/api/governance/approvals")
+        assert resp.status_code == 200
+        assert len(resp.json()) >= 1
+
+    def test_decisions_endpoint(self):
+        app, gov = _make_test_app()
+        gov.monitor.record_decision("d1", "refund", "allowed")
+        client = TestClient(app)
+        resp = client.get("/api/governance/decisions")
+        assert resp.status_code == 200
+        assert len(resp.json()) >= 1
+
+    def test_actions_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.get("/api/governance/actions")
+        assert resp.status_code == 200
+
+    def test_errors_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.get("/api/governance/errors")
+        assert resp.status_code == 200
+
+    def test_costs_endpoint(self):
+        app, gov = _make_test_app()
+        gov.economic_guardrails.record_usage(category="api_call", cost_usd=0.05)
+        client = TestClient(app)
+        resp = client.get("/api/governance/costs?hours=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "by_category" in data
+        assert "status" in data
+
+    def test_retries_endpoint(self):
+        app, gov = _make_test_app()
+        gov.monitor.record_retry("api_call", 1, 3, error="timeout")
+        client = TestClient(app)
+        resp = client.get("/api/governance/retries")
+        assert resp.status_code == 200
+        assert resp.json()["total_retries"] >= 1
+
+    def test_updates_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.get("/api/governance/updates")
+        assert resp.status_code == 200
+
+    def test_503_when_no_governance(self):
+        bare_app = FastAPI()
+        bare_app.include_router(governance_router)
+        client = TestClient(bare_app, raise_server_exceptions=False)
+        resp = client.get("/api/governance/status")
+        assert resp.status_code == 503

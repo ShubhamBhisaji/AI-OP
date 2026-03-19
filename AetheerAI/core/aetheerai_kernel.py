@@ -238,6 +238,21 @@ class AetheerAiKernel:
         )
         # ── Feature 27: BusinessGrowthEngine (lead-to-revenue automation) ───
         self.business = BusinessGrowthEngine()
+        # ── Governance Runtime (unified risk control stack) ──────────────
+        from core.governance_runtime import GovernanceRuntime, GovernanceConfig
+
+        self.governance_runtime = GovernanceRuntime(GovernanceConfig(
+            agent_name="aetheerai",
+            monthly_budget_usd=float(
+                os.environ.get("AETHEERAI_MONTHLY_BUDGET_USD", "50.0")
+            ),
+            max_transaction_usd=float(
+                os.environ.get("AETHEERAI_MAX_TRANSACTION_USD", "500.0")
+            ),
+            auto_apply_security=os.environ.get(
+                "AETHEERAI_AUTO_APPLY_SECURITY", "true"
+            ).lower() in ("1", "true", "yes"),
+        ))
         logger.info("AetheerAI — An AI Master!! kernel ready.")
 
     def _bootstrap_constitution_defaults(self) -> None:

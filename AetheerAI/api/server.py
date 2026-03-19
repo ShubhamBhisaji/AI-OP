@@ -262,6 +262,9 @@ def _get_kernel() -> "AetheerAiKernel":
         provider, model = _resolve_ai_runtime()
         _kernel = AetheerAiKernel(ai_provider=provider, model=model)
         logger.info("Kernel booted (provider=%s model=%s)", provider, model)
+        # Attach governance to app state on lazy boot
+        if hasattr(_kernel, "governance_runtime") and hasattr(app, "state"):
+            app.state.governance = _kernel.governance_runtime
     return _kernel
 
 
@@ -588,6 +591,10 @@ async def lifespan(app: FastAPI):
 
     if _eager_kernel_boot_enabled():
         _get_ceo()
+        # Wire governance runtime into app state for API endpoints
+        if _kernel is not None and hasattr(_kernel, "governance_runtime"):
+            app.state.governance = _kernel.governance_runtime
+            logger.info("Governance runtime attached to app state.")
     else:
         logger.info("Skipping eager kernel boot (serverless runtime detected)")
     yield
@@ -743,6 +750,10 @@ app.include_router(product_router)
 app.include_router(queue_router)
 app.include_router(meta_webhook_router)
 app.include_router(payu_webhook_router)
+
+# ── Governance API (operator controls for all 5 risk areas) ────────────────
+from api.governance_api import router as governance_router
+app.include_router(governance_router)
 
 # Serve built-in Web UI static files
 _UI_DIR = Path(__file__).resolve().parents[1] / "ui"

@@ -159,6 +159,7 @@ class BaseAgent:
         self._ai_adapter = ai_adapter
         self._workflow_engine = workflow_engine
         self._tool_manager = tool_manager
+        self._governance = None
         if memory_manager is not None:
             self.attach_memory(memory_manager)
 
@@ -269,6 +270,7 @@ class BaseAgent:
         ai_adapter: Any | None = None,
         workflow_engine: Any | None = None,
         tool_manager: Any | None = None,
+        governance: Any | None = None,
     ) -> None:
         if ai_adapter is not None:
             self._ai_adapter = ai_adapter
@@ -276,6 +278,8 @@ class BaseAgent:
             self._workflow_engine = workflow_engine
         if tool_manager is not None:
             self._tool_manager = tool_manager
+        if governance is not None:
+            self._governance = governance
 
     def attach_memory(self, memory_manager: Any) -> None:
         namespace = self.name
@@ -336,6 +340,11 @@ class BaseAgent:
 
     def execute_task(self, task: str, context: dict[str, Any] | None = None) -> str:
         """Execute a task through the workflow engine when available."""
+        # Governance check — block if paused or killed
+        if self._governance is not None:
+            gov_status = self._governance.status()
+            if gov_status.get("paused"):
+                raise RuntimeError(f"Agent '{self.name}' is paused by governance.")
         self.status = "running"
         self.profile["last_task"] = task
         prepared_task = self._merge_context(task, context)

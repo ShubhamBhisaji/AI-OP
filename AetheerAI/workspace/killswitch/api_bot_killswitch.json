@@ -1,0 +1,128 @@
+[
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "test",
+    "timestamp": 1773901954.8868153,
+    "details": {}
+  },
+  {
+    "action": "reset",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773901954.8929124,
+    "details": {
+      "previous_mode": "safe_stop"
+    }
+  },
+  {
+    "action": "emergency_stop",
+    "operator": "admin",
+    "reason": "breach",
+    "timestamp": 1773901954.926178,
+    "details": {
+      "actions_cancelled": 0,
+      "errors": []
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773901954.9585662,
+    "details": {}
+  },
+  {
+    "action": "throttle",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773901954.9955792,
+    "details": {
+      "rate": 0.5
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "test",
+    "timestamp": 1773902026.7456634,
+    "details": {}
+  },
+  {
+    "action": "reset",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902026.7526312,
+    "details": {
+      "previous_mode": "safe_stop"
+    }
+  },
+  {
+    "action": "emergency_stop",
+    "operator": "admin",
+    "reason": "breach",
+    "timestamp": 1773902026.7892518,
+    "details": {
+      "actions_cancelled": 0,
+      "errors": []
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902026.8240254,
+    "details": {}
+  },
+  {
+    "action": "throttle",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902026.8591063,
+    "details": {
+      "rate": 0.5
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "test",
+    "timestamp": 1773902039.333951,
+    "details": {}
+  },
+  {
+    "action": "reset",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902039.3408716,
+    "details": {
+      "previous_mode": "safe_stop"
+    }
+  },
+  {
+    "action": "emergency_stop",
+    "operator": "admin",
+    "reason": "breach",
+    "timestamp": 1773902039.37834,
+    "details": {
+      "actions_cancelled": 0,
+      "errors": []
+    }
+  },
+  {
+    "action": "safe_shutdown",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902039.414256,
+    "details": {}
+  },
+  {
+    "action": "throttle",
+    "operator": "admin",
+    "reason": "",
+    "timestamp": 1773902039.456483,
+    "details": {
+      "rate": 0.5
+    }
+  }
+]
