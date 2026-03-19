@@ -904,6 +904,192 @@ def broadcast_lifecycle_update(body: BroadcastUpdateRequest):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ── Task Orchestration — MissionControl (ISSUE 5 fix) ─────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MissionLaunchRequest(BaseModel):
+    agent_name: str = Field(..., min_length=1, max_length=100)
+    goal: str = Field(..., min_length=1, max_length=2000)
+    tasks: list[Any] | None = Field(
+        default=None,
+        description=(
+            "Optional list of task items.  Each item may be a plain string "
+            "or a dict with keys: description, priority, depends_on, "
+            "run_after, max_retries, tags, context."
+        ),
+    )
+    priority: int = Field(default=5, ge=1, le=10)
+    tags: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+    max_retries_per_task: int = Field(default=2, ge=0, le=10)
+
+
+class MissionScheduleRequest(BaseModel):
+    agent_name: str = Field(..., min_length=1, max_length=100)
+    goal: str = Field(..., min_length=1, max_length=2000)
+    run_at_iso: str | None = Field(
+        default=None,
+        description="ISO-8601 UTC datetime to run the mission once.",
+    )
+    interval_sec: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=2_592_000.0,
+        description="Repeat interval in seconds (0 = one-shot).",
+    )
+    tasks: list[Any] | None = None
+    priority: int = Field(default=5, ge=1, le=10)
+    max_retries_per_task: int = Field(default=2, ge=0, le=10)
+
+
+@router.post(
+    "/api/missions",
+    summary="Launch a persistent goal with tasks for an agent",
+    status_code=201,
+)
+def launch_mission(req: MissionLaunchRequest):
+    """
+    Create a persistent goal + task list for an agent and start a
+    continuous autonomous execution loop.  Returns the goal_id.
+
+    Dependency syntax — in the ``tasks`` list, set ``depends_on: "task:N"``
+    to reference the Nth task (0-indexed) in the same batch.
+    """
+    k = _kernel()
+    try:
+        goal_id = k.launch_mission(
+            agent_name=req.agent_name,
+            goal=req.goal,
+            tasks=req.tasks,
+            priority=req.priority,
+            tags=req.tags,
+            metadata=req.metadata,
+            max_retries_per_task=req.max_retries_per_task,
+        )
+    except Exception as exc:
+        logger.error("launch_mission failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"success": True, "data": {"goal_id": goal_id}}
+
+
+@router.post(
+    "/api/missions/schedule",
+    summary="Schedule a mission to run at a future time or on a recurring interval",
+    status_code=201,
+)
+def schedule_mission(req: MissionScheduleRequest):
+    """
+    Schedule a one-time or recurring mission for an agent.
+    Use ``run_at_iso`` for a future one-shot, or ``interval_sec`` for recurring.
+    """
+    k = _kernel()
+    run_at = None
+    if req.run_at_iso:
+        try:
+            run_at = datetime.fromisoformat(req.run_at_iso.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid run_at_iso: '{req.run_at_iso}'")
+        if run_at.tzinfo is None:
+            run_at = run_at.replace(tzinfo=timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        if run_at < now_utc:
+            raise HTTPException(status_code=422, detail="run_at_iso must be in the future")
+
+    try:
+        if req.interval_sec > 0:
+            goal_id = k.mission_control.schedule_recurring(
+                agent_name=req.agent_name,
+                goal=req.goal,
+                interval_sec=req.interval_sec,
+                tasks=req.tasks,
+                priority=req.priority,
+                max_retries_per_task=req.max_retries_per_task,
+            )
+        else:
+            goal_id = k.mission_control.schedule(
+                agent_name=req.agent_name,
+                goal=req.goal,
+                run_at=run_at,
+                tasks=req.tasks,
+                priority=req.priority,
+                max_retries_per_task=req.max_retries_per_task,
+            )
+    except Exception as exc:
+        logger.error("schedule_mission failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"success": True, "data": {"goal_id": goal_id}}
+
+
+@router.get(
+    "/api/missions/{agent_name}/status",
+    summary="Mission execution status for an agent",
+)
+def mission_status(agent_name: str):
+    """Return the full mission status for an agent (loop state + goal/task summary)."""
+    k = _kernel()
+    try:
+        data = k.mission_status(agent_name)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"success": True, "data": data}
+
+
+@router.post(
+    "/api/missions/{agent_name}/pause",
+    summary="Pause autonomous task execution for an agent",
+)
+def pause_mission(agent_name: str):
+    """Pause the autonomous loop — in-flight tasks finish, no new ones start."""
+    k = _kernel()
+    paused = k.pause_mission(agent_name)
+    return {"success": True, "data": {"agent": agent_name, "paused": paused}}
+
+
+@router.post(
+    "/api/missions/{agent_name}/resume",
+    summary="Resume a paused autonomous loop",
+)
+def resume_mission(agent_name: str):
+    k = _kernel()
+    resumed = k.resume_mission(agent_name)
+    return {"success": True, "data": {"agent": agent_name, "resumed": resumed}}
+
+
+@router.delete(
+    "/api/missions/{agent_name}/{goal_id}",
+    summary="Cancel a mission goal and skip remaining tasks",
+)
+def cancel_mission(agent_name: str, goal_id: str):
+    k = _kernel()
+    ok = k.cancel_mission(agent_name, goal_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Goal '{goal_id}' not found for agent '{agent_name}'.")
+    return {"success": True, "message": f"Goal '{goal_id}' cancelled."}
+
+
+@router.post(
+    "/api/missions/{agent_name}/{goal_id}/retry",
+    summary="Reset all failed tasks in a goal back to pending",
+)
+def retry_failed_tasks(agent_name: str, goal_id: str):
+    """Push all FAILED tasks in the goal back to PENDING for re-execution."""
+    k = _kernel()
+    count = k.retry_failed_mission_tasks(agent_name, goal_id)
+    return {"success": True, "data": {"agent": agent_name, "goal_id": goal_id, "tasks_reset": count}}
+
+
+@router.get(
+    "/api/missions/health",
+    summary="Aggregate health check across all agent execution loops",
+)
+def mission_health():
+    """Returns loop state, error counts, and stalled-agent detection across all agents."""
+    k = _kernel()
+    data = k.mission_health()
+    return {"success": True, "data": data}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ── Business Growth Engine ─────────────────────────────────────────────────────
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -114,6 +114,22 @@ _GATE_SIGNATURE = inspect.Signature(
 )
 
 
+def _tool_category(tool_name: str) -> str:
+    """Map a tool name to the economic category used by guardrails."""
+    name = (tool_name or "").lower()
+    if any(marker in name for marker in ("email", "slack", "discord", "message")):
+        return "message_send"
+    if any(marker in name for marker in ("file", "write", "sql", "db")):
+        return "data_write"
+    if any(marker in name for marker in ("terminal", "shell", "command", "code", "github", "aws", "kubernetes")):
+        return "system_command"
+    if any(marker in name for marker in ("http", "web", "browser", "playwright", "scraper", "search", "api")):
+        return "api_call"
+    if any(marker in name for marker in ("txn", "payment", "charge", "refund", "transaction")):
+        return "transaction"
+    return "tool_call"
+
+
 # ── _GatedCallable ─────────────────────────────────────────────────────────
 
 class _GatedCallable:
@@ -209,11 +225,13 @@ class EnforcementGate:
         audit_logger: Any,
         tool_permissions: dict[str, int] | None = None,
         default_permission: int = 3,
+        economic_guardrails: Any = None,
     ) -> None:
         self._policy = policy_engine
         self._audit = audit_logger
         self._tool_perms: dict[str, int] = tool_permissions or {}
         self._default_perm: int = int(default_permission)
+        self._economic_guardrails: Any = economic_guardrails
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -224,18 +242,22 @@ class EnforcementGate:
         audit_logger: Any,
         tool_permissions: dict[str, int] | None = None,
         default_permission: int = 3,
+        economic_guardrails: Any = None,
     ) -> "EnforcementGate":
         """
         Install the singleton gate. Call exactly once at kernel startup.
 
         Parameters
         ----------
-        policy_engine     : PolicyEngine instance for tool-level authorization.
-        audit_logger      : AuditLogger instance for decision records.
-        tool_permissions  : Dict mapping tool_name → required permission level.
-                            Defaults to an empty dict (all tools require default).
-        default_permission: Minimum level required for unregistered tools.
-                            Defaults to 3 (ADMIN) — fail-secure for new tools.
+        policy_engine       : PolicyEngine instance for tool-level authorization.
+        audit_logger        : AuditLogger instance for decision records.
+        tool_permissions    : Dict mapping tool_name → required permission level.
+                              Defaults to an empty dict (all tools require default).
+        default_permission  : Minimum level required for unregistered tools.
+                              Defaults to 3 (ADMIN) — fail-secure for new tools.
+        economic_guardrails : Optional EconomicGuardrails instance.  When supplied,
+                              check_quota() fires in the tool-call hot path as a
+                              mandatory (not advisory) economic pre-check.
         """
         with _GATE_LOCK:
             cls._instance = cls(
@@ -243,12 +265,33 @@ class EnforcementGate:
                 audit_logger=audit_logger,
                 tool_permissions=tool_permissions,
                 default_permission=default_permission,
+                economic_guardrails=economic_guardrails,
             )
             logger.info(
                 "EnforcementGate: installed and OPEN. %d tool entries registered.",
                 len(cls._instance._tool_perms),
             )
             return cls._instance
+
+    @classmethod
+    def attach_guardrails(cls, economic_guardrails: Any) -> None:
+        """
+        Attach an EconomicGuardrails instance after initial install.
+
+        Useful when the guardrails object is created after the gate is installed
+        (e.g. the governance_runtime is initialised after the enforcement gate).
+        Thread-safe.
+        """
+        with _GATE_LOCK:
+            gate = cls._instance
+            if gate is None:
+                raise PolicyViolation(
+                    "<unknown>",
+                    "EnforcementGate must be installed before attaching guardrails.",
+                )
+            gate._economic_guardrails = economic_guardrails
+            logger.info("EnforcementGate: EconomicGuardrails attached.")
+
 
     @classmethod
     def get(cls) -> "EnforcementGate":
@@ -333,7 +376,47 @@ class EnforcementGate:
             )
             raise PolicyViolation(tool_name, decision.reason)
 
-        # ── 2. ApprovalGate — human-in-the-loop for Tier 1 / Tier 2 ──
+        # ── 2. EconomicGuardrails — mandatory economic pre-check ──────
+        if self._economic_guardrails is not None:
+            try:
+                eg_result = self._economic_guardrails.check_quota(
+                    agent_name=agent_name,
+                    category=_tool_category(tool_name),
+                    context=ctx,
+                )
+                if not eg_result.get("allowed", True):
+                    reason = eg_result.get("reason", "Economic quota exceeded.")
+                    self._audit.log(
+                        {
+                            "event": "enforcement_gate",
+                            "tool": tool_name,
+                            "agent": agent_name,
+                            "agent_level": agent_level,
+                            "decision": "deny",
+                            "reason": reason,
+                            "source": "economic_guardrails",
+                        }
+                    )
+                    raise PolicyViolation(tool_name, reason)
+            except PolicyViolation:
+                raise
+            except Exception as eg_exc:
+                # Guardrails check failure must never silently allow execution.
+                # Log and re-raise as a PolicyViolation.
+                reason = f"EconomicGuardrails check error: {eg_exc}"
+                self._audit.log(
+                    {
+                        "event": "enforcement_gate",
+                        "tool": tool_name,
+                        "agent": agent_name,
+                        "decision": "deny",
+                        "reason": reason,
+                        "source": "economic_guardrails_error",
+                    }
+                )
+                raise PolicyViolation(tool_name, reason) from eg_exc
+
+        # ── 3. ApprovalGate — human-in-the-loop for Tier 1 / Tier 2 ──
         from security.approval_gate import ALL_GUARDED_TOOLS, ApprovalDenied
 
         if tool_name in ALL_GUARDED_TOOLS:
@@ -358,7 +441,7 @@ class EnforcementGate:
                 )
                 raise PolicyViolation(tool_name, str(exc)) from exc
 
-        # ── 3. Audit allow ─────────────────────────────────────────────
+        # ── 4. Audit allow ─────────────────────────────────────────────
         self._audit.log(
             {
                 "event": "enforcement_gate",

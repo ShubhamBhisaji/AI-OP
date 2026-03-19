@@ -7,6 +7,8 @@ It enforces that:
   - Unknown skills are rejected before they can affect the agent.
   - Skill domains are isolated — one domain's failure doesn't crash others.
   - Skills can be listed, inspected, and revoked at runtime.
+  - Each agent operates inside an isolated SandboxRegistry context so no
+    agent can invoke a skill on behalf of another agent's identity.
 
 Usage
 -----
@@ -16,6 +18,9 @@ runtime.load(agent_name="store_bot")
 # Check before using a skill
 if runtime.is_allowed("active_listening"):
     ...
+
+# Enforce sandbox isolation before a skill is invoked
+runtime.enforce_sandbox("active_listening")
 
 # Get tools that come with loaded skills
 tools = runtime.required_tools()
@@ -30,6 +35,8 @@ import logging
 from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any
+
+from skills.sandbox import SandboxRegistry, SkillQuota, get_default_registry
 
 logger = logging.getLogger(__name__)
 
@@ -72,23 +79,31 @@ class SkillRuntime:
         self,
         allowed_skills: list[str] | None = None,
         strict: bool = False,
+        sandbox_registry: SandboxRegistry | None = None,
+        skill_quotas: dict[str, SkillQuota] | None = None,
     ) -> None:
         self._allowed_raw: list[str] = list(allowed_skills or [])
         self._strict = strict
         self._packs: dict[str, LoadedSkillPack] = {}      # domain → pack
         self._individual_skills: set[str] = set()          # flat skill names
         self._loaded: bool = False
+        self._agent_name: str = ""
+        # Sandbox integration — uses the process-level default unless overridden
+        self._sandbox: SandboxRegistry = sandbox_registry or get_default_registry()
+        self._skill_quotas: dict[str, SkillQuota] = skill_quotas or {}
 
     # ── Loading ──────────────────────────────────────────────────────────────
 
     def load(self, agent_name: str = "") -> "SkillRuntime":
         """
-        Resolve allowed_skills into concrete skill packs.
+        Resolve allowed_skills into concrete skill packs and register this
+        agent's isolated sandbox context.
 
         For each entry in allowed_skills:
         - Try to import it as a domain module (skills.<name>).
         - If that fails, treat it as an individual skill name.
         """
+        self._agent_name = agent_name
         for name in self._allowed_raw:
             if not name:
                 continue
@@ -114,6 +129,15 @@ class SkillRuntime:
             self._individual_skills.add(name)
 
         self._loaded = True
+        # Register isolated sandbox context for this agent
+        if agent_name:
+            self._sandbox.create_context(
+                agent_name=agent_name,
+                allowed_skills=list(self._individual_skills),
+                quotas=self._skill_quotas,
+                strict=self._strict,
+                overwrite=True,
+            )
         logger.info(
             "SkillRuntime[%s]: ready — %d domain(s), %d individual skill(s).",
             agent_name, len(self._packs), len(self._individual_skills),
@@ -159,6 +183,25 @@ class SkillRuntime:
             if self._strict:
                 raise PermissionError(msg)
             logger.warning(msg)
+
+    def enforce_sandbox(self, skill: str) -> None:
+        """
+        Full isolation check: verifies the skill is allowed AND enforces the
+        sandbox quota, logging an audit entry regardless of outcome.
+
+        This should be the preferred call site inside SkillEngine and any
+        code that actually *invokes* a skill (as opposed to just inspecting
+        whether it is available).
+
+        Raises
+        ------
+        SkillDenied        — skill not in whitelist (sandbox strict mode)
+        SkillQuotaExceeded — rolling-window quota exhausted
+        PermissionError    — runtime strict mode violation
+        """
+        self.assert_allowed(skill)
+        if self._agent_name:
+            self._sandbox.check(self._agent_name, skill)
 
     # ── Queries ──────────────────────────────────────────────────────────────
 
@@ -228,13 +271,19 @@ class SkillRuntime:
     # ── Status ───────────────────────────────────────────────────────────────
 
     def status(self) -> dict[str, Any]:
+        sandbox_ctx = (
+            self._sandbox.get_context(self._agent_name)
+            if self._agent_name else None
+        )
         return {
             "loaded": self._loaded,
+            "agent": self._agent_name,
             "domains": [p.to_dict() for p in self._packs.values()],
             "individual_skills": sorted(self._individual_skills),
             "required_tools": self.required_tools(),
             "integration_hints": self.integration_hints(),
             "strict_mode": self._strict,
+            "sandbox": sandbox_ctx.usage_summary() if sandbox_ctx else {},
         }
 
     def __repr__(self) -> str:
@@ -250,6 +299,13 @@ def build_skill_runtime(
     agent_name: str,
     skills: list[str],
     strict: bool = False,
+    sandbox_registry: SandboxRegistry | None = None,
+    skill_quotas: dict[str, SkillQuota] | None = None,
 ) -> SkillRuntime:
-    """Build and load a SkillRuntime for a given agent."""
-    return SkillRuntime(allowed_skills=skills, strict=strict).load(agent_name=agent_name)
+    """Build and load a SkillRuntime for a given agent with sandbox isolation."""
+    return SkillRuntime(
+        allowed_skills=skills,
+        strict=strict,
+        sandbox_registry=sandbox_registry,
+        skill_quotas=skill_quotas,
+    ).load(agent_name=agent_name)

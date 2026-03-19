@@ -109,6 +109,9 @@ class AIAdapter:
             "completion_tokens": 0,
             "total_tokens": 0,
         }
+        # ISSUE 7: optional EconomicGuardrails reference; set by the kernel
+        # after both objects are constructed to avoid circular imports.
+        self._guardrails: Any | None = None
         # WARNING-8: Limit concurrent AI requests — configurable via env var.
         # Default 10 keeps throughput high without hammering rate limits.
         # Override with AETHEERAI_ASYNC_CONCURRENCY=N to tune per deployment.
@@ -383,6 +386,16 @@ class AIAdapter:
             self._session_usage["prompt_tokens"] += pt
             self._session_usage["completion_tokens"] += ct
             self._session_usage["total_tokens"] += tt
+            # ISSUE 7: feed token consumption into EconomicGuardrails
+            if tt and self._guardrails is not None:
+                try:
+                    self._guardrails.record_usage(
+                        category="api_call",
+                        cost_usd=0.0,
+                        tokens=tt,
+                    )
+                except Exception:  # never let budget accounting crash inference
+                    pass
             if tt:
                 logger.info(
                     "Token usage — prompt: %d, completion: %d, total: %d (session: %d)",

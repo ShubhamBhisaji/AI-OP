@@ -14,7 +14,9 @@ import re
 from agents.base_agent import BaseAgent
 from factory.agent_factory import AgentFactory
 from registry.agent_registry import AgentRegistry
+from registry.marketplace import AgentMarketplace, VersionCompatibilityChecker, LicenseEnforcer
 from skills.skill_engine import SkillEngine
+from skills.sandbox import SandboxRegistry, get_default_registry
 import tools  # ensures tools import hook installs before tool modules are loaded
 from core.workflow_engine import (
     WorkflowEngine,
@@ -265,6 +267,13 @@ class AetheerAiKernel:
         ))
         self.governance_runtime.attach_scheduler(self.scheduler)
         self.tool_manager.register_governance(self.governance_runtime)
+        # ── ISSUE 1 FIX: Wire EconomicGuardrails into the mandatory enforcement gate.
+        # This makes budget/rate checks a HARD blocking pre-check on every tool call,
+        # not an advisory call that can be skipped.
+        from security.enforcement_gate import EnforcementGate as _EGate
+        _EGate.attach_guardrails(self.governance_runtime.economic_guardrails)
+        # ── ISSUE 7 FIX: Wire guardrails into AIAdapter for automatic token recording.
+        self.ai_adapter._guardrails = self.governance_runtime.economic_guardrails
         # ── BLOCKER 3: Observability — wire decision-grade telemetry ─────
         # Create per-kernel ObservabilityEngine and attach finops so the
         # UnifiedMonitor inside GovernanceRuntime has full resource + action
@@ -291,6 +300,18 @@ class AetheerAiKernel:
             governance=self.governance,
         )
         self.mission_control.start()
+        # ── Marketplace & Skill Sandbox ───────────────────────────────────
+        # Marketplace: agent discovery, version compat, licensing, dep resolution
+        self.marketplace = AgentMarketplace(
+            version_checker=VersionCompatibilityChecker(
+                current_version=os.environ.get("AETHEERAI_VERSION", "1.0.0")
+            ),
+            license_enforcer=LicenseEnforcer(
+                allowed=None,   # default: allow open + copyleft (with warning)
+            ),
+        )
+        # Sandbox registry: per-agent skill isolation (shared across all subsystems)
+        self.sandbox_registry: SandboxRegistry = get_default_registry()
         logger.info("AetheerAI — An AI Master!! kernel ready.")
 
     def _bootstrap_constitution_defaults(self) -> None:

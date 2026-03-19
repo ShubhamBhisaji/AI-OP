@@ -37,10 +37,12 @@ Endpoints:
 
 from __future__ import annotations
 
+import hmac
 import logging
+import os
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -48,7 +50,41 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/governance", tags=["Governance"])
 
 
-# ── Request/Response Models ──────────────────────────────────────────────────
+# ── Operator authentication dependency ──────────────────────────────────────
+
+def _require_operator(request: Request) -> None:
+    """
+    Enforce operator token on sensitive governance endpoints.
+
+    Behaviour
+    ---------
+    * If ``AETHEERAI_OPERATOR_TOKEN`` env var is set → caller MUST supply a
+      matching ``Authorization: Bearer <token>`` header.  Constant-time
+      comparison prevents timing-based token enumeration.
+    * If the env var is NOT set → a warning is logged and all access is
+      allowed (development / test mode).  Set the token in production.
+    """
+    token = os.environ.get("AETHEERAI_OPERATOR_TOKEN", "").strip()
+    if not token:
+        logger.warning(
+            "SECURITY: AETHEERAI_OPERATOR_TOKEN is not set — governance "
+            "control endpoints are OPEN to unauthenticated callers.  "
+            "Set this variable in production."
+        )
+        return  # dev/test mode — allow
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header. Use: Authorization: Bearer <AETHEERAI_OPERATOR_TOKEN>",
+        )
+    provided = auth_header[7:].strip()
+    if not hmac.compare_digest(provided.encode(), token.encode()):
+        raise HTTPException(status_code=403, detail="Invalid operator token.")
+
+
+
 
 class OperatorAction(BaseModel):
     operator: str = Field(default="api", description="Operator identifier")
@@ -162,7 +198,7 @@ def governance_status_indicators(request: Request) -> dict[str, Any]:
 
 # ── Operator Controls ────────────────────────────────────────────────────────
 
-@router.post("/pause")
+@router.post("/pause", dependencies=[Depends(_require_operator)])
 def governance_pause(request: Request, body: OperatorAction) -> dict[str, Any]:
     """Pause the agent — no actions will execute."""
     return _get_governance(request).pause(
@@ -170,7 +206,7 @@ def governance_pause(request: Request, body: OperatorAction) -> dict[str, Any]:
     )
 
 
-@router.post("/resume")
+@router.post("/resume", dependencies=[Depends(_require_operator)])
 def governance_resume(request: Request, body: OperatorAction) -> dict[str, Any]:
     """Resume the agent after pause."""
     return _get_governance(request).resume(
@@ -178,7 +214,7 @@ def governance_resume(request: Request, body: OperatorAction) -> dict[str, Any]:
     )
 
 
-@router.post("/emergency-stop")
+@router.post("/emergency-stop", dependencies=[Depends(_require_operator)])
 def governance_emergency_stop(
     request: Request, body: OperatorAction,
 ) -> dict[str, Any]:
@@ -188,7 +224,7 @@ def governance_emergency_stop(
     )
 
 
-@router.post("/safe-shutdown")
+@router.post("/safe-shutdown", dependencies=[Depends(_require_operator)])
 def governance_safe_shutdown(
     request: Request, body: OperatorAction,
 ) -> dict[str, Any]:
@@ -198,7 +234,7 @@ def governance_safe_shutdown(
     )
 
 
-@router.post("/safe-mode")
+@router.post("/safe-mode", dependencies=[Depends(_require_operator)])
 def governance_safe_mode(
     request: Request, body: OperatorAction,
 ) -> dict[str, Any]:
@@ -215,7 +251,7 @@ def governance_safe_mode(
     )
 
 
-@router.post("/restart")
+@router.post("/restart", dependencies=[Depends(_require_operator)])
 def governance_restart(
     request: Request, body: OperatorAction,
 ) -> dict[str, Any]:
@@ -231,7 +267,7 @@ def governance_restart(
     )
 
 
-@router.post("/disable-integrations")
+@router.post("/disable-integrations", dependencies=[Depends(_require_operator)])
 def governance_disable_integrations(
     request: Request, body: OperatorAction,
 ) -> dict[str, Any]:
@@ -242,7 +278,7 @@ def governance_disable_integrations(
     )
 
 
-@router.post("/throttle")
+@router.post("/throttle", dependencies=[Depends(_require_operator)])
 def governance_throttle(
     request: Request, body: ThrottleRequest,
 ) -> dict[str, str]:
@@ -251,7 +287,7 @@ def governance_throttle(
     return {"status": "throttled", "rate": str(body.rate)}
 
 
-@router.post("/policy")
+@router.post("/policy", dependencies=[Depends(_require_operator)])
 def governance_policy_update(
     request: Request, body: PolicyRequest,
 ) -> dict[str, Any]:
@@ -270,7 +306,7 @@ def governance_pending_approvals(request: Request) -> list[dict[str, Any]]:
     return gov.human_override.pending_approvals()
 
 
-@router.post("/approve/{request_id}")
+@router.post("/approve/{request_id}", dependencies=[Depends(_require_operator)])
 def governance_approve(
     request: Request, request_id: str, body: ApprovalAction,
 ) -> dict[str, Any]:
@@ -281,7 +317,7 @@ def governance_approve(
     )
 
 
-@router.post("/reject/{request_id}")
+@router.post("/reject/{request_id}", dependencies=[Depends(_require_operator)])
 def governance_reject(
     request: Request, request_id: str, body: ApprovalAction,
 ) -> dict[str, Any]:
@@ -292,7 +328,7 @@ def governance_reject(
     )
 
 
-@router.post("/manual-approval")
+@router.post("/manual-approval", dependencies=[Depends(_require_operator)])
 def governance_manual_approval(
     request: Request, body: ManualApprovalRequest,
 ) -> dict[str, Any]:
@@ -315,7 +351,7 @@ def governance_manual_approval(
 
 # ── Observability Reports ───────────────────────────────────────────────────
 
-@router.get("/decisions")
+@router.get("/decisions", dependencies=[Depends(_require_operator)])
 def governance_decisions(
     request: Request,
     outcome: str | None = None,
@@ -343,7 +379,7 @@ def governance_errors(request: Request, limit: int = 20) -> list[dict[str, Any]]
     return gov.monitor.error_report(limit=limit)
 
 
-@router.get("/costs")
+@router.get("/costs", dependencies=[Depends(_require_operator)])
 def governance_costs(request: Request, hours: float = 24) -> dict[str, Any]:
     """Cost breakdown."""
     gov = _get_governance(request)
@@ -378,7 +414,7 @@ def governance_verify_update(request: Request, version: str) -> dict[str, Any]:
     return gov.verify_update(version)
 
 
-@router.post("/updates/apply")
+@router.post("/updates/apply", dependencies=[Depends(_require_operator)])
 def governance_apply_update(
     request: Request, body: ApplyUpdateRequest,
 ) -> dict[str, Any]:
@@ -387,7 +423,7 @@ def governance_apply_update(
     return gov.update_channel.apply_staged(body.version)
 
 
-@router.post("/updates/rollback")
+@router.post("/updates/rollback", dependencies=[Depends(_require_operator)])
 def governance_rollback_update(
     request: Request, body: RollbackUpdateRequest,
 ) -> dict[str, Any]:
