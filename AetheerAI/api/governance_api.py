@@ -6,11 +6,18 @@ can control agents via HTTP without code changes.
 Endpoints:
     GET  /api/governance/status        — Quick status check
     GET  /api/governance/dashboard     — Full governance dashboard
+    GET  /api/governance/control-plane — Unified operator control plane
     GET  /api/governance/health        — Health check
+    GET  /api/governance/activity      — Activity history
+    GET  /api/governance/current-tasks — Live running / queued work
+    GET  /api/governance/resources     — Resource usage snapshot
+    GET  /api/governance/integrations  — Integration health
+    GET  /api/governance/status-indicators — Compact operator indicators
     POST /api/governance/pause         — Pause agent
     POST /api/governance/resume        — Resume agent
     POST /api/governance/emergency-stop — Emergency kill
     POST /api/governance/safe-shutdown  — Graceful shutdown
+    POST /api/governance/disable-integrations — Disable all external integrations
     POST /api/governance/throttle       — Set throttle rate
     POST /api/governance/policy         — Policy hotswap
     GET  /api/governance/approvals      — Pending approvals
@@ -20,7 +27,9 @@ Endpoints:
     GET  /api/governance/actions        — Actions taken
     GET  /api/governance/costs          — Cost breakdown
     GET  /api/governance/updates        — Available updates
+    GET  /api/governance/updates/verify/{version} — Verify update
     POST /api/governance/updates/apply  — Apply update (staged)
+    POST /api/governance/updates/rollback — Roll back update
 """
 
 from __future__ import annotations
@@ -62,6 +71,10 @@ class ApplyUpdateRequest(BaseModel):
     version: str
 
 
+class RollbackUpdateRequest(BaseModel):
+    version: str | None = Field(default=None, description="Optional rollback target version")
+
+
 # ── Governance resolver ──────────────────────────────────────────────────────
 
 def _get_governance(request: Request) -> Any:
@@ -89,10 +102,51 @@ def governance_dashboard(request: Request) -> dict[str, Any]:
     return _get_governance(request).dashboard()
 
 
+@router.get("/control-plane")
+def governance_control_plane(request: Request) -> dict[str, Any]:
+    """Unified operator control plane."""
+    return _get_governance(request).control_plane_status()
+
+
 @router.get("/health")
 def governance_health(request: Request) -> dict[str, Any]:
     """Health check for governance subsystem."""
     return _get_governance(request).health()
+
+
+@router.get("/activity")
+def governance_activity(request: Request, limit: int = 50) -> list[dict[str, Any]]:
+    """Recent operator and runtime activity history."""
+    gov = _get_governance(request)
+    return gov.monitor.activity_timeline(limit=limit)
+
+
+@router.get("/current-tasks")
+def governance_current_tasks(request: Request, limit: int = 25) -> list[dict[str, Any]]:
+    """Live running and queued tasks across the runtime."""
+    gov = _get_governance(request)
+    return gov.monitor.current_tasks(limit=limit)
+
+
+@router.get("/resources")
+def governance_resources(request: Request) -> dict[str, Any]:
+    """Current resource usage snapshot."""
+    gov = _get_governance(request)
+    return gov.monitor.resource_usage()
+
+
+@router.get("/integrations")
+def governance_integrations(request: Request) -> dict[str, Any]:
+    """Integration health and connectivity status."""
+    gov = _get_governance(request)
+    return gov.monitor.integration_status()
+
+
+@router.get("/status-indicators")
+def governance_status_indicators(request: Request) -> dict[str, Any]:
+    """Compact operator-facing status indicators."""
+    gov = _get_governance(request)
+    return gov.monitor.status_indicators()
 
 
 # ── Operator Controls ────────────────────────────────────────────────────────
@@ -130,6 +184,17 @@ def governance_safe_shutdown(
     """Graceful shutdown — finish current work, then stop."""
     return _get_governance(request).safe_shutdown(
         operator=body.operator, reason=body.reason,
+    )
+
+
+@router.post("/disable-integrations")
+def governance_disable_integrations(
+    request: Request, body: OperatorAction,
+) -> dict[str, Any]:
+    """Disable all external integrations without shutting down the runtime."""
+    return _get_governance(request).disable_integrations(
+        operator=body.operator,
+        reason=body.reason,
     )
 
 
@@ -241,6 +306,13 @@ def governance_updates(request: Request) -> dict[str, Any]:
     return gov.update_channel.update_status()
 
 
+@router.get("/updates/verify/{version}")
+def governance_verify_update(request: Request, version: str) -> dict[str, Any]:
+    """Verify an update before staged application."""
+    gov = _get_governance(request)
+    return gov.verify_update(version)
+
+
 @router.post("/updates/apply")
 def governance_apply_update(
     request: Request, body: ApplyUpdateRequest,
@@ -248,3 +320,12 @@ def governance_apply_update(
     """Apply update with staged verification."""
     gov = _get_governance(request)
     return gov.update_channel.apply_staged(body.version)
+
+
+@router.post("/updates/rollback")
+def governance_rollback_update(
+    request: Request, body: RollbackUpdateRequest,
+) -> dict[str, Any]:
+    """Rollback to the previous or specified compatible version."""
+    gov = _get_governance(request)
+    return gov.rollback_update(body.version)

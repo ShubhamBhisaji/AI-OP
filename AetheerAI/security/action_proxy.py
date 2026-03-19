@@ -338,7 +338,10 @@ class ActionProxy:
 
         Use this for operations that don't fit the 5 standard categories.
         """
-        cat = ActionCategory(category) if category in ActionCategory.__members__.values() else ActionCategory.CUSTOM
+        try:
+            cat = ActionCategory(category)
+        except ValueError:
+            cat = ActionCategory.CUSTOM
         return self._execute_through_gate(
             category=cat,
             action=action,

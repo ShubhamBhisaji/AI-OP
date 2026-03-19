@@ -253,6 +253,8 @@ class AetheerAiKernel:
                 "AETHEERAI_AUTO_APPLY_SECURITY", "true"
             ).lower() in ("1", "true", "yes"),
         ))
+        self.governance_runtime.attach_scheduler(self.scheduler)
+        self.tool_manager.register_governance(self.governance_runtime)
         logger.info("AetheerAI — An AI Master!! kernel ready.")
 
     def _bootstrap_constitution_defaults(self) -> None:
@@ -1041,6 +1043,8 @@ class AetheerAiKernel:
         agent = self.registry.get(name)
         if agent is None:
             raise KeyError(f"Agent '{name}' not found in registry.")
+        if getattr(agent, "_governance", None) is not self.governance_runtime:
+            self.governance_runtime.attach_to_agent(agent)
         logger.info(
             "Running agent '%s' (permission=%s) on task: %s",
             name, agent.permission_level, task,
@@ -1087,6 +1091,8 @@ class AetheerAiKernel:
         agent = self.registry.get(name)
         if agent is None:
             raise KeyError(f"Agent '{name}' not found in registry.")
+        if getattr(agent, "_governance", None) is not self.governance_runtime:
+            self.governance_runtime.attach_to_agent(agent)
         logger.info(
             "Running agent '%s' async (permission=%s) on task: %s",
             name, agent.permission_level, task,

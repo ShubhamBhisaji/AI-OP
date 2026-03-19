@@ -160,10 +160,14 @@ class UnifiedMonitor:
         self._observability = None
         self._finops = None
         self._action_proxy = None
+        self._action_gate = None
         self._integrator = None
         self._kill_switch = None
         self._human_override = None
         self._goal_manager = None
+        self._scheduler = None
+        self._control_panel = None
+        self._update_channel = None
 
         # Local stores
         self._timeline: list[TimelineEvent] = []
@@ -180,6 +184,9 @@ class UnifiedMonitor:
     def register_action_proxy(self, proxy: Any) -> None:
         self._action_proxy = proxy
 
+    def register_action_gate(self, gate: Any) -> None:
+        self._action_gate = gate
+
     def register_integrator(self, integrator: Any) -> None:
         self._integrator = integrator
 
@@ -191,6 +198,15 @@ class UnifiedMonitor:
 
     def register_goal_manager(self, gm: Any) -> None:
         self._goal_manager = gm
+
+    def register_scheduler(self, scheduler: Any) -> None:
+        self._scheduler = scheduler
+
+    def register_control_panel(self, panel: Any) -> None:
+        self._control_panel = panel
+
+    def register_update_channel(self, channel: Any) -> None:
+        self._update_channel = channel
 
     # ── Record events ─────────────────────────────────────────────────────
 
@@ -393,6 +409,31 @@ class UnifiedMonitor:
             except Exception as exc:
                 components["action_proxy"] = {"status": "error", "error": str(exc)}
 
+        if self._action_gate is not None:
+            try:
+                gate_stats = self._action_gate.stats()
+                components["action_gate"] = {
+                    "status": "healthy" if gate_stats.get("enabled") else "unhealthy",
+                    **gate_stats,
+                }
+                if not gate_stats.get("enabled"):
+                    overall = "unhealthy"
+            except Exception as exc:
+                components["action_gate"] = {"status": "error", "error": str(exc)}
+
+        if self._scheduler is not None:
+            try:
+                scheduler_stats = self._scheduler.stats()
+                pending_jobs = scheduler_stats.get("by_status", {}).get("pending", 0)
+                components["scheduler"] = {
+                    "status": "degraded" if pending_jobs > 25 else "healthy",
+                    **scheduler_stats,
+                }
+                if pending_jobs > 25 and overall == "healthy":
+                    overall = "degraded"
+            except Exception as exc:
+                components["scheduler"] = {"status": "error", "error": str(exc)}
+
         # Integration health
         integration_health = self._check_integrations()
         if integration_health:
@@ -507,10 +548,15 @@ class UnifiedMonitor:
             "agent": self.agent_name,
             "health": self.health_status(),
             "resources": self.resource_usage(),
+            "status_indicators": self.status_indicators(),
+            "current_tasks": self.current_tasks(limit=20),
             "recent_activity": self.activity_timeline(limit=20),
+            "activity_history": self.activity_timeline(limit=50),
             "recent_decisions": self.decision_log(limit=10),
             "errors": self.error_report(limit=10),
+            "retries": self.retry_summary(),
             "integrations": self.integration_status(),
+            "updates": self._update_status(),
             "generated_at": time.time(),
         }
 
@@ -660,3 +706,101 @@ class UnifiedMonitor:
 
         actions.sort(key=lambda a: a.get("ts", 0), reverse=True)
         return actions[:limit]
+
+    def current_tasks(self, limit: int = 25) -> list[dict[str, Any]]:
+        """Return live in-flight and queued work across actions, jobs, and goals."""
+        tasks: list[dict[str, Any]] = []
+
+        if self._action_gate is not None:
+            try:
+                for action in self._action_gate.active_actions():
+                    tasks.append({
+                        "source": "action_gate",
+                        "kind": "action",
+                        "id": action.get("token_id", ""),
+                        "name": action.get("action", ""),
+                        "state": "running",
+                        "category": action.get("category", "general"),
+                        "agent": action.get("agent", self.agent_name),
+                        "started_at": action.get("started_at", 0),
+                        "elapsed": action.get("elapsed", 0),
+                    })
+            except Exception:
+                pass
+
+        if self._scheduler is not None:
+            try:
+                for job in self._scheduler.list_jobs(limit=limit):
+                    if job.get("status") not in {"running", "pending", "failed"}:
+                        continue
+                    tasks.append({
+                        "source": "scheduler",
+                        "kind": "job",
+                        "id": job.get("job_id", ""),
+                        "name": job.get("name", ""),
+                        "state": job.get("status", "unknown"),
+                        "agent": job.get("agent_name", self.agent_name),
+                        "started_at": job.get("started_at") or job.get("created_at", 0),
+                        "attempts": job.get("attempts", 0),
+                        "queue_mode": job.get("mode", "immediate"),
+                    })
+            except Exception:
+                pass
+
+        if self._goal_manager is not None and hasattr(self._goal_manager, "next_actions"):
+            try:
+                for item in self._goal_manager.next_actions(limit=limit):
+                    tasks.append({
+                        "source": "goal_manager",
+                        "kind": "goal_task",
+                        "id": item.get("task_id") or item.get("id", ""),
+                        "name": item.get("description", ""),
+                        "state": item.get("state", "pending"),
+                        "priority": item.get("priority", 5),
+                        "goal_id": item.get("goal_id", ""),
+                    })
+            except Exception:
+                pass
+
+        tasks.sort(
+            key=lambda item: (
+                0 if item.get("state") == "running" else 1,
+                -(item.get("started_at") or 0),
+            )
+        )
+        return tasks[:limit]
+
+    def status_indicators(self) -> dict[str, Any]:
+        """Return compact operator-facing status indicators for the control plane."""
+        kill_switch = self._kill_switch.status() if self._kill_switch is not None else {}
+        override = self._human_override.status() if self._human_override is not None else {}
+        scheduler_stats = self._scheduler.stats() if self._scheduler is not None else {"by_status": {}}
+        gate_stats = self._action_gate.stats() if self._action_gate is not None else {}
+        updates = self._update_status()
+
+        return {
+            "mode": kill_switch.get("mode", override.get("agent_mode", "unknown")),
+            "paused": kill_switch.get("mode") in {"safe_stop", "emergency", "locked"},
+            "pending_approvals": override.get("pending_approvals", 0),
+            "active_actions": gate_stats.get("active_count", 0),
+            "running_jobs": scheduler_stats.get("by_status", {}).get("running", 0),
+            "pending_jobs": scheduler_stats.get("by_status", {}).get("pending", 0),
+            "failed_jobs": scheduler_stats.get("by_status", {}).get("failed", 0),
+            "dlq_jobs": scheduler_stats.get("dlq", 0),
+            "integration_status": self.integration_status().get("status", "unknown"),
+            "update_status": updates.get("status", "unknown"),
+            "updates_available": updates.get("available_updates", 0),
+            "security_updates_pending": updates.get("security_pending", 0),
+        }
+
+    def _update_status(self) -> dict[str, Any]:
+        if self._update_channel is None:
+            return {"status": "unregistered", "available_updates": 0, "security_pending": 0}
+        try:
+            status = self._update_channel.update_status()
+        except Exception as exc:
+            return {"status": "error", "error": str(exc), "available_updates": 0, "security_pending": 0}
+        return {
+            "status": "healthy",
+            **status,
+        }

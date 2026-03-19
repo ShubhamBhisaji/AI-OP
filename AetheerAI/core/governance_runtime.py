@@ -113,6 +113,10 @@ class GovernanceRuntime:
     def __init__(self, config: GovernanceConfig | None = None) -> None:
         self.config = config or GovernanceConfig()
         self._agent_name = self.config.agent_name
+        self._integrator = None
+        self._scheduler = None
+        self._goal_manager = None
+        self._observability = None
 
         # ── 1. Guardrail Controller (rules engine) ───────────────────────
         from security.guardrail_controller import GuardrailController, GuardrailRules
@@ -172,6 +176,7 @@ class GovernanceRuntime:
 
         self.control_panel = AgentControlPanel(agent_name=self._agent_name)
         self.control_panel.register_guardrails(self.guardrail_controller)
+        self.kill_switch.register_control_panel(self.control_panel)
 
         # ── 8. Human Override Controller ─────────────────────────────────
         from core.human_override import HumanOverrideController
@@ -184,6 +189,7 @@ class GovernanceRuntime:
         self.human_override.register_kill_switch(self.kill_switch)
         self.human_override.register_action_gate(self.action_gate)
         self.human_override.register_guardrails(self.guardrail_controller)
+        self.action_gate.register_approval_controller(self.human_override)
 
         for pattern in self.config.approval_required:
             self.human_override.require_approval(pattern)
@@ -193,8 +199,11 @@ class GovernanceRuntime:
 
         self.monitor = UnifiedMonitor(agent_name=self._agent_name)
         self.monitor.register_action_proxy(self.action_proxy)
+        self.monitor.register_action_gate(self.action_gate)
         self.monitor.register_kill_switch(self.kill_switch)
         self.monitor.register_human_override(self.human_override)
+        self.monitor.register_control_panel(self.control_panel)
+        self.human_override.register_observability(self.monitor)
 
         # ── 10. Update Channel ───────────────────────────────────────────
         from core.version_manager import VersionManager
@@ -211,6 +220,13 @@ class GovernanceRuntime:
             version_manager=self.version_manager,
             data_dir=data_dir,
             auto_apply_security=self.config.auto_apply_security,
+        )
+        self.monitor.register_update_channel(self.update_channel)
+
+        from integrations.base_client import set_default_transport_factory
+
+        set_default_transport_factory(
+            lambda service_name=None, timeout_seconds=None: self.gated_transport
         )
 
         logger.info(
@@ -253,10 +269,50 @@ class GovernanceRuntime:
         """Change rules, approval patterns, budgets without redeploy."""
         return self.human_override.policy_hotswap(policy, operator=operator)
 
+    def disable_integrations(
+        self, operator: str = "system", reason: str = ""
+    ) -> dict[str, Any]:
+        """Disable external integrations without stopping the whole runtime."""
+        return self.kill_switch.disable_integrations(operator=operator, reason=reason)
+
     def throttle(self, rate: float, operator: str = "system") -> None:
         """Throttle agent to fraction of normal speed (0.0–1.0)."""
         self.economic_guardrails.set_throttle(rate)
         self.kill_switch.throttle(rate=rate, operator=operator)
+
+    def verify_update(self, version: str) -> dict[str, Any]:
+        """Verify an update before staged application."""
+        return self.update_channel.verify_update(version)
+
+    def rollback_update(self, to_version: str | None = None) -> dict[str, Any]:
+        """Rollback the runtime to a previous compatible version."""
+        return self.update_channel.rollback(to_version)
+
+    def control_plane_status(self) -> dict[str, Any]:
+        """Return the unified operator control-plane view."""
+        return {
+            "agent": self._agent_name,
+            "controls": {
+                "pause_resume": True,
+                "manual_approvals": True,
+                "policy_edits": True,
+                "disable_integrations": self._integrator is not None,
+                "emergency_stop": True,
+                "safe_shutdown": True,
+                "update_verify": True,
+                "rollback": True,
+            },
+            "registrations": {
+                "integrator": self._integrator is not None,
+                "scheduler": self._scheduler is not None,
+                "goal_manager": self._goal_manager is not None,
+                "observability": self._observability is not None,
+            },
+            "status_indicators": self.monitor.status_indicators(),
+            "pending_approvals": self.human_override.pending_approvals(),
+            "active_actions": self.action_gate.active_actions(),
+            "current_tasks": self.monitor.current_tasks(limit=20),
+        }
 
     # ── Observability ────────────────────────────────────────────────────────
 
@@ -269,11 +325,16 @@ class GovernanceRuntime:
                 "human_override": self.human_override.status(),
                 "economic": self.economic_guardrails.status(),
                 "action_proxy": self.action_proxy.stats(),
+                "action_gate": self.action_gate.stats(),
                 "transport": self.gated_transport.stats,
                 "control_panel": self.control_panel.dashboard(),
+                "control_plane": self.control_plane_status(),
             },
             "monitor": self.monitor.dashboard(),
-            "updates": self.update_channel.update_status(),
+            "updates": {
+                "status": self.update_channel.update_status(),
+                "available": self.update_channel.check_updates(),
+            },
         }
 
     def status(self) -> dict[str, Any]:
@@ -287,8 +348,9 @@ class GovernanceRuntime:
             "budget_remaining": self.economic_guardrails.status().get(
                 "remaining_budget_usd", 0
             ),
-            "actions_blocked": self.action_proxy.stats().get("blocked", 0),
+            "actions_blocked": self.action_proxy.stats().get("total_blocked", 0),
             "pending_approvals": len(self.human_override.pending_approvals()),
+            "control_plane": self.monitor.status_indicators(),
         }
 
     def health(self) -> dict[str, Any]:
@@ -307,6 +369,10 @@ class GovernanceRuntime:
         if hasattr(agent, "attach_runtime"):
             agent.attach_runtime(governance=self)
 
+        tool_manager = getattr(agent, "_tool_manager", None)
+        if tool_manager is not None and hasattr(tool_manager, "register_governance"):
+            tool_manager.register_governance(self)
+
         # Store reference on agent for direct access
         agent._governance = self
         logger.info(
@@ -318,6 +384,29 @@ class GovernanceRuntime:
     def get_transport(self) -> Any:
         """Return the gated HTTP transport for integration clients."""
         return self.gated_transport
+
+    def attach_integrator(self, integrator: Any) -> None:
+        """Register the integration manager with kill-switch and monitor surfaces."""
+        self._integrator = integrator
+        self.kill_switch.register_integrator(integrator)
+        self.monitor.register_integrator(integrator)
+
+    def attach_scheduler(self, scheduler: Any) -> None:
+        """Register the job scheduler for queue visibility."""
+        self._scheduler = scheduler
+        self.monitor.register_scheduler(scheduler)
+
+    def attach_goal_manager(self, goal_manager: Any) -> None:
+        """Register the goal manager for operator inspection and cancellation."""
+        self._goal_manager = goal_manager
+        self.control_panel.register_goal_manager(goal_manager)
+        self.kill_switch.register_goal_manager(goal_manager)
+        self.monitor.register_goal_manager(goal_manager)
+
+    def attach_observability(self, observability: Any) -> None:
+        """Register structured observability to enrich monitor and control views."""
+        self._observability = observability
+        self.monitor.register_observability(observability)
 
     # ── Serialization ────────────────────────────────────────────────────────
 

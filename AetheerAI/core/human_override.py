@@ -43,6 +43,7 @@ Usage
 from __future__ import annotations
 
 import logging
+import json
 import threading
 import time
 import uuid
@@ -146,6 +147,7 @@ class HumanOverrideController:
         # Approval queue
         self._approvals: dict[str, ApprovalRequest] = {}
         self._required_approvals: set[str] = set()  # action patterns requiring approval
+        self._approved_once: set[str] = set()
 
         # Event log
         self._events: list[OverrideEvent] = []
@@ -282,12 +284,24 @@ class HumanOverrideController:
         Returns an ApprovalRequest.  The action is blocked until
         approve() or reject() is called with the request ID.
         """
+        fingerprint = self._approval_fingerprint(action, category, context)
+        with self._lock:
+            for existing in self._approvals.values():
+                if existing.status != ApprovalStatus.PENDING:
+                    continue
+                if self._approval_fingerprint(
+                    existing.action,
+                    existing.category,
+                    existing.context,
+                ) == fingerprint:
+                    return existing
+
         req = ApprovalRequest(
             id=str(uuid.uuid4())[:12],
             agent_name=self.agent_name,
             action=action,
             category=category,
-            context=context or {},
+            context=dict(context or {}),
             expires_at=time.time() + (timeout or self._approval_timeout),
             callback=callback,
         )
@@ -317,6 +331,13 @@ class HumanOverrideController:
             req.decided_by = operator
             req.decided_at = time.time()
             req.reason = reason
+            self._approved_once.add(
+                self._approval_fingerprint(
+                    req.action,
+                    req.category,
+                    req.context,
+                )
+            )
 
         # Invoke callback if registered
         if req.callback is not None:
@@ -377,6 +398,25 @@ class HumanOverrideController:
                 r.to_dict() for r in self._approvals.values()
                 if r.status == ApprovalStatus.PENDING
             ]
+
+    def consume_approval(
+        self,
+        action: str,
+        category: str = "general",
+        context: dict[str, Any] | None = None,
+    ) -> bool:
+        """Consume a one-time approval token for a matching action retry."""
+        fingerprint = self._approval_fingerprint(action, category, context)
+        with self._lock:
+            if fingerprint not in self._approved_once:
+                return False
+            self._approved_once.remove(fingerprint)
+        self._record_event(
+            "consume_approval",
+            "system",
+            {"action": action, "category": category},
+        )
+        return True
 
     def approval_history(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent approval decisions."""
@@ -526,6 +566,23 @@ class HumanOverrideController:
         self._events.append(event)
         if len(self._events) > self._max_events:
             self._events = self._events[-self._max_events:]
+
+    @staticmethod
+    def _approval_fingerprint(
+        action: str,
+        category: str,
+        context: dict[str, Any] | None,
+    ) -> str:
+        sanitized_context = {
+            key: value
+            for key, value in (context or {}).items()
+            if key != "approval_request_id"
+        }
+        try:
+            serialized = json.dumps(sanitized_context, sort_keys=True, default=str)
+        except TypeError:
+            serialized = json.dumps({"repr": repr(sanitized_context)}, sort_keys=True)
+        return f"{action.lower()}|{category.lower()}|{serialized}"
 
     def __repr__(self) -> str:
         return (

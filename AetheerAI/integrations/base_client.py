@@ -10,6 +10,40 @@ from .errors import APIRequestError, AuthenticationError
 from .http import HTTPResult, HTTPTransport, RequestsHTTPTransport
 
 
+_DEFAULT_TRANSPORT_FACTORY = None
+
+
+def set_default_transport_factory(factory) -> None:
+    """Register a process-wide transport factory used by service clients."""
+    global _DEFAULT_TRANSPORT_FACTORY
+    _DEFAULT_TRANSPORT_FACTORY = factory
+
+
+def clear_default_transport_factory() -> None:
+    """Clear the process-wide transport factory override."""
+    global _DEFAULT_TRANSPORT_FACTORY
+    _DEFAULT_TRANSPORT_FACTORY = None
+
+
+def build_default_transport(service_name: str, timeout_seconds: int) -> HTTPTransport:
+    """Resolve the transport that should back a service client."""
+    if _DEFAULT_TRANSPORT_FACTORY is not None:
+        try:
+            transport = _DEFAULT_TRANSPORT_FACTORY(
+                service_name=service_name,
+                timeout_seconds=timeout_seconds,
+            )
+        except TypeError:
+            transport = _DEFAULT_TRANSPORT_FACTORY(service_name, timeout_seconds)
+        if transport is not None:
+            return transport
+
+    return RequestsHTTPTransport(
+        service_name=service_name,
+        default_timeout=timeout_seconds,
+    )
+
+
 class BaseServiceClient:
     """Common functionality used by all integration clients."""
 
@@ -23,9 +57,9 @@ class BaseServiceClient:
     ) -> None:
         self._log = logging.getLogger(f"integrations.{self.service_name}")
         self._timeout_seconds = timeout_seconds
-        self._transport = transport or RequestsHTTPTransport(
+        self._transport = transport or build_default_transport(
             service_name=self.service_name,
-            default_timeout=timeout_seconds,
+            timeout_seconds=timeout_seconds,
         )
 
     def _request(

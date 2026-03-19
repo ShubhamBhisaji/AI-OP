@@ -327,9 +327,11 @@ class JobScheduler:
         return True
 
     def status(self, job_id: str) -> dict[str, Any] | None:
-        """Return the current state of a job as a dict, or None if not found."""
+        """Return the current state of a job as a dict, including DLQ entries."""
         with self._lock:
             job = self._jobs.get(job_id)
+            if job is None:
+                job = self._dlq.get(job_id)
         return job.to_dict() if job else None
 
     def list_jobs(

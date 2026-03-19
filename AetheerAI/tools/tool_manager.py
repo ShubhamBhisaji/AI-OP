@@ -36,6 +36,36 @@ from security.policy_engine import PolicyEngine
 
 logger = logging.getLogger(__name__)
 
+_TOOL_ACTION_CATEGORIES: dict[str, str] = {
+    "http_client": "api_call",
+    "web_search": "api_call",
+    "browser_tool": "api_call",
+    "playwright_tool": "api_call",
+    "web_scraper_pro": "api_call",
+    "file_writer": "data_write",
+    "local_file_tool": "data_write",
+    "sql_db_tool": "data_write",
+    "email_tool": "message_send",
+    "slack_discord_tool": "message_send",
+    "terminal_tool": "system_command",
+    "code_runner": "system_command",
+    "github_tool": "system_command",
+    "aws_gcp_tool": "system_command",
+    "kubernetes_tool": "system_command",
+}
+
+_SENSITIVE_KEY_MARKERS: tuple[str, ...] = (
+    "password",
+    "token",
+    "secret",
+    "api_key",
+    "apikey",
+    "authorization",
+    "cookie",
+    "credential",
+    "private_key",
+)
+
 # ── Minimum permission level required to call each tool ──────────────────────
 # (0=guest, 1=standard, 2=elevated, 3=admin)
 TOOL_PERMISSIONS: dict[str, int] = {
@@ -123,6 +153,7 @@ class ToolManager:
         self._policy = policy_engine or PolicyEngine()
         self._audit = audit_logger or AuditLogger.default()
         self._manifest_guard = manifest_guard  # IntentManifest enforcement
+        self._governance = None
         self._register_builtins()
 
     def inject_engine(self, engine) -> None:
@@ -146,6 +177,10 @@ class ToolManager:
     def register(self, name: str, fn: Callable[..., Any]) -> None:
         self._tools[name] = fn
         logger.debug("ToolManager: registered tool '%s'.", name)
+
+    def register_governance(self, governance: Any) -> None:
+        """Register GovernanceRuntime so tool execution flows through ActionProxy."""
+        self._governance = governance
 
     def get(self, name: str) -> Callable[..., Any] | None:
         return self._tools.get(name)
@@ -203,13 +238,12 @@ class ToolManager:
             }
         )
 
+        args_summary = self._summarize_args(args, kwargs)
+
         # ── Centralized approval gate ───────────────────────────────
         # Enforce approval for all guarded tools even if a specific tool
         # was not decorated with @require_approval.
         if name in ALL_GUARDED_TOOLS:
-            arg_parts = [repr(a)[:80] for a in args]
-            kwarg_parts = [f"{k}={repr(v)[:60]}" for k, v in kwargs.items()]
-            args_summary = ", ".join(arg_parts + kwarg_parts) or "(no args)"
             ApprovalGate.request(
                 tool_name=name,
                 agent_name=agent_name,
@@ -232,10 +266,58 @@ class ToolManager:
             kwargs["_approval_bypass_token"] = get_approval_bypass_token()
             kwargs["_agent_name"] = agent_name
 
-        return fn(*args, **kwargs)
+        if self._governance is None:
+            return fn(*args, **kwargs)
+
+        action = f"tool.{name}"
+        category = _TOOL_ACTION_CATEGORIES.get(name, "custom")
+        result = self._governance.action_proxy.execute(
+            action,
+            category=category,
+            execute_fn=lambda: fn(*args, **kwargs),
+            timeout_seconds=self._governance.action_gate.stats().get("default_timeout", 120.0),
+            context={
+                "tool": name,
+                "args_summary": args_summary,
+                "agent_level": int(agent_level),
+            },
+        )
+
+        if not result.allowed:
+            raise PermissionDenied(result.error or f"Tool '{name}' blocked by governance.")
+        if result.error:
+            raise RuntimeError(result.error)
+        return result.result
 
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
+
+    @staticmethod
+    def _summarize_args(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
+        arg_parts = [ToolManager._summarize_value(value) for value in args]
+        kwarg_parts = [
+            f"{key}={ToolManager._summarize_value(value, key=key)}"
+            for key, value in kwargs.items()
+            if not key.startswith("_")
+        ]
+        summary = ", ".join(arg_parts + kwarg_parts).strip()
+        return summary or "(no args)"
+
+    @staticmethod
+    def _summarize_value(value: Any, *, key: str = "") -> str:
+        key_lower = key.lower()
+        if any(marker in key_lower for marker in _SENSITIVE_KEY_MARKERS):
+            return "<redacted>"
+        if isinstance(value, str):
+            if len(value) > 80:
+                return f"<str len={len(value)}>"
+            return repr(value)
+        if isinstance(value, (bytes, bytearray)):
+            return f"<{type(value).__name__} len={len(value)}>"
+        rendered = repr(value)
+        if len(rendered) > 80:
+            return rendered[:77] + "..."
+        return rendered
 
     # ------------------------------------------------------------------
     # Built-in tools are registered automatically at startup

@@ -153,6 +153,7 @@ class SelfIntegrator:
             {
                 "name": name,
                 "type": info.get("type", ""),
+                "connected": info.get("connector", {}).get("status") == "connected",
                 "config": info.get("config", {}),
                 "connected_at": info.get("connected_at", 0),
             }

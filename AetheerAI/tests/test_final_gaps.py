@@ -1083,6 +1083,52 @@ class TestGovernanceRuntime:
         with pytest.raises(RuntimeError, match="paused"):
             agent.execute_task("do something")
 
+    def test_tool_call_requires_and_consumes_manual_approval(self):
+        from tools.tool_manager import PermissionDenied, ToolManager
+
+        gov = GovernanceRuntime(GovernanceConfig(
+            agent_name="bot",
+            approval_required=["tool.custom_write"],
+        ))
+        tool_manager = ToolManager()
+        tool_manager.register("custom_write", lambda: "ok")
+        tool_manager.register_governance(gov)
+
+        with pytest.raises(PermissionDenied, match="approval"):
+            tool_manager.call("custom_write", agent_name="bot", agent_level=5)
+
+        pending = gov.human_override.pending_approvals()
+        assert len(pending) == 1
+        gov.human_override.approve(pending[0]["id"], operator="admin")
+
+        assert tool_manager.call("custom_write", agent_name="bot", agent_level=5) == "ok"
+
+    def test_disable_integrations(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        integrator = MagicMock()
+        integrator.list_integrations.return_value = [
+            {"name": "shopify", "connected": True},
+            {"name": "stripe", "connected": True},
+        ]
+        gov.attach_integrator(integrator)
+
+        result = gov.disable_integrations(operator="admin", reason="maintenance")
+        assert result["status"] == "integrations_disabled"
+        assert result["disconnected"] == 2
+
+    def test_control_plane_status_includes_current_tasks(self):
+        gov = GovernanceRuntime(GovernanceConfig(agent_name="bot"))
+        scheduler = MagicMock()
+        scheduler.stats.return_value = {"by_status": {"running": 1, "pending": 2}, "dlq": 0}
+        scheduler.list_jobs.return_value = [
+            {"job_id": "j1", "name": "nightly-sync", "status": "running", "agent_name": "bot", "mode": "immediate", "started_at": 123.0, "attempts": 1},
+        ]
+        gov.attach_scheduler(scheduler)
+
+        control = gov.control_plane_status()
+        assert control["status_indicators"]["running_jobs"] == 1
+        assert any(item["name"] == "nightly-sync" for item in control["current_tasks"])
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # GOVERNANCE API — Endpoint tests using FastAPI TestClient
@@ -1134,6 +1180,15 @@ class TestGovernanceAPI:
         assert "governance" in data
         assert "monitor" in data
 
+    def test_control_plane_endpoint(self):
+        app, _ = _make_test_app()
+        client = TestClient(app)
+        resp = client.get("/api/governance/control-plane")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "controls" in data
+        assert "status_indicators" in data
+
     def test_health_endpoint(self):
         app, _ = _make_test_app()
         client = TestClient(app)
@@ -1160,6 +1215,19 @@ class TestGovernanceAPI:
         client = TestClient(app)
         resp = client.post("/api/governance/safe-shutdown", json={"operator": "admin"})
         assert resp.status_code == 200
+
+    def test_disable_integrations_endpoint(self):
+        app, gov = _make_test_app()
+        integrator = MagicMock()
+        integrator.list_integrations.return_value = [{"name": "shopify", "connected": True}]
+        gov.attach_integrator(integrator)
+        client = TestClient(app)
+        resp = client.post(
+            "/api/governance/disable-integrations",
+            json={"operator": "admin", "reason": "maintenance"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["disconnected"] == 1
 
     def test_throttle_endpoint(self):
         app, _ = _make_test_app()
@@ -1195,6 +1263,44 @@ class TestGovernanceAPI:
         assert resp.status_code == 200
         assert len(resp.json()) >= 1
 
+    def test_activity_and_current_tasks_endpoints(self):
+        app, gov = _make_test_app()
+        scheduler = MagicMock()
+        scheduler.stats.return_value = {"by_status": {"running": 1, "pending": 0}, "dlq": 0}
+        scheduler.list_jobs.return_value = [
+            {"job_id": "job-1", "name": "daily-report", "status": "running", "agent_name": "api_bot", "mode": "immediate", "started_at": 1.0, "attempts": 1},
+        ]
+        gov.attach_scheduler(scheduler)
+        gov.monitor.record_event("control", "operator viewed dashboard")
+        client = TestClient(app)
+
+        activity = client.get("/api/governance/activity")
+        assert activity.status_code == 200
+        assert len(activity.json()) >= 1
+
+        current = client.get("/api/governance/current-tasks")
+        assert current.status_code == 200
+        assert current.json()[0]["name"] == "daily-report"
+
+    def test_resources_integrations_and_status_indicators_endpoints(self):
+        app, gov = _make_test_app()
+        integrator = MagicMock()
+        integrator.list_integrations.return_value = [{"name": "shopify", "connected": True, "type": "api"}]
+        gov.attach_integrator(integrator)
+        client = TestClient(app)
+
+        resources = client.get("/api/governance/resources")
+        assert resources.status_code == 200
+        assert "api_calls" in resources.json()
+
+        integrations = client.get("/api/governance/integrations")
+        assert integrations.status_code == 200
+        assert integrations.json()["services"]["shopify"]["status"] == "healthy"
+
+        indicators = client.get("/api/governance/status-indicators")
+        assert indicators.status_code == 200
+        assert "integration_status" in indicators.json()
+
     def test_actions_endpoint(self):
         app, _ = _make_test_app()
         client = TestClient(app)
@@ -1226,10 +1332,38 @@ class TestGovernanceAPI:
         assert resp.json()["total_retries"] >= 1
 
     def test_updates_endpoint(self):
-        app, _ = _make_test_app()
+        app, gov = _make_test_app()
+        gov.update_channel.publish_update(
+            version="1.0.1",
+            update_type="bugfix",
+            changes=["Fix scheduler telemetry"],
+        )
         client = TestClient(app)
         resp = client.get("/api/governance/updates")
         assert resp.status_code == 200
+
+        verify = client.get("/api/governance/updates/verify/1.0.1")
+        assert verify.status_code == 200
+        assert verify.json()["status"] in {"verified", "failed"}
+
+    def test_updates_rollback_endpoint(self):
+        app, gov = _make_test_app()
+        gov.version_manager.register_version(
+            version="1.0.0",
+            changes=["Initial release"],
+            spec_snapshot={"feature": "base"},
+        )
+        gov.update_channel.publish_update(
+            version="1.0.1",
+            update_type="bugfix",
+            changes=["Fix bug"],
+            migration_fn=lambda spec: {**spec, "feature": "patched"},
+        )
+        gov.update_channel.apply_update("1.0.1")
+        client = TestClient(app)
+        resp = client.post("/api/governance/updates/rollback", json={})
+        assert resp.status_code == 200
+        assert resp.json()["status"] in {"rolled_back", "error"}
 
     def test_503_when_no_governance(self):
         bare_app = FastAPI()

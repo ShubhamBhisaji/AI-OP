@@ -111,7 +111,7 @@ class GateToken:
     cancellation: CancellationToken
     entered_at: float = field(default_factory=time.time)
     exited_at: float = 0.0
-    status: str = "active"   # active | completed | failed | cancelled | timed_out
+    status: str = "active"   # active | completed | failed | cancelled | timed_out | denied | awaiting_approval
     result: str = ""
     error: str = ""
 
@@ -161,6 +161,7 @@ class ActionGate:
         self._guardrail = guardrail
         self._audit = audit
         self._default_timeout = default_timeout
+        self._approval_controller = None
         self._active_tokens: dict[str, GateToken] = {}
         self._history: list[dict[str, Any]] = []
         self._max_history = 500
@@ -190,6 +191,10 @@ class ActionGate:
     def is_enabled(self) -> bool:
         return self._enabled
 
+    def register_approval_controller(self, controller: Any) -> None:
+        """Register a human approval controller used for policy-driven approvals."""
+        self._approval_controller = controller
+
     # ── Imperative API ───────────────────────────────────────────────────
 
     def enter(
@@ -217,12 +222,16 @@ class ActionGate:
 
         # Master switch check
         if not self._enabled:
-            token.status = "failed"
+            token.status = "denied"
             token.error = "ActionGate is disabled (emergency lockdown)."
+            token.exited_at = time.time()
+            self._record_terminal_decision(token, allowed=False)
             self._log_decision(token, allowed=False)
             raise PermissionError(token.error)
 
         # Guardrail check
+        guardrail_requested = False
+        guardrail_reason = ""
         if self._guardrail is not None:
             verdict = self._guardrail.authorize(
                 agent_name=agent_name,
@@ -230,16 +239,43 @@ class ActionGate:
                 context=ctx,
             )
             if not verdict.allowed:
-                token.status = "failed"
+                token.status = "denied"
                 token.error = verdict.reason
+                token.exited_at = time.time()
+                self._record_terminal_decision(token, allowed=False)
                 self._log_decision(token, allowed=False)
                 raise PermissionError(f"ActionGate denied: {verdict.reason}")
+            guardrail_requested = verdict.requires_human_approval
+            guardrail_reason = verdict.reason if verdict.requires_human_approval else ""
 
-            if verdict.requires_human_approval:
-                token.status = "failed"
-                token.error = f"Requires human approval: {verdict.reason}"
-                self._log_decision(token, allowed=False, needs_approval=True)
-                raise PermissionError(f"ActionGate: human approval required — {verdict.reason}")
+        approval_required, approval_reason = self._resolve_approval_requirement(
+            action=action,
+            category=category,
+            context=ctx,
+            guardrail_reason=guardrail_reason,
+            guardrail_requested=guardrail_requested,
+        )
+        if approval_required:
+            token.status = "awaiting_approval"
+            request_id = self._queue_approval_request(
+                action=action,
+                category=category,
+                context=ctx,
+            )
+            if request_id:
+                token.context["approval_request_id"] = request_id
+            token.error = f"Requires human approval: {approval_reason}"
+            token.exited_at = time.time()
+            self._record_terminal_decision(
+                token,
+                allowed=False,
+                needs_approval=True,
+            )
+            self._log_decision(token, allowed=False, needs_approval=True)
+            request_suffix = f" (request_id={request_id})" if request_id else ""
+            raise PermissionError(
+                f"ActionGate: human approval required — {approval_reason}{request_suffix}"
+            )
 
         # Approved — track it
         with self._lock:
@@ -474,7 +510,7 @@ class ActionGate:
         """Return gate statistics."""
         total = len(self._history)
         allowed = sum(1 for h in self._history if h.get("allowed"))
-        denied = total - allowed
+        denied = sum(1 for h in self._history if not h.get("allowed"))
         timed_out = sum(1 for h in self._history if h.get("status") == "timed_out")
         cancelled = sum(1 for h in self._history if h.get("status") == "cancelled")
         return {
@@ -494,20 +530,93 @@ class ActionGate:
         """Move token from active to history."""
         with self._lock:
             self._active_tokens.pop(token.token_id, None)
-            entry = {
-                "token_id": token.token_id,
-                "agent": token.agent_name,
-                "action": token.action,
-                "category": token.category,
-                "status": token.status,
-                "allowed": token.status not in ("failed",),
-                "error": token.error,
-                "duration": round(token.exited_at - token.entered_at, 3) if token.exited_at else 0,
-                "timestamp": token.entered_at,
-            }
+        self._record_terminal_decision(token, allowed=True)
+
+    def _record_terminal_decision(
+        self,
+        token: GateToken,
+        *,
+        allowed: bool,
+        needs_approval: bool = False,
+    ) -> None:
+        entry = {
+            "token_id": token.token_id,
+            "agent": token.agent_name,
+            "action": token.action,
+            "category": token.category,
+            "status": token.status,
+            "allowed": allowed,
+            "success": token.status == "completed",
+            "needs_approval": needs_approval,
+            "approval_request_id": token.context.get("approval_request_id", ""),
+            "error": token.error,
+            "duration": round(token.exited_at - token.entered_at, 3) if token.exited_at else 0,
+            "timestamp": token.entered_at,
+        }
+        with self._lock:
             self._history.append(entry)
             if len(self._history) > self._max_history:
                 self._history = self._history[-self._max_history:]
+
+    def _resolve_approval_requirement(
+        self,
+        *,
+        action: str,
+        category: str,
+        context: dict[str, Any],
+        guardrail_reason: str,
+        guardrail_requested: bool,
+    ) -> tuple[bool, str]:
+        controller = self._approval_controller
+        if controller is not None and hasattr(controller, "consume_approval"):
+            try:
+                approved = controller.consume_approval(
+                    action,
+                    category=category,
+                    context=context,
+                )
+            except TypeError:
+                approved = controller.consume_approval(action)
+            except Exception as exc:
+                logger.debug("ActionGate: approval consume check failed: %s", exc)
+                approved = False
+            if approved:
+                return False, ""
+
+        if guardrail_requested:
+            return True, guardrail_reason or "Guardrail policy requested approval."
+
+        if controller is not None and hasattr(controller, "needs_approval"):
+            try:
+                if controller.needs_approval(action):
+                    return True, "Matched operator approval policy."
+            except Exception as exc:
+                logger.debug("ActionGate: approval policy lookup failed: %s", exc)
+
+        return False, ""
+
+    def _queue_approval_request(
+        self,
+        *,
+        action: str,
+        category: str,
+        context: dict[str, Any],
+    ) -> str:
+        controller = self._approval_controller
+        if controller is None or not hasattr(controller, "request_approval"):
+            return ""
+        try:
+            request = controller.request_approval(
+                action=action,
+                category=category,
+                context=context,
+            )
+        except TypeError:
+            request = controller.request_approval(action)
+        except Exception as exc:
+            logger.debug("ActionGate: approval request enqueue failed: %s", exc)
+            return ""
+        return str(getattr(request, "id", "") or "")
 
     def _log_decision(
         self,
