@@ -5,7 +5,8 @@
       "Bash(python -c \":*)",
       "Bash(python -c \"import ast; ast.parse\\(open\\(''AetheerAI/tools/plugin_loader.py''\\).read\\(\\)\\); print\\(''plugin_loader.py: OK''\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\(''AetheerAI/tools/plugin_loader.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''plugin_loader.py: OK''\\)\")",
-      "Bash(python -m pytest tests/test_gap_closures.py -v --tb=short)"
+      "Bash(python -m pytest tests/test_gap_closures.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_commercial_issues.py -v --tb=short)"
     ]
   }
 }
