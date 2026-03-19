@@ -71,6 +71,52 @@ class ExporterService:
         self._write(export_dir / "config.json", json.dumps(spec_payload, indent=2))
         files_written.append("config.json")
 
+        # agent_manifest.json — formal runtime manifest (GAP 1)
+        try:
+            from agents.agent_manifest import AgentManifest
+            manifest_data = {
+                "name": agent.name,
+                "version": agent.profile.get("version", "1.0"),
+                "purpose": agent.role,
+                "skills": agent.profile.get("skills", []),
+                "integrations": spec_payload.get("integrations", []),
+                "permissions": {
+                    "refund_limit": agent.profile.get("refund_limit", 0),
+                    "data_access": agent.profile.get("data_access", "read_only"),
+                    "allowed_apis": spec_payload.get("integrations", []),
+                    "rate_limits": agent.profile.get("rate_limits", {}),
+                    "restricted_commands": agent.profile.get("restricted_commands", []),
+                    "escalation_triggers": agent.profile.get("escalation_triggers", []),
+                },
+                "knowledge": {
+                    "documents": [],
+                    "config": "knowledge/config.json",
+                },
+                "runtime": {
+                    "permission_level": agent.profile.get("permission_level", 1),
+                    "memory_enabled": True,
+                    "goal_tracking": True,
+                },
+            }
+            manifest = AgentManifest.from_dict(manifest_data)
+            self._write(export_dir / "agent_manifest.json", manifest.to_json())
+            files_written.append("agent_manifest.json")
+        except Exception:
+            # Fallback: write raw manifest dict without the dataclass
+            self._write(
+                export_dir / "agent_manifest.json",
+                json.dumps({
+                    "name": agent.name,
+                    "version": agent.profile.get("version", "1.0"),
+                    "purpose": agent.role,
+                    "skills": agent.profile.get("skills", []),
+                    "integrations": [],
+                    "permissions": {"refund_limit": 0, "data_access": "read_only"},
+                    "runtime": {"permission_level": agent.profile.get("permission_level", 1)},
+                }, indent=2),
+            )
+            files_written.append("agent_manifest.json")
+
         # Copy source packages — expanded to include all runtime dependencies
         dirs_to_copy = [
             "agents", "ai", "core", "factory", "memory", "registry",
@@ -85,22 +131,44 @@ class ExporterService:
                 shutil.copytree(src, dst, dirs_exist_ok=True)
                 files_written.append(f"{d}/")
 
-        # Create knowledge/ placeholder if not already copied (no ChromaDB files yet)
-        knowledge_dir = export_dir / "knowledge"
-        knowledge_dir.mkdir(exist_ok=True)
-        knowledge_readme = (
-            "# Knowledge\n\n"
-            "Place documents here (TXT, PDF, CSV, MD) to inject them into the agent.\n\n"
-            "```python\n"
-            "from knowledge.loader import KnowledgeLoader\n"
-            "loader = KnowledgeLoader(memory_manager)\n"
-            "loader.load_files('__AGENT_NAME__', ['knowledge/faq.txt'])\n"
-            "```\n"
-        ).replace("__AGENT_NAME__", name)
-        knowledge_placeholder = knowledge_dir / "README.md"
-        if not knowledge_placeholder.exists():
-            self._write(knowledge_placeholder, knowledge_readme)
-            files_written.append("knowledge/README.md")
+        # knowledge/ — persistent structured knowledge package (GAP 3)
+        try:
+            from knowledge.knowledge_manager import KnowledgeManager
+            km = KnowledgeManager(agent_name=name, base_dir=project_root / "knowledge")
+            knowledge_export_dir = export_dir / "knowledge"
+            knowledge_export_dir.mkdir(exist_ok=True)
+            copied_knowledge = km.export_package(knowledge_export_dir)
+            files_written.extend(copied_knowledge)
+        except Exception:
+            # Fallback: create minimal knowledge folder structure
+            knowledge_dir = export_dir / "knowledge"
+            (knowledge_dir / "documents").mkdir(parents=True, exist_ok=True)
+            (knowledge_dir / "embeddings").mkdir(parents=True, exist_ok=True)
+            self._write(
+                knowledge_dir / "config.json",
+                json.dumps({
+                    "version": "1.0",
+                    "chunk_size": 500,
+                    "chunk_overlap": 50,
+                    "document_directory": "knowledge/documents",
+                    "persist_directory": "knowledge/embeddings",
+                }, indent=2),
+            )
+            self._write(
+                knowledge_dir / "README.md",
+                (
+                    "# Knowledge\n\n"
+                    f"Place documents for **{name}** here.\n\n"
+                    "Supported: `.txt`, `.md`, `.pdf`, `.csv`, `.json`\n\n"
+                    "Files are auto-indexed when the agent starts.\n"
+                ),
+            )
+            files_written.extend([
+                "knowledge/config.json",
+                "knowledge/README.md",
+                "knowledge/documents/",
+                "knowledge/embeddings/",
+            ])
 
         blank_env = (
             "# AetheerAI — An AI Master!! Agent — AI Configuration\n"
