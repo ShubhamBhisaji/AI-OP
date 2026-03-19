@@ -431,6 +431,8 @@ class CommandInterface:
             # ── Agent Lifecycle ───────────────────────────────────
             "lifecycle_info":   self._cmd_lifecycle_info,
             "find_agent":       self._cmd_find_agent,
+            # ── Integration ─────────────────────────────────────
+            "integrate":        self._cmd_integrate,
             # ──────────────────────────────────────────────────────
             "help": lambda _: print(HELP_TEXT),
             "exit": self._cmd_exit,
@@ -1403,6 +1405,58 @@ class CommandInterface:
         else:
             print(f"\n  No suitable agent found for: {task[:80]}")
             print("  Tip: create agents first with 'create_agent'.\n")
+
+    # ------------------------------------------------------------------
+    # Integration
+    # ------------------------------------------------------------------
+
+    def _cmd_integrate(self, args: list[str]) -> None:
+        """Connect an agent to a website or API."""
+        if len(args) < 2:
+            print("  Usage: integrate <agent_name> <domain_or_url> [api_key]")
+            print("  Example: integrate sales_bot https://myshop.com sk-abc123")
+            return
+
+        agent_name = args[0]
+        target = args[1]
+        api_key = args[2] if len(args) > 2 else ""
+
+        agent = self.kernel.registry.get(agent_name)
+        if agent is None:
+            print(f"\n  Agent '{agent_name}' not found. Use 'list_agents' to see available agents.\n")
+            return
+
+        # Detect integration type
+        integration_type = "website"
+        if "/api" in target or target.endswith(("/v1", "/v2", "/graphql")):
+            integration_type = "api"
+
+        config = {"type": integration_type, "domain": target, "api_key": api_key}
+        if integration_type == "api":
+            config = {
+                "type": "api",
+                "base_url": target,
+                "auth_type": "bearer" if api_key else "none",
+                "credentials": {"token": api_key} if api_key else {},
+            }
+
+        try:
+            from integrator.self_integrator import SelfIntegrator
+            integrator = SelfIntegrator(self.kernel.registry)
+            with Spinner(f"Connecting {agent_name} to {target}"):
+                result = integrator.integrate(agent_name, config)
+
+            if result.status == "connected":
+                print(f"\n  Connected '{agent_name}' to {result.target}")
+                if result.endpoints_discovered:
+                    print(f"  Endpoints discovered: {len(result.endpoints_discovered)}")
+                    for ep in result.endpoints_discovered[:5]:
+                        print(f"    {ep['path']} — {ep['description']}")
+            else:
+                print(f"\n  Integration failed: {', '.join(result.errors)}")
+        except Exception as exc:
+            print(f"\n  Error: {exc}")
+        print()
 
     # ------------------------------------------------------------------
     # Multi-agent  —  Teams
