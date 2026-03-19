@@ -192,6 +192,7 @@ class IntegrationWizard:
         env_path: str | Path | None = None,
         auto: bool = False,
         silent: bool = False,
+        max_retries: int = 3,
     ) -> None:
         # Accept path string → load manifest
         if isinstance(manifest, (str, Path)):
@@ -201,15 +202,31 @@ class IntegrationWizard:
         self._env_path = Path(env_path) if env_path else Path(".env")
         self._auto = auto
         self._silent = silent
+        self._max_retries = max(1, max_retries)
         self._env: dict[str, str] = self._load_env()
         self._state_path = self._env_path.parent / "integration_state.json"
 
     # ── Public API ──────────────────────────────────────────────────────────
 
-    def run(self) -> WizardReport:
-        """Execute the full integration wizard and return a WizardReport."""
+    def run(self, retry_failed_only: bool = False) -> WizardReport:
+        """Execute the full integration wizard and return a WizardReport.
+
+        Parameters
+        ----------
+        retry_failed_only : When True, only re-run integrations that failed in the
+                            previous run (loaded from integration_state.json). This
+                            lets operators fix credentials and retry without
+                            re-testing already-connected integrations.
+        """
         report = WizardReport(agent_name=self._manifest.name)
         integrations: list[str] = list(self._manifest.integrations)
+
+        # When retrying, filter to previously-failed integrations only
+        if retry_failed_only:
+            previously_failed = self._load_failed_integrations()
+            if previously_failed:
+                integrations = [i for i in integrations if i in previously_failed]
+                self._print(f"\n  Retrying {len(integrations)} previously failed integration(s)…")
 
         if not integrations:
             self._print(f"\n  No integrations defined in manifest — skipping wizard.")
@@ -241,41 +258,64 @@ class IntegrationWizard:
                 report.integrations.append(status)
                 continue
 
-            # STEP 4 — Configure + connect
+            # STEP 4 — Configure + connect (with retry)
             self._print(f"  [{integration.upper()}] Configuring connector…")
-            try:
-                t0 = time.time()
-                result = self._connect(integration)
-                status.latency_ms = round((time.time() - t0) * 1000, 1)
+            connected = False
+            last_error = ""
 
-                if result.get("status") == "error":
-                    status.status = "failed"
-                    status.error = result.get("error", "Unknown error")
-                    self._print(f"  [{integration.upper()}] Connection failed: {status.error}")
-                else:
-                    # STEP 5 — Diagnose (endpoint ping)
-                    endpoints = result.get("endpoints", [])
-                    status.endpoints = [
-                        e.get("path", e) if isinstance(e, dict) else str(e)
-                        for e in endpoints[:5]
-                    ]
-                    diag = self._diagnose(integration, result)
-                    if diag:
-                        status.status = "failed"
-                        status.error = diag
-                        self._print(f"  [{integration.upper()}] Diagnostic failed: {diag}")
+            for attempt in range(1, self._max_retries + 1):
+                try:
+                    t0 = time.time()
+                    result = self._connect(integration)
+                    status.latency_ms = round((time.time() - t0) * 1000, 1)
+
+                    if result.get("status") == "error":
+                        last_error = result.get("error", "Unknown error")
+                        if attempt < self._max_retries:
+                            self._print(
+                                f"  [{integration.upper()}] Attempt {attempt}/{self._max_retries} "
+                                f"failed: {last_error}. Retrying…"
+                            )
+                            continue
                     else:
-                        # STEP 6 — Confirm
-                        status.status = "connected"
-                        self._print(
-                            f"  [{integration.upper()}] Connected ✓  "
-                            f"({len(status.endpoints)} endpoints, {status.latency_ms}ms)"
-                        )
+                        # STEP 5 — Diagnose (endpoint ping)
+                        endpoints = result.get("endpoints", [])
+                        status.endpoints = [
+                            e.get("path", e) if isinstance(e, dict) else str(e)
+                            for e in endpoints[:5]
+                        ]
+                        diag = self._diagnose(integration, result)
+                        if diag:
+                            last_error = diag
+                            if attempt < self._max_retries:
+                                self._print(
+                                    f"  [{integration.upper()}] Diagnostic failed (attempt "
+                                    f"{attempt}/{self._max_retries}): {diag}. Retrying…"
+                                )
+                                continue
+                        else:
+                            # STEP 6 — Confirm
+                            status.status = "connected"
+                            connected = True
+                            self._print(
+                                f"  [{integration.upper()}] Connected ✓  "
+                                f"({len(status.endpoints)} endpoints, {status.latency_ms}ms)"
+                            )
+                            break
 
-            except Exception as exc:
+                except Exception as exc:
+                    last_error = str(exc)
+                    if attempt < self._max_retries:
+                        self._print(
+                            f"  [{integration.upper()}] Attempt {attempt}/{self._max_retries} "
+                            f"exception: {exc}. Retrying…"
+                        )
+                        continue
+
+            if not connected:
                 status.status = "failed"
-                status.error = str(exc)
-                self._print(f"  [{integration.upper()}] Exception: {exc}")
+                status.error = last_error
+                self._print(f"  [{integration.upper()}] Connection failed after {self._max_retries} attempt(s): {last_error}")
 
             report.integrations.append(status)
 
@@ -440,10 +480,22 @@ class IntegrationWizard:
         return env
 
     def _save_env(self) -> None:
+        """Persist credentials to .env.
+
+        Secret values (keys containing TOKEN, SECRET, PASSWORD, API_KEY)
+        are stored as-is so connectors can read them, but the file is
+        created with restrictive permissions where the OS supports it.
+        """
         lines = ["# Integration credentials — managed by integration_wizard.py\n"]
         for key, val in self._env.items():
             lines.append(f"{key}={val}\n")
         self._env_path.write_text("".join(lines), encoding="utf-8")
+
+        # Best-effort: restrict file permissions to owner-only (Unix)
+        try:
+            self._env_path.chmod(0o600)
+        except (OSError, NotImplementedError):
+            pass  # Windows or other OS — skip
 
     def _save_state(self, report: WizardReport) -> None:
         """Persist integration state for diagnostics and re-runs."""
@@ -454,6 +506,20 @@ class IntegrationWizard:
             )
         except OSError as exc:
             logger.warning("IntegrationWizard: could not save state: %s", exc)
+
+    def _load_failed_integrations(self) -> set[str]:
+        """Load names of integrations that failed in the previous run."""
+        if not self._state_path.exists():
+            return set()
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+            return {
+                i["name"]
+                for i in data.get("integrations", [])
+                if i.get("status") == "failed"
+            }
+        except (OSError, json.JSONDecodeError, KeyError):
+            return set()
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
