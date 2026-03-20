@@ -200,10 +200,10 @@ class TokenResponse(BaseModel):
 
 
 class CustomerSupabaseSetupRequest(BaseModel):
-    supabase_url: str = Field(..., min_length=1, max_length=1024)
-    supabase_anon_key: str = Field(..., min_length=8, max_length=4096)
+    supabase_url: str | None = Field(default=None, min_length=1, max_length=1024)
+    supabase_anon_key: str | None = Field(default=None, min_length=8, max_length=4096)
     supabase_service_role_key: str | None = Field(default=None, min_length=8, max_length=4096)
-    schema: str = Field(default="public", min_length=1, max_length=120)
+    schema: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class AIAPISettingsRequest(BaseModel):
@@ -859,14 +859,56 @@ def upsert_my_customer_supabase_config(
     req: CustomerSupabaseSetupRequest,
     current_user: User = Depends(get_current_user),
 ):
+    if hasattr(req, "model_dump"):
+        provided = req.model_dump(exclude_unset=True)
+    else:  # pydantic v1 compatibility
+        provided = req.dict(exclude_unset=True)
+
+    if not provided:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide at least one Supabase field to update.",
+        )
+
+    existing = get_customer_supabase_config(current_user.id) or {}
+
+    def _clean_optional(value: object | None) -> str | None:
+        text = str(value or "").strip()
+        return text or None
+
+    supabase_url = _clean_optional(provided.get("supabase_url")) or _clean_optional(
+        existing.get("customer_supabase_url")
+    )
+    supabase_anon_key = _clean_optional(provided.get("supabase_anon_key")) or _clean_optional(
+        existing.get("customer_supabase_anon_key")
+    )
+
+    if "supabase_service_role_key" in provided:
+        supabase_service_role_key = _clean_optional(provided.get("supabase_service_role_key"))
+    else:
+        supabase_service_role_key = _clean_optional(existing.get("customer_supabase_service_role_key"))
+
+    schema = _clean_optional(provided.get("schema")) or _clean_optional(
+        existing.get("customer_supabase_schema")
+    ) or "public"
+
+    if not supabase_url or not supabase_anon_key:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "supabase_url and supabase_anon_key are required for initial setup. "
+                "Existing values are preserved when omitted in update requests."
+            ),
+        )
+
     try:
         row = save_customer_supabase_config(
             user_id=current_user.id,
             username=current_user.username,
-            supabase_url=req.supabase_url,
-            supabase_anon_key=req.supabase_anon_key,
-            supabase_service_role_key=req.supabase_service_role_key,
-            schema=req.schema,
+            supabase_url=supabase_url,
+            supabase_anon_key=supabase_anon_key,
+            supabase_service_role_key=supabase_service_role_key,
+            schema=schema,
         )
     except APIRequestError as exc:
         if getattr(exc, "status_code", None) == 404:
@@ -890,7 +932,7 @@ def upsert_my_customer_supabase_config(
 
     return {
         "success": True,
-        "message": "Customer Supabase details saved. Execute the SQL script in the customer project if not already done.",
+        "message": "Customer Supabase details saved. Existing values are preserved when omitted.",
         "data": redact_customer_supabase_config(row),
     }
 

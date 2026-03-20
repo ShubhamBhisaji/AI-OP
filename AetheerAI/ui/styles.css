@@ -1652,3 +1652,60 @@ select:focus,
     min-height: calc(100vh - 220px);
   }
 }
+
+@media (min-width: 981px) {
+  #topbar {
+    height: 64px;
+    min-height: 64px;
+    padding: 0 18px;
+  }
+
+  #content {
+    padding: 22px;
+  }
+
+  .page-header h1,
+  #page-goals h1,
+  #page-agents h1,
+  #page-collaborate h1,
+  #page-memory h1,
+  #page-logs h1,
+  #page-chat h1,
+  #page-settings h1,
+  #page-database h1,
+  .pg-header h1 {
+    font-size: 23px !important;
+  }
+
+  .card,
+  .hero-panel,
+  .signal-card,
+  .modal-box {
+    border-radius: 18px;
+  }
+
+  .card,
+  .hero-panel,
+  .signal-card {
+    padding: 20px;
+  }
+
+  .btn {
+    padding: 9px 15px;
+  }
+
+  input,
+  textarea,
+  select {
+    padding: 10px 12px;
+    border-radius: 14px;
+  }
+
+  .hero-main h1 {
+    font-size: clamp(1.75rem, 3vw, 2.7rem);
+  }
+
+  .stat-value {
+    font-size: 28px;
+  }
+}

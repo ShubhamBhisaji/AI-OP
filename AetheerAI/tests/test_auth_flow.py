@@ -194,3 +194,65 @@ def test_me_recovers_local_user_when_cache_is_wiped(auth_client, monkeypatch):
     )
     assert me.status_code == 200
     assert me.json()["data"]["email"] == "dave@example.com"
+
+
+def test_setup_supabase_partial_update_preserves_existing_secrets(auth_client, monkeypatch):
+    register = auth_client.post(
+        "/api/auth/register",
+        json={"email": "erin@example.com", "password": "password123"},
+    )
+    assert register.status_code == 201
+    token = register.json()["access_token"]
+
+    existing_row = {
+        "customer_supabase_url": "https://old-project.supabase.co",
+        "customer_supabase_anon_key": "anon-existing-key",
+        "customer_supabase_service_role_key": "service-existing-key",
+        "customer_supabase_schema": "custom_schema",
+    }
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(auth_mod, "get_customer_supabase_config", lambda user_id: dict(existing_row))
+
+    def _fake_save_customer_supabase_config(**kwargs):
+        captured.update(kwargs)
+        return {
+            "customer_supabase_url": kwargs["supabase_url"],
+            "customer_supabase_anon_key": kwargs["supabase_anon_key"],
+            "customer_supabase_service_role_key": kwargs["supabase_service_role_key"],
+            "customer_supabase_schema": kwargs["schema"],
+        }
+
+    monkeypatch.setattr(auth_mod, "save_customer_supabase_config", _fake_save_customer_supabase_config)
+
+    response = auth_client.put(
+        "/api/auth/setup/supabase",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"supabase_url": "https://new-project.supabase.co"},
+    )
+
+    assert response.status_code == 200
+    assert captured["supabase_url"] == "https://new-project.supabase.co"
+    assert captured["supabase_anon_key"] == "anon-existing-key"
+    assert captured["supabase_service_role_key"] == "service-existing-key"
+    assert captured["schema"] == "custom_schema"
+
+
+def test_setup_supabase_requires_url_and_anon_key_on_first_setup(auth_client, monkeypatch):
+    register = auth_client.post(
+        "/api/auth/register",
+        json={"email": "frank@example.com", "password": "password123"},
+    )
+    assert register.status_code == 201
+    token = register.json()["access_token"]
+
+    monkeypatch.setattr(auth_mod, "get_customer_supabase_config", lambda user_id: None)
+
+    response = auth_client.put(
+        "/api/auth/setup/supabase",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"supabase_url": "https://first-project.supabase.co"},
+    )
+
+    assert response.status_code == 400
+    assert "required for initial setup" in response.json()["detail"]

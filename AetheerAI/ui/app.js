@@ -854,6 +854,55 @@ function setAiProviderOptions(providers) {
   }
 }
 
+function _setSupabaseSettingsStatus(message, tone = 'neutral') {
+  const statusEl = document.getElementById('settings-sb-status');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  if (tone === 'success') {
+    statusEl.style.color = '#10b981';
+  } else if (tone === 'error') {
+    statusEl.style.color = '#ef4444';
+  } else {
+    statusEl.style.color = 'var(--text3)';
+  }
+}
+
+async function loadSupabaseSettings() {
+  const urlEl = document.getElementById('settings-sb-url');
+  const anonEl = document.getElementById('settings-sb-anon-key');
+  const serviceEl = document.getElementById('settings-sb-service-key');
+  const schemaEl = document.getElementById('settings-sb-schema');
+  if (!urlEl || !anonEl || !serviceEl || !schemaEl) return;
+
+  urlEl.value = '';
+  anonEl.value = '';
+  serviceEl.value = '';
+  schemaEl.value = 'public';
+  _setSupabaseSettingsStatus('No Supabase configuration loaded.');
+
+  if (!_CURRENT_USER) return;
+
+  try {
+    const r = await apiFetch('/api/auth/setup/supabase');
+    const d = r.data || {};
+    urlEl.value = String(d.customer_supabase_url || '').trim();
+    schemaEl.value = String(d.customer_supabase_schema || 'public').trim() || 'public';
+
+    const anonMasked = String(d.customer_supabase_anon_key || '').trim();
+    const serviceMasked = String(d.customer_supabase_service_role_key || '').trim();
+    if (d.configured) {
+      _setSupabaseSettingsStatus(
+        `Configured. Anon key: ${anonMasked || '***'} | Service role: ${serviceMasked || 'not set'}`,
+        'success'
+      );
+    } else {
+      _setSupabaseSettingsStatus('Not configured yet. Add Supabase URL and anon key, then save.');
+    }
+  } catch (_) {
+    _setSupabaseSettingsStatus('Unable to load Supabase configuration.', 'error');
+  }
+}
+
 async function loadSettings() {
   document.getElementById('settings-api-url').value = API_BASE;
   const base = API_BASE;
@@ -930,6 +979,8 @@ async function loadSettings() {
       document.getElementById('settings-ai-key-status').textContent = 'Saved key: ' + String(d.api_key);
     }
   } catch (_) {}
+
+  await loadSupabaseSettings();
 
   // Restore from localStorage if available (persisted user preference)
   restoreAiConfigFromLocalStorage();
@@ -1026,6 +1077,62 @@ function resetApiUrl() {
   toast('Using the current app backend.', 'success');
   loadDashboard();
   loadSettings();
+}
+
+async function saveSupabaseSettings() {
+  const urlEl = document.getElementById('settings-sb-url');
+  const anonEl = document.getElementById('settings-sb-anon-key');
+  const serviceEl = document.getElementById('settings-sb-service-key');
+  const schemaEl = document.getElementById('settings-sb-schema');
+  if (!urlEl || !anonEl || !serviceEl || !schemaEl) {
+    toast('Supabase settings form is unavailable.', 'error');
+    return;
+  }
+
+  const rawUrl = urlEl.value.trim();
+  const anonKey = anonEl.value.trim();
+  const serviceRoleKey = serviceEl.value.trim();
+  const schema = schemaEl.value.trim();
+
+  if (!rawUrl) {
+    toast('Supabase Project URL is required.', 'error');
+    return;
+  }
+
+  let normalizedUrl = '';
+  try {
+    normalizedUrl = new URL(rawUrl).toString().replace(/\/+$/, '');
+  } catch (_) {
+    toast('Enter a valid Supabase Project URL.', 'error');
+    return;
+  }
+
+  const payload = {
+    supabase_url: normalizedUrl,
+  };
+  if (schema) {
+    payload.schema = schema;
+  }
+  if (anonKey) {
+    payload.supabase_anon_key = anonKey;
+  }
+  if (serviceRoleKey) {
+    payload.supabase_service_role_key = serviceRoleKey;
+  }
+
+  try {
+    await apiFetch('/api/auth/setup/supabase', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+
+    anonEl.value = '';
+    serviceEl.value = '';
+    toast('Supabase details saved.', 'success');
+    await loadSupabaseSettings();
+  } catch (e) {
+    toast('Supabase update failed: ' + e.message, 'error');
+  }
 }
 
 async function saveAiRuntime() {
