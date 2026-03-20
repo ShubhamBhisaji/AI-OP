@@ -94,6 +94,9 @@ _kill_switch_active = False
 _kill_switch_lock = threading.Lock()
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
+_API_ROLE_ORDER = {"reader": 1, "user": 1, "writer": 2, "admin": 3}
+_api_keys_cache_raw: str | None = None
+_api_keys_cache: dict[str, str] = {}
 
 
 def _env_int(name: str, default: int, minimum: int | None = None) -> int:
@@ -151,6 +154,78 @@ def _enforce_customer_supabase_setup() -> bool:
 
 def _trust_proxy_headers() -> bool:
     return _env_bool("AETHEER_TRUST_PROXY_HEADERS", default=False)
+
+
+def _strict_api_keys_required() -> bool:
+    if os.getenv("AETHEER_REQUIRE_API_KEYS") is not None:
+        return _env_bool("AETHEER_REQUIRE_API_KEYS", default=False)
+    return _deployment_environment() in {"prod", "production"}
+
+
+def _parse_api_keys(raw: str) -> dict[str, str]:
+    """
+    Parse API keys from env.
+
+    Accepted formats:
+      - key1,key2                            (defaults to admin role)
+      - reader:key_r,writer:key_w,admin:key_a
+    """
+    out: dict[str, str] = {}
+    for chunk in (raw or "").split(","):
+        entry = chunk.strip()
+        if not entry:
+            continue
+
+        role = "admin"
+        key = entry
+        if ":" in entry:
+            left, right = entry.split(":", 1)
+            maybe_role = left.strip().lower()
+            if maybe_role in _API_ROLE_ORDER:
+                role = maybe_role
+                key = right.strip()
+
+        if key:
+            out[key] = role
+    return out
+
+
+def _configured_api_keys() -> dict[str, str]:
+    global _api_keys_cache_raw, _api_keys_cache
+
+    raw = (os.getenv("AETHER_API_KEYS") or "").strip()
+    if raw == _api_keys_cache_raw:
+        return _api_keys_cache
+
+    _api_keys_cache_raw = raw
+    _api_keys_cache = _parse_api_keys(raw)
+    return _api_keys_cache
+
+
+def _required_role_for(path: str, method: str) -> str:
+    upper_method = (method or "").upper()
+
+    if upper_method == "DELETE":
+        return "admin"
+
+    if path.startswith("/api/logs") or path.startswith("/api/db/logs"):
+        return "admin"
+
+    if upper_method in {"POST", "PUT", "PATCH"}:
+        return "writer"
+
+    return "reader"
+
+
+def _resolve_api_role(presented_key: str | None, configured: dict[str, str]) -> str | None:
+    key = (presented_key or "").strip()
+    if not key:
+        return None
+
+    for expected, role in configured.items():
+        if hmac.compare_digest(key, expected):
+            return role
+    return None
 
 
 def _is_serverless_runtime() -> bool:
@@ -881,12 +956,9 @@ def _is_public_path(path: str) -> bool:
 
 
 def _role_allows(role: str, required_role: str) -> bool:
-    # Two-role system: admin and user
-    # Admin has access to everything
-    # User has access to everything except admin-only endpoints
-    if required_role == "admin":
-        return role == "admin"
-    return role in ("admin", "user")
+    current = _API_ROLE_ORDER.get(str(role).strip().lower(), 0)
+    required = _API_ROLE_ORDER.get(str(required_role).strip().lower(), 99)
+    return current >= required
 
 
 def _client_rate_limit_id(request: Request) -> str:

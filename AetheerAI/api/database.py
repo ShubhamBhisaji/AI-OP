@@ -254,6 +254,27 @@ class ActivityLog(Base):
         }
 
 
+class RevokedAuthToken(Base):
+    """Persisted blacklist entry for JWTs that have been logged out."""
+
+    __tablename__ = "revoked_auth_tokens"
+
+    token_hash = Column(String(64), primary_key=True, index=True)
+    user_id    = Column(Integer, nullable=True, index=True)
+    revoked_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=True, index=True)
+    reason     = Column(String(128), nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "token_hash": self.token_hash,
+            "user_id": self.user_id,
+            "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "reason": self.reason,
+        }
+
+
 class BillingPlan(Base):
     __tablename__ = "billing_plans"
 

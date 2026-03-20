@@ -40,7 +40,7 @@ from api.customer_supabase import (
     save_customer_ai_api_settings,
     save_customer_supabase_config,
 )
-from api.database import ActivityLog, User, get_db
+from api.database import ActivityLog, RevokedAuthToken, User, get_db
 from integrations.errors import APIRequestError
 from integrations.supabase_client import SupabaseClient
 
@@ -113,6 +113,55 @@ except ValueError:
 _login_attempts_lock = threading.Lock()
 _login_attempts: dict[str, tuple[int, float]] = {}
 
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256((token or "").strip().encode("utf-8")).hexdigest()
+
+
+def _token_expiry_from_payload(payload: dict[str, object]) -> datetime.datetime | None:
+    try:
+        exp = int(float(payload.get("exp", 0) or 0))
+    except Exception:
+        return None
+    if exp <= 0:
+        return None
+    return datetime.datetime.utcfromtimestamp(exp)
+
+
+def _is_token_revoked(token: str, db: Session) -> bool:
+    digest = _token_hash(token)
+    row = db.query(RevokedAuthToken).filter(RevokedAuthToken.token_hash == digest).first()
+    return row is not None
+
+
+def _revoke_token(
+    db: Session,
+    token: str,
+    *,
+    payload: dict[str, object] | None = None,
+    user_id: int | None = None,
+    reason: str = "logout",
+) -> None:
+    digest = _token_hash(token)
+    expiry = _token_expiry_from_payload(payload or {}) if payload else None
+    existing = db.query(RevokedAuthToken).filter(RevokedAuthToken.token_hash == digest).first()
+    if existing is None:
+        db.add(
+            RevokedAuthToken(
+                token_hash=digest,
+                user_id=user_id,
+                revoked_at=datetime.datetime.utcnow(),
+                expires_at=expiry,
+                reason=reason,
+            )
+        )
+    else:
+        existing.user_id = user_id if user_id is not None else existing.user_id
+        existing.revoked_at = datetime.datetime.utcnow()
+        existing.expires_at = expiry or existing.expires_at
+        existing.reason = reason
+    db.commit()
+
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 _bearer = HTTPBearer(auto_error=False)
 
@@ -162,6 +211,7 @@ class AIAPISettingsRequest(BaseModel):
 
 def _make_token(user_id: int, username: str, is_admin: bool, supabase_user_id: str = "") -> str:
     exp = datetime.datetime.utcnow() + datetime.timedelta(hours=_EXPIRE_H)
+    jti = secrets.token_urlsafe(16)
     if not _HAS_JOSE:
         payload = {
             "sub": str(user_id),
@@ -169,6 +219,7 @@ def _make_token(user_id: int, username: str, is_admin: bool, supabase_user_id: s
             "adm": is_admin,
             "sid": supabase_user_id,
             "exp": int(exp.timestamp()),
+            "jti": jti,
         }
         payload_part = base64.urlsafe_b64encode(
             json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -178,7 +229,14 @@ def _make_token(user_id: int, username: str, is_admin: bool, supabase_user_id: s
         return f"{payload_part}.{sig_part}"
 
     return _jwt.encode(
-        {"sub": str(user_id), "un": username, "adm": is_admin, "sid": supabase_user_id, "exp": exp},
+        {
+            "sub": str(user_id),
+            "un": username,
+            "adm": is_admin,
+            "sid": supabase_user_id,
+            "exp": exp,
+            "jti": jti,
+        },
         _SECRET,
         algorithm=_ALG,
     )
@@ -370,12 +428,16 @@ def get_current_user(
     """Dependency: decode bearer token and return the User row."""
     if creds is None:
         raise HTTPException(status_code=401, detail="Authentication required")
+    if _is_token_revoked(creds.credentials, db):
+        raise HTTPException(status_code=401, detail="Token revoked")
     payload = _decode_token(creds.credentials)
     return _resolve_user_from_payload(payload, db)
 
 
 def authenticate_bearer_token(token: str, db: Session) -> User:
     """Resolve an active user from a raw bearer token string."""
+    if _is_token_revoked(token, db):
+        raise HTTPException(status_code=401, detail="Token revoked")
     payload = _decode_token(str(token or "").strip())
     return _resolve_user_from_payload(payload, db)
 
@@ -564,8 +626,26 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
 def logout(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Sign out: revoke the Supabase session so the token is invalidated server-side."""
+    raw_token = str(getattr(creds, "credentials", "") or "").strip()
+    if raw_token:
+        try:
+            payload = _decode_token(raw_token)
+            _revoke_token(
+                db,
+                raw_token,
+                payload=payload,
+                user_id=getattr(current_user, "id", None),
+                reason="logout",
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("Failed to revoke auth token during logout: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Logout failed") from exc
+
     if creds and current_user.supabase_user_id:
         try:
             supabase = SupabaseClient()
