@@ -32,6 +32,97 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-size:
 /* ── Layout ───────────────────────────────────────────────────────── */
 #app { display: flex; height: 100vh; overflow: hidden; }
 
+/* ── Landing Page ─────────────────────────────────────────────────── */
+#landing-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100%;
+  background: var(--bg);
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+}
+#landing-page.hidden {
+  display: none;
+}
+.landing-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  max-width: 600px;
+  padding: 40px 24px;
+}
+.landing-logo {
+  width: 80px;
+  height: 80px;
+  background: linear-gradient(135deg, #18181b, #27272a);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 32px;
+}
+.landing-logo svg {
+  width: 50px;
+  height: 50px;
+}
+.landing-title {
+  font-size: 42px;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 12px;
+  letter-spacing: -1px;
+}
+.landing-subtitle {
+  font-size: 18px;
+  color: var(--text2);
+  margin-bottom: 32px;
+  line-height: 1.6;
+}
+.landing-features {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 40px;
+  align-items: flex-start;
+  width: 100%;
+}
+.landing-feature {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text2);
+}
+.landing-feature-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(99,102,241,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.landing-cta {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 24px;
+}
+.landing-cta .btn {
+  padding: 12px 28px;
+  font-size: 14px;
+}
+
 /* ── Sidebar ──────────────────────────────────────────────────────── */
 #sidebar {
   width: var(--sidebar-w);
@@ -280,7 +371,9 @@ details[open] summary::before { content: '▼ '; }
 /* ── Modal overlay ────────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.75);
-  z-index: 9998; display: flex; align-items: center; justify-content: center;
+  z-index: 9998; display: flex; align-items: flex-start; justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
   backdrop-filter: blur(4px);
 }
 .modal-box {
@@ -288,6 +381,9 @@ details[open] summary::before { content: '▼ '; }
   border-radius: 14px; padding: 28px; max-width: 480px; width: 90%;
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   position: relative; z-index: 9999;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .modal-header { margin-bottom: 20px; }
 .modal-header h2 { font-size: 20px; font-weight: 800; color: var(--text); }
@@ -452,6 +548,46 @@ pre {
 </style>
 </head>
 <body>
+
+<!-- ══ LANDING PAGE ══════════════════════════════════════════════════ -->
+<div id="landing-page">
+  <div class="landing-content">
+    <div class="landing-logo">
+      <svg width="50" height="50" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="lg1" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#F43F5E"/><stop offset="100%" stop-color="#8B5CF6"/>
+          </linearGradient>
+        </defs>
+        <path d="M 64 128 C 30 128 30 180 64 180 C 100 180 156 76 192 76 C 226 76 226 128 192 128 C 156 128 100 232 64 232 C 30 232 30 180 64 180"
+          fill="none" stroke="url(#lg1)" stroke-width="20" stroke-linecap="round"/>
+        <path d="M 128 40 L 70 170 M 128 40 L 186 170 M 90 130 L 166 130"
+          fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <h1 class="landing-title">AetheerAI</h1>
+    <p class="landing-subtitle">Autonomous AI Operating System</p>
+    <div class="landing-features">
+      <div class="landing-feature">
+        <div class="landing-feature-icon">✓</div>
+        <span>AI-powered autonomous agents</span>
+      </div>
+      <div class="landing-feature">
+        <div class="landing-feature-icon">✓</div>
+        <span>Orchestrate complex workflows</span>
+      </div>
+      <div class="landing-feature">
+        <div class="landing-feature-icon">✓</div>
+        <span>Enterprise-grade security</span>
+      </div>
+    </div>
+    <div class="landing-cta">
+      <button class="btn btn-secondary" onclick="switchToRegister(); showAuthModal()">Create Account</button>
+      <button class="btn btn-primary" onclick="switchToLogin(); showAuthModal()">Sign In</button>
+    </div>
+  </div>
+</div>
+
 <div id="app">
 
 <!-- ══ SIDEBAR ══════════════════════════════════════════════════════ -->
@@ -1229,7 +1365,6 @@ async function apiFetch(path, opts = {}) {
   const isPublicPath = path === '/api/health' || path.startsWith('/api/auth');
 
   if (!_JWT_TOKEN && !isPublicPath) {
-    showAuthModal();
     throw new Error('Unauthorized (401): please sign in to access protected endpoints.');
   }
   
@@ -1245,10 +1380,14 @@ async function apiFetch(path, opts = {}) {
     if (res.status === 401) {
       if (_JWT_TOKEN) {
         msg = 'Session expired or invalid token. Please sign in again.';
-        logout();  // Clear invalid token
+        // Clear token and show landing page
+        _JWT_TOKEN = '';
+        _CURRENT_USER = null;
+        localStorage.removeItem('aetheer_jwt_token');
+        showLandingPage();
       } else {
         msg = 'Unauthorized (401): please sign in to access protected endpoints.';
-        showAuthModal();  // Prompt login
+        showLandingPage();
       }
     }
     throw new Error(msg);
@@ -2241,31 +2380,66 @@ function pgClear() {
 }
 
 /* ══ Auth Management ════════════════════════════════════════════════ */
+
+// Track if we're already checking auth to prevent recursion
+let _authCheckInProgress = false;
+let _hasShownOnce = false;
+
 async function checkAuth() {
-  if (!_JWT_TOKEN) {
-    showAuthModal();
-    return false;
-  }
+  // Prevent recursive checkAuth calls
+  if (_authCheckInProgress) return false;
+  _authCheckInProgress = true;
   
   try {
-    const r = await apiFetch('/api/auth/me');
-    _CURRENT_USER = r.data;
-    updateAuthUI();
-    return true;
-  } catch (e) {
-    const message = String((e && e.message) || '');
-    if (message.includes('401')) {
-      showAuthModal();
+    if (!_JWT_TOKEN) {
+      showLandingPage();
       return false;
     }
-
-    if (_NETWORK_ERROR_RE.test(message)) {
-      toast('Cannot reach API at ' + API_BASE + '. Update Backend API URL in Settings.', 'error');
+    
+    try {
+      const r = await apiFetch('/api/auth/me');
+      _CURRENT_USER = r.data;
+      updateAuthUI();
+      hideLandingPage();
+      return true;
+    } catch (e) {
+      const message = String((e && e.message) || '');
+      
+      // Only logout and show auth modal on actual 401 errors
+      if (message.includes('401')) {
+        _JWT_TOKEN = '';
+        _CURRENT_USER = null;
+        localStorage.removeItem('aetheer_jwt_token');
+        showLandingPage();
+        return false;
+      }
+      
+      // For network errors, just show landing page without clearing token
+      if (_NETWORK_ERROR_RE.test(message)) {
+        toast('Cannot reach API at ' + API_BASE + '. Update Backend API URL in Settings.', 'error');
+        showLandingPage();
+        return false;
+      }
+      
+      // For other errors, show landing page
+      showLandingPage();
+      return false;
     }
-
-    showAuthModal();
-    return false;
+  } finally {
+    _authCheckInProgress = false;
   }
+}
+
+function showLandingPage() {
+  document.getElementById('landing-page').classList.remove('hidden');
+  document.getElementById('sidebar').style.display = 'none';
+  document.getElementById('main').style.display = 'none';
+}
+
+function hideLandingPage() {
+  document.getElementById('landing-page').classList.add('hidden');
+  document.getElementById('sidebar').style.display = 'flex';
+  document.getElementById('main').style.display = 'flex';
 }
 
 function updateAuthUI() {
@@ -2323,6 +2497,9 @@ function switchToRegister() {
   document.getElementById('auth-register-form').style.display = 'block';
   document.getElementById('auth-modal-title').textContent = 'Create Account';
   document.getElementById('auth-modal-subtitle').textContent = 'Join AetheerAI';
+  // Clear and focus
+  document.getElementById('reg-email').value = '';
+  document.getElementById('reg-password').value = '';
   document.getElementById('reg-email').focus();
 }
 
@@ -2331,6 +2508,9 @@ function switchToLogin() {
   document.getElementById('auth-login-form').style.display = 'block';
   document.getElementById('auth-modal-title').textContent = 'Sign In';
   document.getElementById('auth-modal-subtitle').textContent = 'Access your AetheerAI workspace';
+  // Clear and focus
+  document.getElementById('auth-email').value = '';
+  document.getElementById('auth-password').value = '';
   document.getElementById('auth-email').focus();
 }
 
@@ -2363,6 +2543,7 @@ async function submitLogin() {
     toast('Welcome back!', 'success');
     closeAuthModal();
     updateAuthUI();
+    hideLandingPage();
 
     if (data.requires_supabase_setup) {
       showOnboardingModal();
@@ -2404,6 +2585,8 @@ async function submitRegister() {
     toast('Account created successfully!', 'success');
     closeAuthModal();
     updateAuthUI();
+    hideLandingPage();
+
     if (data.requires_supabase_setup) {
       showOnboardingModal();
     } else {
@@ -2416,18 +2599,43 @@ async function submitRegister() {
 }
 
 async function logout() {
-  // Sign out from Supabase to invalidate the session server-side.
   try {
-    await apiFetch('/api/auth/logout', { method: 'POST' });
-  } catch (_) { /* best-effort */ }
+    // Use a timeout for the logout request (10 seconds)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
+    try {
+      await fetch(API_BASE + '/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + _JWT_TOKEN,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch (err) {
+    // Timeout or network error - log but continue with local logout
+    if (err.name !== 'AbortError') {
+      console.warn('Logout request error (continuing with local logout):', err.message);
+    }
+  }
 
+  // Clear local session state
   _JWT_TOKEN = '';
   _CURRENT_USER = null;
   localStorage.removeItem('aetheer_jwt_token');
   updateAuthUI();
-  // Close any open modals, then show the sign-in screen.
+  
+  // Close any open modals
   document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
-  showAuthModal();
+  
+  // Show landing page (not auth modal)
+  showLandingPage();
+  
+  toast('Signed out successfully', 'success');
 }
 
 /* ══ Supabase Onboarding ═════════════════════════════════════════════ */
@@ -2501,14 +2709,21 @@ function skipOnboarding() {
 
 /* ══ Init ════════════════════════════════════════════════════════════ */
 (async function init() {
-  // Check auth first
+  // Check auth first - this will show landing page if not authenticated
   const isAuthenticated = await checkAuth();
   if (isAuthenticated) {
     loadDashboard();
+  } else {
+    // Make sure landing page is visible
+    showLandingPage();
   }
   
-  // Poll dashboard every 30s
-  setInterval(() => { if (_JWT_TOKEN && currentPage === 'dashboard') loadDashboard(); }, 30000);
+  // Poll dashboard every 30s (only if authenticated)
+  setInterval(() => { 
+    if (_JWT_TOKEN && currentPage === 'dashboard') {
+      loadDashboard();
+    }
+  }, 30000);
 })();
 </script>
 </body>

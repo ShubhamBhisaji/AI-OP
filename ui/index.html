@@ -32,6 +32,97 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-size:
 /* ── Layout ───────────────────────────────────────────────────────── */
 #app { display: flex; height: 100vh; overflow: hidden; }
 
+/* ── Landing Page ─────────────────────────────────────────────────── */
+#landing-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100%;
+  background: var(--bg);
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+}
+#landing-page.hidden {
+  display: none;
+}
+.landing-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  max-width: 600px;
+  padding: 40px 24px;
+}
+.landing-logo {
+  width: 80px;
+  height: 80px;
+  background: linear-gradient(135deg, #18181b, #27272a);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 32px;
+}
+.landing-logo svg {
+  width: 50px;
+  height: 50px;
+}
+.landing-title {
+  font-size: 42px;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 12px;
+  letter-spacing: -1px;
+}
+.landing-subtitle {
+  font-size: 18px;
+  color: var(--text2);
+  margin-bottom: 32px;
+  line-height: 1.6;
+}
+.landing-features {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 40px;
+  align-items: flex-start;
+  width: 100%;
+}
+.landing-feature {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text2);
+}
+.landing-feature-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(99,102,241,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.landing-cta {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 24px;
+}
+.landing-cta .btn {
+  padding: 12px 28px;
+  font-size: 14px;
+}
+
 /* ── Sidebar ──────────────────────────────────────────────────────── */
 #sidebar {
   width: var(--sidebar-w);
@@ -418,6 +509,46 @@ pre {
 </style>
 </head>
 <body>
+
+<!-- ══ LANDING PAGE ══════════════════════════════════════════════════ -->
+<div id="landing-page">
+  <div class="landing-content">
+    <div class="landing-logo">
+      <svg width="50" height="50" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="lg1" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#F43F5E"/><stop offset="100%" stop-color="#8B5CF6"/>
+          </linearGradient>
+        </defs>
+        <path d="M 64 128 C 30 128 30 180 64 180 C 100 180 156 76 192 76 C 226 76 226 128 192 128 C 156 128 100 232 64 232 C 30 232 30 180 64 180"
+          fill="none" stroke="url(#lg1)" stroke-width="20" stroke-linecap="round"/>
+        <path d="M 128 40 L 70 170 M 128 40 L 186 170 M 90 130 L 166 130"
+          fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <h1 class="landing-title">AetheerAI</h1>
+    <p class="landing-subtitle">Autonomous AI Operating System</p>
+    <div class="landing-features">
+      <div class="landing-feature">
+        <div class="landing-feature-icon">✓</div>
+        <span>AI-powered autonomous agents</span>
+      </div>
+      <div class="landing-feature">
+        <div class="landing-feature-icon">✓</div>
+        <span>Orchestrate complex workflows</span>
+      </div>
+      <div class="landing-feature">
+        <div class="landing-feature-icon">✓</div>
+        <span>Enterprise-grade security</span>
+      </div>
+    </div>
+    <div class="landing-cta">
+      <button class="btn btn-secondary" onclick="switchToRegister(); showAuthModal()">Create Account</button>
+      <button class="btn btn-primary" onclick="switchToLogin(); showAuthModal()">Sign In</button>
+    </div>
+  </div>
+</div>
+
 <div id="app">
 
 <!-- ══ SIDEBAR ══════════════════════════════════════════════════════ -->
