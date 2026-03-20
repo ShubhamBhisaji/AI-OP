@@ -216,7 +216,13 @@ class AIAPISettingsRequest(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-def _make_token(user_id: int, username: str, is_admin: bool, supabase_user_id: str = "") -> str:
+def _make_token(
+    user_id: int,
+    username: str,
+    is_admin: bool,
+    supabase_user_id: str = "",
+    email: str = "",
+) -> str:
     exp = datetime.datetime.utcnow() + datetime.timedelta(hours=_EXPIRE_H)
     jti = secrets.token_urlsafe(16)
     if not _HAS_JOSE:
@@ -225,6 +231,7 @@ def _make_token(user_id: int, username: str, is_admin: bool, supabase_user_id: s
             "un": username,
             "adm": is_admin,
             "sid": supabase_user_id,
+            "em": email,
             "exp": int(exp.timestamp()),
             "jti": jti,
         }
@@ -241,6 +248,7 @@ def _make_token(user_id: int, username: str, is_admin: bool, supabase_user_id: s
             "un": username,
             "adm": is_admin,
             "sid": supabase_user_id,
+            "em": email,
             "exp": exp,
             "jti": jti,
         },
@@ -408,11 +416,69 @@ def _recover_local_user(db: Session, sb_row: dict) -> "User | None":
     return None
 
 
+def _recover_local_user_from_token_payload(db: Session, payload: dict) -> "User | None":
+    """Recreate local user cache using signed JWT claims when external lookup is unavailable."""
+    sid = str(payload.get("sid") or "").strip()
+    username = str(payload.get("un") or "").strip()
+    email = str(payload.get("em") or "").strip()
+    if not sid or not username or not email:
+        return None
+
+    try:
+        token_user_id = int(payload.get("sub", 0) or 0)
+    except Exception:
+        token_user_id = 0
+
+    existing = db.query(User).filter(User.supabase_user_id == sid).first()
+    if existing:
+        return existing if bool(existing.is_active) else None
+
+    if token_user_id > 0:
+        existing_id = db.query(User).filter(User.id == token_user_id).first()
+        if existing_id:
+            current_sid = str(getattr(existing_id, "supabase_user_id", "") or "").strip()
+            if current_sid and current_sid != sid:
+                logger.warning(
+                    "Cannot rebuild local user from token due id collision: id=%s sid=%s existing_sid=%s",
+                    token_user_id,
+                    sid,
+                    current_sid,
+                )
+                return None
+
+    try:
+        user = User(
+            id=token_user_id if token_user_id > 0 else None,
+            supabase_user_id=sid,
+            username=username,
+            email=email,
+            hashed_pw="",
+            is_admin=bool(payload.get("adm", False)),
+            is_active=True,
+            created_at=datetime.datetime.utcnow(),
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+    except Exception as exc:
+        logger.warning("Could not recover local user from token payload: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    return None
+
+
 # ── Auth dependency ────────────────────────────────────────────────────────
 
 def _resolve_user_from_payload(payload: dict, db: Session) -> "User":
     """Find User in local DB; recover from Supabase on cold-start cache miss."""
-    user_id = int(payload.get("sub", 0))
+    try:
+        user_id = int(payload.get("sub", 0) or 0)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
+
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if user:
         return user
@@ -423,6 +489,9 @@ def _resolve_user_from_payload(payload: dict, db: Session) -> "User":
         sb_row = _sb_get_user(supabase_user_id=sid)
         if sb_row:
             user = _recover_local_user(db, sb_row)
+        elif user is None:
+            # Serverless fallback: keep session alive using signed token claims.
+            user = _recover_local_user_from_token_payload(db, payload)
     if user is None:
         raise HTTPException(status_code=401, detail="User not found or inactive")
     return user
@@ -549,8 +618,13 @@ def register(req: RegisterRequest, request: Request, db: Session = Depends(get_d
         _log(db, getattr(user, "id", None), "register",
              {"email": req.email, "supabase_id": sb_uid}, _ip(request))
 
-        token = _make_token(getattr(user, "id", 0), user.username, user.is_admin,
-                            supabase_user_id=sb_uid)
+        token = _make_token(
+            getattr(user, "id", 0),
+            user.username,
+            user.is_admin,
+            supabase_user_id=sb_uid,
+            email=str(getattr(user, "email", "") or req.email),
+        )
         return TokenResponse(access_token=token, user=user.to_dict())
 
     except HTTPException:
@@ -615,8 +689,13 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
 
         _log(db, getattr(user, "id", None), "login",
              {"email": req.email, "supabase_id": sb_uid}, _ip(request))
-        token = _make_token(getattr(user, "id", 0), user.username, user.is_admin,
-                            supabase_user_id=sb_uid)
+        token = _make_token(
+            getattr(user, "id", 0),
+            user.username,
+            user.is_admin,
+            supabase_user_id=sb_uid,
+            email=str(getattr(user, "email", "") or req.email),
+        )
         setup_status = get_customer_setup_status(getattr(user, "id", 0))
         return TokenResponse(access_token=token, user=user.to_dict(),
                              requires_supabase_setup=bool(setup_status.get("requires_setup", False)),

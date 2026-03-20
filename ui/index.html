@@ -1,553 +1,126 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="AetheerAI by Tecbunny Solutions is an autonomous AI workspace for goals, agents, chat, memory, and auditability." />
+<meta name="theme-color" content="#081019" />
 <title>AetheerAI — Autonomous AI Workspace</title>
-<style>
-/* ── Reset & Base ─────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg:         #0d0f14;
-  --surface:    #131620;
-  --surface2:   #1a1d2b;
-  --border:     rgba(255,255,255,0.07);
-  --border2:    rgba(255,255,255,0.12);
-  --text:       #e2e8f0;
-  --text2:      #94a3b8;
-  --text3:      #64748b;
-  --accent:     #6366f1;
-  --accent2:    #8b5cf6;
-  --rose:       #f43f5e;
-  --green:      #10b981;
-  --yellow:     #f59e0b;
-  --red:        #ef4444;
-  --blue:       #3b82f6;
-  --radius:     12px;
-  --sidebar-w:  240px;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-}
-html, body { height: 100%; background: var(--bg); color: var(--text); font-size: 14px; }
-
-/* ── Layout ───────────────────────────────────────────────────────── */
-#app { display: flex; height: 100vh; overflow: hidden; }
-
-/* ── Landing Page ─────────────────────────────────────────────────── */
-#landing-page {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  width: 100%;
-  background: var(--bg);
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 1000;
-}
-#landing-page.hidden {
-  display: none;
-}
-.landing-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  max-width: 600px;
-  padding: 40px 24px;
-}
-.landing-logo {
-  width: 80px;
-  height: 80px;
-  background: linear-gradient(135deg, #18181b, #27272a);
-  border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 32px;
-}
-.landing-logo svg {
-  width: 50px;
-  height: 50px;
-}
-.landing-title {
-  font-size: 42px;
-  font-weight: 800;
-  color: var(--text);
-  margin-bottom: 12px;
-  letter-spacing: -1px;
-}
-.landing-subtitle {
-  font-size: 18px;
-  color: var(--text2);
-  margin-bottom: 32px;
-  line-height: 1.6;
-}
-.landing-features {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 40px;
-  align-items: flex-start;
-  width: 100%;
-}
-.landing-feature {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  color: var(--text2);
-}
-.landing-feature-icon {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: rgba(99,102,241,0.15);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent);
-  font-size: 12px;
-  flex-shrink: 0;
-}
-.landing-cta {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  margin-top: 24px;
-}
-.landing-cta .btn {
-  padding: 12px 28px;
-  font-size: 14px;
-}
-
-/* ── Sidebar ──────────────────────────────────────────────────────── */
-#sidebar {
-  width: var(--sidebar-w);
-  min-width: var(--sidebar-w);
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border2) transparent;
-}
-.brand {
-  padding: 20px 16px 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.brand-logo {
-  width: 34px; height: 34px;
-  background: linear-gradient(135deg, #18181b, #27272a);
-  border-radius: 9px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.brand-text { flex: 1; min-width: 0; }
-.brand-name { font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.2; }
-.brand-tagline { font-size: 10px; color: var(--text3); font-weight: 500; margin-top: 2px; }
-
-.nav-section { padding: 16px 12px 4px; }
-.nav-label { font-size: 10px; font-weight: 700; letter-spacing: 1.2px; color: var(--text3); text-transform: uppercase; padding: 0 4px 6px; }
-.nav-item {
-  display: flex; align-items: center; gap: 9px;
-  padding: 8px 10px; border-radius: 8px;
-  color: var(--text2); font-size: 13px; font-weight: 500;
-  cursor: pointer; transition: background 0.15s, color 0.15s;
-  margin-bottom: 1px; border: none; background: none; width: 100%; text-align: left;
-  white-space: nowrap;
-}
-.nav-item:hover { background: var(--surface2); color: var(--text); }
-.nav-item.active { background: rgba(99,102,241,0.15); color: var(--accent); font-weight: 600; }
-.nav-item .icon { font-size: 15px; flex-shrink: 0; }
-.nav-item .badge {
-  margin-left: auto; background: var(--accent); color: #fff;
-  border-radius: 999px; font-size: 10px; padding: 1px 6px; font-weight: 700;
-}
-
-.sidebar-bottom {
-  margin-top: auto; padding: 12px 12px 16px;
-  border-top: 1px solid var(--border);
-}
-.provider-pill {
-  display: flex; align-items: center; gap: 7px;
-  padding: 8px 10px; border-radius: 8px;
-  background: var(--surface2); border: 1px solid var(--border);
-  font-size: 11px; color: var(--text2);
-}
-.provider-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
-.provider-pill b { color: var(--text); }
-
-/* ── Main content ─────────────────────────────────────────────────── */
-#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-
-#topbar {
-  height: 52px; min-height: 52px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 12px;
-  padding: 0 20px;
-}
-.topbar-title { font-size: 15px; font-weight: 700; color: var(--text); }
-.topbar-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-.status-indicator {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11.5px; color: var(--text2);
-}
-.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; }
-.status-dot.offline { background: var(--red); animation: none; }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-#content { flex: 1; overflow-y: auto; padding: 24px; scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
-
-/* ── Page views ───────────────────────────────────────────────────── */
-.page { display: none; }
-.page.active { display: block; }
-
-/* ── Cards & Grid ─────────────────────────────────────────────────── */
-.page-header { margin-bottom: 24px; }
-.page-header h1 { font-size: 22px; font-weight: 800; color: var(--text); }
-.page-header p { font-size: 13px; color: var(--text2); margin-top: 4px; }
-
-.grid { display: grid; gap: 16px; }
-.grid-2 { grid-template-columns: repeat(2, 1fr); }
-.grid-3 { grid-template-columns: repeat(3, 1fr); }
-.grid-4 { grid-template-columns: repeat(4, 1fr); }
-@media (max-width: 900px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 600px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-}
-.card.hover:hover { border-color: var(--border2); cursor: pointer; }
-.card-title { font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; }
-.stat-value { font-size: 28px; font-weight: 800; color: var(--text); line-height: 1; }
-.stat-sub { font-size: 11.5px; color: var(--text3); margin-top: 5px; }
-
-/* ── Buttons ──────────────────────────────────────────────────────── */
-.btn {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
-  cursor: pointer; border: none; transition: all 0.15s; text-decoration: none;
-}
-.btn-primary { background: var(--accent); color: #fff; box-shadow: 0 2px 12px rgba(99,102,241,0.3); }
-.btn-primary:hover { background: #4f46e5; box-shadow: 0 4px 18px rgba(99,102,241,0.4); transform: translateY(-1px); }
-.btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border2); }
-.btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
-.btn-danger { background: rgba(239,68,68,0.12); color: var(--red); border: 1px solid rgba(239,68,68,0.25); }
-.btn-danger:hover { background: rgba(239,68,68,0.2); }
-.btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 6px; }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
-
-/* ── Forms ────────────────────────────────────────────────────────── */
-.form-group { margin-bottom: 16px; }
-label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 6px; }
-input, textarea, select {
-  width: 100%; background: var(--surface2); border: 1px solid var(--border2);
-  border-radius: 8px; color: var(--text); font-size: 13px;
-  padding: 9px 12px; outline: none; transition: border-color 0.15s;
-}
-input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
-textarea { resize: vertical; min-height: 90px; }
-select option { background: var(--surface2); }
-.input-row { display: flex; gap: 12px; }
-.input-row > * { flex: 1; }
-
-/* ── Badges & Chips ───────────────────────────────────────────────── */
-.badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
-}
-.badge-green  { background: rgba(16,185,129,0.12); color: var(--green); }
-.badge-blue   { background: rgba(59,130,246,0.12); color: var(--blue); }
-.badge-yellow { background: rgba(245,158,11,0.12); color: var(--yellow); }
-.badge-red    { background: rgba(239,68,68,0.12); color: var(--red); }
-.badge-purple { background: rgba(139,92,246,0.12); color: var(--accent2); }
-.badge-gray   { background: rgba(100,116,139,0.12); color: var(--text3); }
-
-/* ── Table ────────────────────────────────────────────────────────── */
-.table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
-table { width: 100%; border-collapse: collapse; }
-th { background: var(--surface); font-size: 11px; font-weight: 700; letter-spacing: 0.7px; text-transform: uppercase; color: var(--text3); padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
-td { padding: 11px 14px; font-size: 13px; color: var(--text); border-bottom: 1px solid var(--border); vertical-align: middle; }
-tr:last-child td { border-bottom: none; }
-tr:hover td { background: var(--surface2); }
-
-/* ── Progress bar ─────────────────────────────────────────────────── */
-.progress-bar { background: var(--surface2); border-radius: 999px; height: 6px; overflow: hidden; }
-.progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 999px; transition: width 0.4s ease; }
-
-/* ── Chat ─────────────────────────────────────────────────────────── */
-#chat-messages {
-  flex: 1; overflow-y: auto; padding: 16px; gap: 16px;
-  display: flex; flex-direction: column;
-  scrollbar-width: thin; scrollbar-color: var(--border2) transparent;
-}
-.msg { display: flex; gap: 10px; max-width: 82%; }
-.msg.user { align-self: flex-end; flex-direction: row-reverse; }
-.msg-bubble {
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: 12px; padding: 10px 14px;
-  font-size: 13.5px; line-height: 1.55; color: var(--text);
-  white-space: pre-wrap; word-break: break-word;
-}
-.msg.user .msg-bubble { background: rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.3); }
-.msg-avatar {
-  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px; background: var(--surface2); border: 1px solid var(--border);
-}
-.chat-input-row { display: flex; gap: 10px; padding: 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
-.chat-input-row input { flex: 1; }
-#chat-container { display: flex; flex-direction: column; height: calc(100vh - 52px - 48px); background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); }
-
-/* ── Expandable rows ──────────────────────────────────────────────── */
-.expand-row { display: none; background: var(--surface2); }
-.expand-row.open { display: table-row; }
-.expand-cell { padding: 16px 20px; }
-
-/* ── Task list ────────────────────────────────────────────────────── */
-.task-item {
-  display: flex; align-items: flex-start; gap: 12px;
-  padding: 10px 0; border-bottom: 1px solid var(--border);
-}
-.task-item:last-child { border-bottom: none; }
-.task-icon { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; margin-top: 2px; }
-.task-icon.done { background: rgba(16,185,129,0.15); }
-.task-icon.fail { background: rgba(239,68,68,0.15); }
-.task-icon.run  { background: rgba(99,102,241,0.15); }
-.task-icon.pend { background: rgba(100,116,139,0.1); }
-.task-body { flex: 1; min-width: 0; }
-.task-title { font-size: 13px; font-weight: 600; color: var(--text); }
-.task-desc  { font-size: 11.5px; color: var(--text3); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.task-agent { font-size: 10.5px; color: var(--accent2); font-weight: 600; margin-top: 2px; }
-
-/* ── Alert ────────────────────────────────────────────────────────── */
-.alert { border-radius: 8px; padding: 12px 14px; font-size: 13px; margin-bottom: 16px; display: flex; align-items: flex-start; gap: 9px; }
-.alert-info    { background: rgba(59,130,246,0.08);   border: 1px solid rgba(59,130,246,0.2);   color: #93c5fd; }
-.alert-success { background: rgba(16,185,129,0.08);   border: 1px solid rgba(16,185,129,0.2);   color: #6ee7b7; }
-.alert-warn    { background: rgba(245,158,11,0.08);   border: 1px solid rgba(245,158,11,0.2);   color: #fcd34d; }
-.alert-error   { background: rgba(239,68,68,0.08);    border: 1px solid rgba(239,68,68,0.2);    color: #fca5a5; }
-
-/* ── Notification toast ───────────────────────────────────────────── */
-#toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
-.toast {
-  background: var(--surface); border: 1px solid var(--border2);
-  border-radius: 10px; padding: 12px 18px; font-size: 13px; color: var(--text);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-  animation: slideIn 0.25s ease; pointer-events: all;
-}
-.toast.success { border-color: rgba(16,185,129,0.4); }
-.toast.error   { border-color: rgba(239,68,68,0.4); }
-@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-
-/* ── Spinner ──────────────────────────────────────────────────────── */
-.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.15); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* ── Scrollbar ────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; }
-
-/* ── Details/summary ──────────────────────────────────────────────── */
-details { border: 1px solid var(--border); border-radius: 8px; margin: 8px 0; }
-summary { padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text2); list-style: none; user-select: none; }
-summary::-webkit-details-marker { display: none; }
-summary::before { content: '▶ '; font-size: 10px; }
-details[open] summary::before { content: '▼ '; }
-.details-body { padding: 12px 14px; border-top: 1px solid var(--border); }
-
-/* ── Separator ────────────────────────────────────────────────────── */
-.sep { height: 1px; background: var(--border); margin: 20px 0; }
-.mt8 { margin-top: 8px; } .mt12 { margin-top: 12px; } .mt16 { margin-top: 16px; } .mt20 { margin-top: 20px; }
-.flex { display: flex; } .items-center { align-items: center; } .gap8 { gap: 8px; } .gap12 { gap: 12px; } .ml-auto { margin-left: auto; }
-
-/* ── Log viewer ───────────────────────────────────────────────────── */
-#log-box {
-  background: #0a0c10; border: 1px solid var(--border); border-radius: 10px;
-  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-  font-size: 12px; color: #94a3b8; padding: 14px; overflow-y: auto; max-height: 500px;
-  white-space: pre-wrap; word-break: break-all;
-}
-.log-entry { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
-.log-entry:last-child { border: none; }
-.log-ts  { color: var(--text3); }
-.log-lvl-INFO  { color: var(--blue); }
-.log-lvl-ERROR { color: var(--red); }
-.log-lvl-WARN  { color: var(--yellow); }
-
-/* ── Empty state ──────────────────────────────────────────────────── */
-.empty-state {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 60px 20px; color: var(--text3); text-align: center;
-}
-.empty-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
-.empty-state h3 { font-size: 15px; font-weight: 600; color: var(--text2); }
-.empty-state p { font-size: 13px; margin-top: 6px; }
-
-/* ── Tabs within a page ───────────────────────────────────────────── */
-.tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
-.tab-btn { padding: 8px 16px; font-size: 13px; font-weight: 600; color: var(--text3); cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent; transition: all 0.15s; }
-.tab-btn:hover { color: var(--text2); }
-.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-.tab-pane { display: none; }
-.tab-pane.active { display: block; }
-
-/* ── Code block ───────────────────────────────────────────────────── */
-pre {
-  background: #0a0c10; border: 1px solid var(--border); border-radius: 8px;
-  padding: 14px; font-size: 12px; color: #94a3b8; overflow-x: auto;
-  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-}
-
-/* ── Gradient pill ────────────────────────────────────────────────── */
-.gradient-text {
-  background: linear-gradient(135deg, var(--accent), var(--rose));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-}
-
-/* ══════════════════════════════════════════════════════════════════ */
-/* ── Playground (Input → Output) ──────────────────────────────── */
-/* ══════════════════════════════════════════════════════════════════ */
-.pg-header { margin-bottom: 20px; }
-.pg-mode-bar {
-  display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap;
-}
-.pg-mode {
-  padding: 7px 18px; border-radius: 8px;
-  border: 1px solid var(--border2);
-  background: var(--surface2); color: var(--text2);
-  font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s;
-}
-.pg-mode:hover { color: var(--text); border-color: var(--accent); }
-.pg-mode.active {
-  background: rgba(99,102,241,0.18); color: var(--accent);
-  border-color: rgba(99,102,241,0.45);
-}
-
-.pg-io {
-  display: grid;
-  grid-template-columns: 1fr 44px 1fr;
-  gap: 16px; align-items: start;
-}
-@media (max-width: 820px) {
-  .pg-io { grid-template-columns: 1fr; }
-  .pg-arrow { transform: rotate(90deg); text-align: center; }
-}
-
-.pg-col-label {
-  font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
-  text-transform: uppercase; color: var(--text3); margin-bottom: 10px;
-}
-
-.pg-input-col {
-  background: var(--surface); border: 1px solid rgba(99,102,241,0.3);
-  border-radius: 14px; padding: 20px;
-}
-.pg-output-col {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 14px; padding: 20px;
-  min-height: 400px; display: flex; flex-direction: column;
-}
-
-.pg-arrow {
-  font-size: 26px; color: var(--accent); align-self: center;
-  text-align: center; line-height: 1;
-  text-shadow: 0 0 24px rgba(99,102,241,0.6);
-}
-
-.pg-textarea {
-  width: 100%; min-height: 200px; resize: vertical;
-  background: var(--surface2); border: 1px solid var(--border2);
-  border-radius: 10px; color: var(--text); font-size: 14px;
-  padding: 12px 14px; outline: none; transition: border-color 0.15s;
-  font-family: inherit; line-height: 1.65; margin-bottom: 12px;
-}
-.pg-textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(99,102,241,0.15);
-}
-
-.pg-actions { display: flex; align-items: center; gap: 8px; }
-
-.pg-output-box {
-  flex: 1; min-height: 340px; overflow-y: auto;
-  font-size: 14px; line-height: 1.75; color: var(--text);
-  word-break: break-word;
-}
-
-.pg-check {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 12px; color: var(--text2); font-weight: 500;
-  cursor: pointer; user-select: none;
-}
-.pg-check input[type="checkbox"] { width: auto; cursor: pointer; }
-
-.pg-opts { margin-bottom: 14px; }
-
-.pg-history-item {
-  display: flex; align-items: flex-start; gap: 12px;
-  padding: 10px 14px; background: var(--surface);
-  border: 1px solid var(--border); border-radius: 8px;
-  margin-bottom: 6px; cursor: pointer; transition: border-color 0.15s;
-}
-.pg-history-item:hover { border-color: var(--border2); }
-.pg-history-input  { font-size: 12.5px; color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pg-history-output { font-size: 12px; color: var(--text3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pg-stream-text    { white-space: pre-wrap; word-break: break-word; }
-</style>
+<link rel="stylesheet" href="/ui/styles.css" />
 </head>
 <body>
 
 <!-- ══ LANDING PAGE ══════════════════════════════════════════════════ -->
 <div id="landing-page">
-  <div class="landing-content">
-    <div class="landing-logo">
-      <svg width="50" height="50" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="lg1" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#F43F5E"/><stop offset="100%" stop-color="#8B5CF6"/>
-          </linearGradient>
-        </defs>
-        <path d="M 64 128 C 30 128 30 180 64 180 C 100 180 156 76 192 76 C 226 76 226 128 192 128 C 156 128 100 232 64 232 C 30 232 30 180 64 180"
-          fill="none" stroke="url(#lg1)" stroke-width="20" stroke-linecap="round"/>
-        <path d="M 128 40 L 70 170 M 128 40 L 186 170 M 90 130 L 166 130"
-          fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </div>
-    <h1 class="landing-title">AetheerAI</h1>
-    <p class="landing-subtitle">Autonomous AI Operating System</p>
-    <div class="landing-features">
-      <div class="landing-feature">
-        <div class="landing-feature-icon">✓</div>
-        <span>AI-powered autonomous agents</span>
+  <div class="landing-shell">
+    <div class="landing-copy">
+      <div class="landing-content">
+        <div class="landing-kicker-row">
+          <span class="landing-kicker">Built by Tecbunny Solutions</span>
+          <a class="landing-inline-link" href="https://www.tecbunny.com" target="_blank" rel="noreferrer">www.tecbunny.com</a>
+        </div>
+        <div class="landing-logo">
+          <svg width="50" height="50" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="lg1" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#FFB648"/><stop offset="100%" stop-color="#FF7A3C"/>
+              </linearGradient>
+            </defs>
+            <path d="M 64 128 C 30 128 30 180 64 180 C 100 180 156 76 192 76 C 226 76 226 128 192 128 C 156 128 100 232 64 232 C 30 232 30 180 64 180"
+              fill="none" stroke="url(#lg1)" stroke-width="20" stroke-linecap="round"/>
+            <path d="M 128 40 L 70 170 M 128 40 L 186 170 M 90 130 L 166 130"
+              fill="none" stroke="#FFF8ED" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h1 class="landing-title">Operational clarity for autonomous AI work.</h1>
+        <p class="landing-subtitle">AetheerAI gives your team one workspace to launch goals, orchestrate specialist agents, track memory, and keep every action accountable.</p>
+        <div class="landing-features">
+          <div class="landing-feature">
+            <div class="landing-feature-icon">01</div>
+            <div>
+              <strong>Goal-driven execution</strong>
+              <span>Turn broad requests into structured runs with progress, cost, and task visibility.</span>
+            </div>
+          </div>
+          <div class="landing-feature">
+            <div class="landing-feature-icon">02</div>
+            <div>
+              <strong>Multi-agent coordination</strong>
+              <span>Design, run, and compare specialist agents without juggling separate tools.</span>
+            </div>
+          </div>
+          <div class="landing-feature">
+            <div class="landing-feature-icon">03</div>
+            <div>
+              <strong>Operator-grade oversight</strong>
+              <span>Keep audit logs, runtime health, and memory inspection visible for real operational teams.</span>
+            </div>
+          </div>
+        </div>
+        <div class="landing-trust-row">
+          <div class="trust-card">
+            <span class="trust-label">Built for</span>
+            <span class="trust-value">Secure operations</span>
+          </div>
+          <div class="trust-card">
+            <span class="trust-label">Designed by</span>
+            <span class="trust-value">Tecbunny Solutions</span>
+          </div>
+          <div class="trust-card">
+            <span class="trust-label">Workspace model</span>
+            <span class="trust-value">Goals + Agents + Audit</span>
+          </div>
+        </div>
+        <div class="landing-cta">
+          <button class="btn btn-secondary" onclick="switchToRegister(); showAuthModal()">Create Account</button>
+          <button class="btn btn-primary" onclick="switchToLogin(); showAuthModal()">Sign In</button>
+        </div>
+        <div class="landing-meta">
+          <span>Human oversight stays in the loop.</span>
+          <span>Realtime visibility across goals, agents, memory, and logs.</span>
+        </div>
       </div>
-      <div class="landing-feature">
-        <div class="landing-feature-icon">✓</div>
-        <span>Orchestrate complex workflows</span>
-      </div>
-      <div class="landing-feature">
-        <div class="landing-feature-icon">✓</div>
-        <span>Enterprise-grade security</span>
-      </div>
     </div>
-    <div class="landing-cta">
-      <button class="btn btn-secondary" onclick="switchToRegister(); showAuthModal()">Create Account</button>
-      <button class="btn btn-primary" onclick="switchToLogin(); showAuthModal()">Sign In</button>
-    </div>
+
+    <aside class="landing-panel">
+      <span class="panel-kicker">Operator snapshot</span>
+      <h2 class="panel-title">From prompt to governed execution.</h2>
+      <p class="panel-copy">AetheerAI is built for teams who want automation to feel accountable, reviewable, and fast.</p>
+
+      <div class="preview-window">
+        <div class="preview-row">
+          <span class="preview-label">Mission control</span>
+          <span class="signal-chip signal-live">Live dashboard</span>
+        </div>
+        <div class="preview-stack">
+          <div class="preview-card">
+            <span class="preview-card-label">Launch</span>
+            <strong>Goals, playground, and direct chat in one console.</strong>
+          </div>
+          <div class="preview-card">
+            <span class="preview-card-label">Observe</span>
+            <strong>Track uptime, agent count, tasks, and memory without leaving the workspace.</strong>
+          </div>
+          <div class="preview-card">
+            <span class="preview-card-label">Control</span>
+            <strong>Keep audit logs and operator review visible as work scales.</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="landing-side-grid">
+        <div class="side-signal"><span>Focus</span><strong>Operational clarity</strong></div>
+        <div class="side-signal"><span>Use case</span><strong>Autonomous teams</strong></div>
+        <div class="side-signal"><span>Brand</span><strong>Tecbunny-built</strong></div>
+        <div class="side-signal"><span>Access</span><strong>Secure sign-in</strong></div>
+        <div class="side-signal"><span>Modes</span><strong>Goals, chat, agents</strong></div>
+        <div class="side-signal"><span>Visibility</span><strong>Memory + audit</strong></div>
+      </div>
+    </aside>
   </div>
 </div>
+
+<div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
 <div id="app">
 
@@ -568,30 +141,36 @@ pre {
       </svg>
     </div>
     <div class="brand-text">
+      <div class="brand-kicker">Tecbunny AI Platform</div>
       <div class="brand-name">AetheerAI</div>
-      <div class="brand-tagline">Autonomous AI OS</div>
+      <div class="brand-tagline">Autonomous operations workspace</div>
+      <a class="brand-link" href="https://www.tecbunny.com" target="_blank" rel="noreferrer">by Tecbunny Solutions ↗</a>
     </div>
   </div>
 
-  <div class="nav-section">
-    <div class="nav-label">Workspace</div>
-    <button class="nav-item" data-page="playground"><span class="icon">⚡</span> Playground</button>
-    <button class="nav-item active" data-page="dashboard"><span class="icon">⬡</span> Dashboard</button>
-    <button class="nav-item" data-page="goals"><span class="icon">🎯</span> Goals &amp; Projects<span class="badge" id="nav-badge-goals">0</span></button>
-    <button class="nav-item" data-page="agents"><span class="icon">🤖</span> Agents</button>
-    <button class="nav-item" data-page="chat"><span class="icon">💬</span> Chat</button>
-  </div>
+  <div class="sidebar-nav-scroll">
+    <div class="nav-section">
+      <div class="nav-label">Workspace</div>
+      <button class="nav-item" data-page="playground"><span class="icon">⚡</span> Playground</button>
+      <button class="nav-item active" data-page="dashboard"><span class="icon">⬡</span> Dashboard</button>
+      <button class="nav-item" data-page="goals"><span class="icon">🎯</span> Goals &amp; Projects<span class="badge" id="nav-badge-goals">0</span></button>
+      <button class="nav-item" data-page="agents"><span class="icon">🤖</span> Agents</button>
+      <button class="nav-item" data-page="chat"><span class="icon">💬</span> Chat</button>
+    </div>
 
-  <div class="nav-section">
-    <div class="nav-label">Intelligence</div>
-    <button class="nav-item" data-page="collaborate"><span class="icon">👥</span> Collaborate</button>
-    <button class="nav-item" data-page="memory"><span class="icon">🧠</span> Memory</button>
-    <button class="nav-item" data-page="logs"><span class="icon">📋</span> Audit Logs</button>
-  </div>
+    <div class="nav-section">
+      <div class="nav-label">Intelligence</div>
+      <button class="nav-item" data-page="collaborate"><span class="icon">👥</span> Collaborate</button>
+      <button class="nav-item" data-page="memory"><span class="icon">🧠</span> Memory</button>
+      <button class="nav-item" data-page="logs"><span class="icon">📋</span> Audit Logs</button>
+      <button class="nav-item" data-page="database"><span class="icon">🗄️</span> Database</button>
+    </div>
 
-  <div class="nav-section">
-    <div class="nav-label">Settings</div>
-    <button class="nav-item" data-page="settings"><span class="icon">⚙️</span> Settings</button>
+    <div class="nav-section">
+      <div class="nav-label">Settings</div>
+      <button class="nav-item" data-page="settings"><span class="icon">⚙️</span> Settings</button>
+      <button class="nav-item nav-item-danger" onclick="logout()"><span class="icon">🚪</span> Sign Out</button>
+    </div>
   </div>
 
   <div class="sidebar-bottom">
@@ -609,12 +188,20 @@ pre {
 <div id="main">
   <!-- Topbar -->
   <div id="topbar">
-    <span class="topbar-title" id="topbar-title">Dashboard</span>
+    <div class="topbar-left">
+      <button class="menu-toggle" id="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+      <div class="topbar-copy">
+        <span class="topbar-eyebrow" id="topbar-eyebrow">Mission control</span>
+        <span class="topbar-title" id="topbar-title">Dashboard</span>
+      </div>
+    </div>
     <div class="topbar-right">
+      <a class="topbar-link" href="https://www.tecbunny.com" target="_blank" rel="noreferrer">Tecbunny</a>
       <div class="status-indicator">
         <span class="status-dot" id="topbar-dot"></span>
         <span id="topbar-status">Connecting…</span>
       </div>
+      <div class="topbar-user" id="topbar-user">Guest</div>
       <button class="btn btn-sm btn-secondary" id="refresh-btn" title="Refresh page data">↻ Refresh</button>
     </div>
   </div>
@@ -624,9 +211,75 @@ pre {
 
     <!-- ── Dashboard ─────────────────────────────────────────── -->
     <div class="page active" id="page-dashboard">
-      <div class="page-header">
-        <h1>Dashboard</h1>
-        <p>Live system overview — <span class="gradient-text" id="dash-uptime">loading…</span></p>
+      <section class="dashboard-hero">
+        <div class="hero-panel hero-main">
+          <span class="section-kicker">Tecbunny Mission Control</span>
+          <h1>Operate agents with clarity, not guesswork.</h1>
+          <p>Launch structured goals, keep humans in control, and see runtime health before issues become surprises.</p>
+          <div class="hero-actions">
+            <button class="btn btn-primary" onclick="nav('goals'); openGoalModal();">Launch a Goal</button>
+            <button class="btn btn-secondary" onclick="nav('playground')">Open Playground</button>
+          </div>
+          <div class="hero-inline-metrics">
+            <div class="hero-inline-metric">
+              <span>Runtime status</span>
+              <strong id="hero-status">Connecting…</strong>
+            </div>
+            <div class="hero-inline-metric">
+              <span>Provider</span>
+              <strong id="hero-provider">—</strong>
+            </div>
+            <div class="hero-inline-metric">
+              <span>Uptime</span>
+              <strong id="hero-uptime">—</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="dashboard-hero-rail">
+          <div class="signal-card">
+            <div class="flex items-center gap8">
+              <span class="card-title" style="margin-bottom:0">System Pulse</span>
+              <span class="badge badge-green ml-auto" id="hero-health-badge">Live</span>
+            </div>
+            <div class="signal-list">
+              <div class="signal-item"><span>Running goals</span><strong id="hero-running">—</strong></div>
+              <div class="signal-item"><span>Registered agents</span><strong id="hero-agents">—</strong></div>
+              <div class="signal-item"><span>Memory keys</span><strong id="hero-memory">—</strong></div>
+              <div class="signal-item"><span>Last sync</span><strong id="dash-last-sync">waiting</strong></div>
+            </div>
+          </div>
+
+          <div class="signal-card muted">
+            <span class="card-title">Built by Tecbunny</span>
+            <p class="operator-note">AetheerAI should feel like an operations console, not a demo. This workspace is tuned for secure execution, visibility, and human oversight.</p>
+            <a class="panel-link" href="https://www.tecbunny.com" target="_blank" rel="noreferrer">Visit tecbunny.com ↗</a>
+          </div>
+        </div>
+      </section>
+
+      <div class="dashboard-actions">
+        <button class="action-card" onclick="nav('playground')">
+          <span class="action-icon">⚡</span>
+          <span class="action-copy">
+            <strong>Prototype instantly</strong>
+            <span>Use chat, run a goal, or test an agent without leaving the workspace.</span>
+          </span>
+        </button>
+        <button class="action-card" onclick="nav('agents')">
+          <span class="action-icon">🤖</span>
+          <span class="action-copy">
+            <strong>Inspect your agent roster</strong>
+            <span>Create specialists, design new roles, and launch focused execution.</span>
+          </span>
+        </button>
+        <button class="action-card" onclick="nav('logs')">
+          <span class="action-icon">📋</span>
+          <span class="action-copy">
+            <strong>Review the audit trail</strong>
+            <span>Keep a clear operator view of system events, runs, and failures.</span>
+          </span>
+        </button>
       </div>
 
       <div class="grid grid-4" id="stat-cards">
@@ -672,17 +325,18 @@ pre {
         </div>
       </div>
 
-      <div class="sep"></div>
-
-      <div class="grid grid-2">
-        <!-- Quick Goal Card -->
-        <div class="card" style="grid-column: span 2">
-          <div class="card-title">⚡ Quick Goal</div>
+      <div class="grid grid-2 dashboard-flow">
+        <div class="card quick-goal-card">
+          <div class="card-title">Launch</div>
+          <h3 style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:8px">Run a Quick Goal</h3>
+          <p class="operator-note" style="margin-bottom:18px">Send AetheerAI a project name and objective. It will create a background goal run with parallel execution enabled.</p>
           <div class="input-row mt12">
             <div style="flex:0 0 200px">
+              <label for="quick-name">Project name</label>
               <input type="text" id="quick-name" placeholder="Project name" />
             </div>
             <div style="flex:1">
+              <label for="quick-goal">Goal</label>
               <input type="text" id="quick-goal" placeholder="Describe your goal… e.g. Build a REST API for a todo app" />
             </div>
             <div style="flex:0 0 auto; display:flex; align-items:flex-end">
@@ -692,12 +346,12 @@ pre {
           <div id="quick-result" class="mt12" style="display:none"></div>
         </div>
 
-        <!-- Recent Goals -->
-        <div class="card" style="grid-column: span 2">
+        <div class="card recent-goals-card">
           <div class="flex items-center gap8 mb12" style="margin-bottom:12px">
             <span class="card-title" style="margin-bottom:0">Recent Goals</span>
             <button class="btn btn-sm btn-secondary ml-auto" onclick="nav('goals')">View all →</button>
           </div>
+          <p class="operator-note" style="margin-bottom:18px">The latest accepted goals appear here first so operators can pick up execution context quickly.</p>
           <div id="recent-goals-list">
             <div class="empty-state" style="padding:30px">
               <div class="empty-icon">🎯</div>
@@ -735,7 +389,7 @@ pre {
           <!-- Chat options -->
           <div class="pg-opts" id="pg-opts-chat">
             <div class="form-group" style="margin-bottom:10px">
-              <label>System prompt <span style="font-weight:400;color:var(--text3)">(optional)</span></label>
+              <label for="pg-system">System prompt <span style="font-weight:400;color:var(--text3)">(optional)</span></label>
               <input id="pg-system" placeholder="You are a helpful assistant…" />
             </div>
           </div>
@@ -743,7 +397,7 @@ pre {
           <!-- Goal options -->
           <div class="pg-opts" id="pg-opts-goal" style="display:none">
             <div class="form-group" style="margin-bottom:10px">
-              <label>Project name</label>
+              <label for="pg-goal-name">Project name</label>
               <input id="pg-goal-name" placeholder="my-project" />
             </div>
             <div style="display:flex;gap:16px;margin-bottom:10px">
@@ -755,7 +409,7 @@ pre {
           <!-- Agent options -->
           <div class="pg-opts" id="pg-opts-agent" style="display:none">
             <div class="form-group" style="margin-bottom:10px">
-              <label>Agent name</label>
+              <label for="pg-agent-name">Agent name</label>
               <input id="pg-agent-name" placeholder="e.g. developer" list="pg-agents-list" />
               <datalist id="pg-agents-list"></datalist>
             </div>
@@ -816,26 +470,26 @@ pre {
           <h3 style="color:var(--text);font-size:15px;font-weight:700">New Goal</h3>
           <button class="btn btn-sm btn-secondary ml-auto" onclick="closeGoalModal()">✕ Close</button>
         </div>
-        <div class="form-group"><label>Project Name *</label><input id="gm-name" placeholder="e.g. my-website" /></div>
-        <div class="form-group"><label>Goal / Objective *</label><textarea id="gm-goal" placeholder="Describe what you want AetheerAI to build or accomplish…"></textarea></div>
+        <div class="form-group"><label for="gm-name">Project Name *</label><input id="gm-name" placeholder="e.g. my-website" /></div>
+        <div class="form-group"><label for="gm-goal">Goal / Objective *</label><textarea id="gm-goal" placeholder="Describe what you want AetheerAI to build or accomplish…"></textarea></div>
         <div class="input-row">
           <div class="form-group">
-            <label>Max Cost ($)</label>
+            <label for="gm-cost">Max Cost ($)</label>
             <input id="gm-cost" type="number" step="0.5" placeholder="10.00" />
           </div>
           <div class="form-group">
-            <label>Max Runtime (s)</label>
+            <label for="gm-runtime">Max Runtime (s)</label>
             <input id="gm-runtime" type="number" placeholder="600" />
           </div>
         </div>
         <div class="input-row" style="margin-top:4px">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500">
+          <label for="gm-parallel" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500">
             <input type="checkbox" id="gm-parallel" checked style="width:auto"> Run tasks in parallel
           </label>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500">
+          <label for="gm-background" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500">
             <input type="checkbox" id="gm-background" style="width:auto"> Background mode
           </label>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500">
+          <label for="gm-collab" style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text2);font-size:13px;font-weight:500">
             <input type="checkbox" id="gm-collab" style="width:auto"> Collaboration mode
           </label>
         </div>
@@ -903,23 +557,23 @@ pre {
         </div>
         <div class="tab-pane active" id="tab-agent-basic">
           <div class="input-row">
-            <div class="form-group"><label>Agent Name *</label><input id="ag-name" placeholder="e.g. frontend-dev" /></div>
-            <div class="form-group"><label>Role</label><input id="ag-role" placeholder="e.g. Frontend Developer" /></div>
+            <div class="form-group"><label for="ag-name">Agent Name *</label><input id="ag-name" placeholder="e.g. frontend-dev" /></div>
+            <div class="form-group"><label for="ag-role">Role</label><input id="ag-role" placeholder="e.g. Frontend Developer" /></div>
           </div>
           <div class="input-row">
-            <div class="form-group"><label>Tools (comma-separated)</label><input id="ag-tools" placeholder="web_search,code_executor" /></div>
-            <div class="form-group"><label>Permission Level (1–5)</label><input id="ag-perm" type="number" min="1" max="5" value="1" /></div>
+            <div class="form-group"><label for="ag-tools">Tools (comma-separated)</label><input id="ag-tools" placeholder="web_search,code_executor" /></div>
+            <div class="form-group"><label for="ag-perm">Permission Level (1–5)</label><input id="ag-perm" type="number" min="1" max="5" value="1" /></div>
           </div>
           <button class="btn btn-primary" onclick="createAgent()">Create Agent</button>
           <button class="btn btn-secondary" style="margin-left:8px" onclick="closeAgentPanel()">Cancel</button>
         </div>
         <div class="tab-pane" id="tab-agent-design">
           <div class="input-row">
-            <div class="form-group"><label>Agent Name *</label><input id="agd-name" placeholder="e.g. data-analyst" /></div>
-            <div class="form-group"><label>Permission Level</label><input id="agd-perm" type="number" min="1" max="5" value="2" /></div>
+            <div class="form-group"><label for="agd-name">Agent Name *</label><input id="agd-name" placeholder="e.g. data-analyst" /></div>
+            <div class="form-group"><label for="agd-perm">Permission Level</label><input id="agd-perm" type="number" min="1" max="5" value="2" /></div>
           </div>
-          <div class="form-group"><label>Role Description *</label><input id="agd-role" placeholder="e.g. Senior data analyst specialising in Python and pandas" /></div>
-          <div class="form-group"><label>Goal *</label><textarea id="agd-goal" placeholder="What should this agent accomplish?"></textarea></div>
+          <div class="form-group"><label for="agd-role">Role Description *</label><input id="agd-role" placeholder="e.g. Senior data analyst specialising in Python and pandas" /></div>
+          <div class="form-group"><label for="agd-goal">Goal *</label><textarea id="agd-goal" placeholder="What should this agent accomplish?"></textarea></div>
           <button class="btn btn-primary" onclick="designAgent()">AI-Design Agent</button>
           <button class="btn btn-secondary" style="margin-left:8px" onclick="closeAgentPanel()">Cancel</button>
         </div>
@@ -941,7 +595,7 @@ pre {
           <h3 style="font-size:15px;font-weight:700;color:var(--text)">Run Task on <b id="runner-agent-name" style="color:var(--accent)">?</b></h3>
           <button class="btn btn-sm btn-secondary ml-auto" onclick="closeAgentRunner()">✕</button>
         </div>
-        <div class="form-group"><label>Task</label><textarea id="runner-task" placeholder="Describe the task for this agent…"></textarea></div>
+        <div class="form-group"><label for="runner-task">Task</label><textarea id="runner-task" placeholder="Describe the task for this agent…"></textarea></div>
         <button class="btn btn-primary" id="runner-run-btn" onclick="runAgentTask()">▶ Run</button>
         <div id="runner-result" class="mt12"></div>
       </div>
@@ -961,6 +615,7 @@ pre {
           </div>
         </div>
         <div class="chat-input-row">
+          <label for="chat-input" style="display:none">Chat message</label>
           <input type="text" id="chat-input" placeholder="Type a message…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}" />
           <button class="btn btn-primary" id="chat-send-btn" onclick="sendChat()">Send</button>
           <button class="btn btn-secondary btn-sm" onclick="clearChat()" title="Clear chat">🗑</button>
@@ -979,12 +634,12 @@ pre {
       </div>
 
       <div id="collab-form-wrap" style="display:none; background:var(--surface); border:1px solid var(--border2); border-radius:14px; padding:24px; margin-bottom:24px;">
-        <div class="form-group"><label>Goal *</label><textarea id="cf-goal" placeholder="What should the team collaborate on?"></textarea></div>
+        <div class="form-group"><label for="cf-goal">Goal *</label><textarea id="cf-goal" placeholder="What should the team collaborate on?"></textarea></div>
         <div class="input-row">
-          <div class="form-group"><label>Team Name (or leave blank to use agent names)</label><input id="cf-team" placeholder="e.g. dev-team" /></div>
-          <div class="form-group"><label>Agent Names (comma-separated)</label><input id="cf-agents" placeholder="e.g. frontend-dev,backend-dev" /></div>
+          <div class="form-group"><label for="cf-team">Team Name (or leave blank to use agent names)</label><input id="cf-team" placeholder="e.g. dev-team" /></div>
+          <div class="form-group"><label for="cf-agents">Agent Names (comma-separated)</label><input id="cf-agents" placeholder="e.g. frontend-dev,backend-dev" /></div>
         </div>
-        <div class="form-group"><label>Rounds (1–6)</label><input id="cf-rounds" type="number" min="1" max="6" value="2" style="max-width:100px" /></div>
+        <div class="form-group"><label for="cf-rounds">Rounds (1–6)</label><input id="cf-rounds" type="number" min="1" max="6" value="2" style="max-width:100px" /></div>
         <button class="btn btn-primary" id="cf-submit-btn" onclick="runCollaboration()">▶ Start Collaboration</button>
         <button class="btn btn-secondary" style="margin-left:8px" onclick="document.getElementById('collab-form-wrap').style.display='none'">Cancel</button>
       </div>
@@ -1007,6 +662,7 @@ pre {
           <p style="font-size:13px;color:var(--text2);margin-top:4px">Inspect agent memory and semantic knowledge</p>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <label for="memory-ns" style="display:none">Memory namespace</label>
           <input id="memory-ns" placeholder="Namespace" value="global" style="width:140px" />
           <button class="btn btn-secondary btn-sm" onclick="loadMemory()">Load</button>
         </div>
@@ -1029,6 +685,7 @@ pre {
           <p style="font-size:13px;color:var(--text2);margin-top:4px">Full event trail of all agent and system actions</p>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px">
+          <label for="log-filter" style="display:none">Log filter</label>
           <input id="log-filter" placeholder="Filter…" style="width:200px" oninput="filterLogs()" />
           <button class="btn btn-secondary btn-sm" onclick="loadLogs()">↻ Reload</button>
         </div>
@@ -1037,24 +694,112 @@ pre {
     </div>
 
     <!-- ── Settings ───────────────────────────────────────────── -->
+    <div class="page" id="page-database">
+      <div class="page-header">
+        <h1>Database</h1>
+        <p>SQLite persistence for goal runs, tasks, and system logs.</p>
+      </div>
+
+      <div class="grid grid-4" id="db-stats-grid">
+        <div class="card"><div class="card-title">Goal Runs</div><div class="stat-value" id="db-stat-goals">—</div></div>
+        <div class="card"><div class="card-title">Tasks</div><div class="stat-value" id="db-stat-tasks">—</div></div>
+        <div class="card"><div class="card-title">System Logs</div><div class="stat-value" id="db-stat-logs">—</div></div>
+        <div class="card"><div class="card-title">Failed Goals</div><div class="stat-value" id="db-stat-failed" style="color:var(--red)">—</div></div>
+      </div>
+
+      <div class="card mt16">
+        <div class="flex items-center gap8" style="margin-bottom:10px">
+          <div class="card-title" style="margin:0">Goal Runs</div>
+          <button class="btn btn-secondary btn-sm ml-auto" onclick="loadDatabase()">↻ Reload</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Progress</th><th>Tasks</th><th>Cost</th><th>Started</th></tr></thead>
+            <tbody id="db-goals-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid grid-2 mt16">
+        <div class="card">
+          <div class="card-title">Recent Tasks</div>
+          <div class="table-wrap mt12">
+            <table>
+              <thead><tr><th>Goal</th><th>Task</th><th>Agent</th><th>Status</th><th>Attempts</th></tr></thead>
+              <tbody id="db-tasks-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">System Logs</div>
+          <div class="table-wrap mt12">
+            <table>
+              <thead><tr><th>Level</th><th>Logger</th><th>Message</th><th>Created</th></tr></thead>
+              <tbody id="db-logs-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Settings ───────────────────────────────────────────── -->
     <div class="page" id="page-settings">
       <div class="page-header">
         <h1>Settings</h1>
         <p>AetheerAI runtime configuration</p>
       </div>
+      
+      <!-- User Info -->
+      <div class="card" id="settings-user-info" style="display:none;">
+        <div class="card-title">Account</div>
+        <div id="settings-user-details" style="font-size:13px;color:var(--text2);line-height:1.6;margin-top:8px;">
+          Loading…
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="logout()" style="margin-top:12px;">Sign Out</button>
+      </div>
+      
       <div class="grid grid-2">
         <div class="card">
-          <div class="card-title">API Connection</div>
+          <div class="card-title">Backend Connection</div>
+          <p class="settings-note">Only change this if your API is hosted on a different URL. If the web app and backend are deployed together, keep the current app backend.</p>
           <div class="form-group mt12">
-            <label>Backend API URL</label>
-            <input id="settings-api-url" placeholder="http://localhost:8000" />
+            <label for="settings-api-url">Backend API URL (optional)</label>
+            <input id="settings-api-url" placeholder="https://your-app.vercel.app" />
+            <div id="settings-api-status" class="settings-inline-note">Using current app backend.</div>
+          </div>
+          <div class="settings-connection-actions">
+            <button class="btn btn-primary btn-sm" onclick="saveApiUrl()">Save Backend URL</button>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="resetApiUrl()">Use Current App</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">AI Configuration</div>
+          <div class="form-group mt12">
+            <label for="settings-ai-provider">Provider</label>
+            <select id="settings-ai-provider">
+              <option value="github">github</option>
+              <option value="openai">openai</option>
+              <option value="claude">claude</option>
+              <option value="gemini">gemini</option>
+              <option value="ollama">ollama</option>
+            </select>
           </div>
           <div class="form-group mt12">
-            <label>API Key (X-API-Key header)</label>
-            <input id="settings-api-key" type="password" placeholder="sk-aether-..." autocomplete="off" />
-            <div style="font-size:12px;color:var(--text3);margin-top:6px">Required when server auth is enabled via AETHER_API_KEYS.</div>
+            <label for="settings-ai-model">Model (optional)</label>
+            <input id="settings-ai-model" placeholder="Leave blank to use provider default" />
           </div>
-          <button class="btn btn-primary btn-sm" onclick="saveApiUrl()">Save Connection</button>
+          <div class="form-group mt12">
+            <label for="settings-ai-api-key">API Key (optional)</label>
+            <input id="settings-ai-api-key" type="password" placeholder="Paste a new key to update" autocomplete="off" />
+            <div id="settings-ai-key-status" style="font-size:12px;color:var(--text3);margin-top:6px">No API key saved for this user.</div>
+          </div>
+          <div class="form-group mt12">
+            <label for="settings-ai-base-url">AI API Endpoint (optional)</label>
+            <input id="settings-ai-base-url" placeholder="https://api.openai.com/v1" autocomplete="off" />
+            <div style="font-size:12px;color:var(--text3);margin-top:6px">Leave API Key blank to keep the existing saved key.</div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="saveAiRuntime()">Save AI Configuration</button>
         </div>
         <div class="card">
           <div class="card-title">System Info</div>
@@ -1086,851 +831,87 @@ pre {
 <!-- Toast container -->
 <div id="toast-container"></div>
 
-<script>
-'use strict';
-
-/* ══ Config ════════════════════════════════════════════════════════ */
-let API_BASE = localStorage.getItem('aetheer_api_url') || (location.origin);
-let _API_KEY  = localStorage.getItem('aetheer_api_key') || '';
-
-/* ══ API helper ════════════════════════════════════════════════════ */
-async function apiFetch(path, opts = {}) {
-  const url = API_BASE + path;
-  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  if (_API_KEY) headers['X-API-Key'] = _API_KEY;
-  const res = await fetch(url, { ...opts, headers });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    let msg = json.detail || json.error || `HTTP ${res.status}`;
-    if (res.status === 401) {
-      msg = _API_KEY
-        ? 'Unauthorized (401): the configured API key was rejected. Check your key/role in Settings.'
-        : 'Unauthorized (401): set your API key in Settings to access protected endpoints.';
-    }
-    throw new Error(msg);
-  }
-  return json;
-}
-
-/* ══ Toast ══════════════════════════════════════════════════════════ */
-function toast(msg, type = 'info') {
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.textContent = msg;
-  document.getElementById('toast-container').appendChild(el);
-  setTimeout(() => el.remove(), 4000);
-}
-
-/* ══ Navigation ════════════════════════════════════════════════════ */
-let currentPage = 'dashboard';
-
-function nav(page) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-  const pageEl = document.getElementById('page-' + page);
-  if (pageEl) pageEl.classList.add('active');
-  const navBtn = document.querySelector(`.nav-item[data-page="${page}"]`);
-  if (navBtn) navBtn.classList.add('active');
-  const titles = {
-    dashboard: 'Dashboard', goals: 'Goals & Projects', agents: 'Agents',
-    chat: 'Chat', collaborate: 'Collaborate', memory: 'Memory OS',
-    logs: 'Audit Logs', settings: 'Settings',
-    playground: '⚡ Playground',
-    predict: 'AI Predict', upload: 'Upload Files',
-    history: 'Prediction History', insights: 'Insights & Analytics',
-    admin: 'Admin Panel',
-  };
-  document.getElementById('topbar-title').textContent = titles[page] || page;
-  currentPage = page;
-  if (page === 'playground')  pgLoadAgents();
-  if (page === 'goals')       loadGoals();
-  if (page === 'agents')      loadAgents();
-  if (page === 'memory')      loadMemory();
-  if (page === 'logs')        loadLogs();
-  if (page === 'collaborate') loadCollaborations();
-  if (page === 'settings')    loadSettings();
-  if (page === 'predict')     loadModelPicker();
-  if (page === 'upload')      { loadUploads(); setupDropZone(); }
-  if (page === 'history')     loadHistory();
-  if (page === 'insights')    loadInsights();
-  if (page === 'admin')       { loadAdminUsers(); loadAdminActivity(); }
-}
-
-document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
-  btn.addEventListener('click', () => nav(btn.dataset.page));
-});
-
-document.getElementById('refresh-btn').addEventListener('click', () => {
-  if (currentPage === 'dashboard') loadDashboard();
-  else nav(currentPage);
-});
-
-/* ══ Tab switcher ═══════════════════════════════════════════════════ */
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const group = btn.closest('.card, div');
-    const target = btn.dataset.tab;
-    group.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    group.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    const pane = document.getElementById(target);
-    if (pane) pane.classList.add('active');
-  });
-});
-
-/* ══ Status helpers ═════════════════════════════════════════════════ */
-function setOnline(on) {
-  const cls = on ? '' : 'offline';
-  document.getElementById('status-dot').className = 'dot' + (on ? '' : ' offline');
-  document.getElementById('topbar-dot').className  = 'status-dot' + (on ? '' : ' offline');
-  document.getElementById('topbar-status').textContent = on ? 'Online' : 'Offline';
-}
-
-function statusBadgeClass(status) {
-  const m = { completed:'badge-green', running:'badge-blue', pending:'badge-yellow',
-               failed:'badge-red', partial:'badge-yellow', cancelled:'badge-gray' };
-  return m[status] || 'badge-gray';
-}
-function statusIcon(status) {
-  const m = { completed:'✓', running:'⟳', pending:'·', failed:'✗', partial:'~', cancelled:'⊘' };
-  return m[status] || '?';
-}
-function fmtCost(v) { return v != null ? `$${(+v).toFixed(4)}` : '—'; }
-function fmtSeconds(s) {
-  if (s == null) return '—';
-  if (s < 60) return `${Math.round(s)}s`;
-  return `${Math.floor(s/60)}m ${Math.round(s%60)}s`;
-}
-function timeAgo(ts) {
-  if (!ts) return '—';
-  const s = Math.floor(Date.now()/1000 - ts);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s/60)}m ago`;
-  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
-  return `${Math.floor(s/86400)}d ago`;
-}
-function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-/* ══ Dashboard ══════════════════════════════════════════════════════ */
-async function loadDashboard() {
-  try {
-    const r = await apiFetch('/api/system/status');
-    const d = r.data;
-    setOnline(true);
-    document.getElementById('dc-provider').textContent  = d.provider || '—';
-    document.getElementById('dc-model').textContent     = d.model || '—';
-    document.getElementById('dc-total').textContent     = d.projects?.total ?? '—';
-    document.getElementById('dc-running').textContent   = d.projects?.running ?? '—';
-    document.getElementById('dc-completed').textContent = d.projects?.completed ?? '—';
-    document.getElementById('dc-failed').textContent    = (d.projects?.failed ?? 0) + (d.projects?.cancelled ?? 0);
-    document.getElementById('dc-agents').textContent    = d.agents_registered ?? '—';
-    document.getElementById('dc-tools').textContent     = d.tools_registered ?? '—';
-    document.getElementById('dc-memory').textContent    = d.memory_keys ?? '—';
-    document.getElementById('dash-uptime').textContent  = `uptime ${fmtSeconds(d.uptime_seconds)}`;
-    document.getElementById('sidebar-provider').textContent = d.provider || '—';
-    document.getElementById('sidebar-model').textContent    = d.model || '—';
-
-    // Badge counts for nav
-    const badge = document.getElementById('nav-badge-goals');
-    const active = (d.projects?.running ?? 0) + (d.projects?.pending ?? 0);
-    badge.textContent = active || d.projects?.total || 0;
-  } catch (e) {
-    setOnline(false);
-  }
-
-  // Load recent goals
-  try {
-    const r = await apiFetch('/api/goals');
-    renderRecentGoals(r.data || []);
-  } catch (_) {}
-}
-
-function renderRecentGoals(goals) {
-  const el = document.getElementById('recent-goals-list');
-  if (!goals.length) {
-    el.innerHTML = `<div class="empty-state" style="padding:30px"><div class="empty-icon">🎯</div><h3>No goals yet</h3><p>Submit your first goal using the form above.</p></div>`;
-    return;
-  }
-  const rows = goals.slice(0,5).map(g => `
-    <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)" onclick="openGoalDetail(${JSON.stringify(escHtml(g.id))})" style="cursor:pointer">
-      <span class="badge ${statusBadgeClass(g.status)}">${statusIcon(g.status)} ${escHtml(g.status)}</span>
-      <span style="font-weight:600;font-size:13px;color:var(--text)">${escHtml(g.name||'—')}</span>
-      <span style="font-size:12px;color:var(--text3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml((g.goal||'').slice(0,80))}</span>
-      <span style="font-size:11px;color:var(--text3);flex-shrink:0">${timeAgo(g.started_at)}</span>
-    </div>`).join('');
-  el.innerHTML = rows;
-}
-
-/* Quick Goal */
-document.getElementById('quick-submit-btn').addEventListener('click', async () => {
-  const name = document.getElementById('quick-name').value.trim();
-  const goal = document.getElementById('quick-goal').value.trim();
-  if (!name || !goal) { toast('Enter a name and goal', 'error'); return; }
-  const btn = document.getElementById('quick-submit-btn');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Running…';
-  try {
-    const r = await apiFetch('/api/goals', {
-      method: 'POST',
-      body: JSON.stringify({ name, goal, background: true, parallel: true })
-    });
-    toast(`Goal accepted — ID: ${r.data?.id?.slice(0,8)}…`, 'success');
-    document.getElementById('quick-result').style.display = 'block';
-    document.getElementById('quick-result').innerHTML = `<div class="alert alert-success">✓ Goal submitted! <button class="btn btn-sm btn-secondary" onclick="nav('goals')" style="margin-left:8px">View →</button></div>`;
-    loadDashboard();
-  } catch (e) { toast(e.message, 'error'); }
-  btn.disabled = false; btn.innerHTML = '▶ Run Goal';
-});
-
-/* ══ Goals ══════════════════════════════════════════════════════════ */
-let _allGoals = [];
-
-async function loadGoals() {
-  try {
-    const r = await apiFetch('/api/goals');
-    _allGoals = r.data || [];
-    renderGoalsTable(_allGoals);
-  } catch (e) { toast('Failed to load goals: ' + e.message, 'error'); }
-}
-
-function renderGoalsTable(goals) {
-  const badge = document.getElementById('nav-badge-goals');
-  badge.textContent = goals.length;
-
-  if (!goals.length) {
-    document.getElementById('goals-tbody').innerHTML = `<tr><td colspan="7"><div class="empty-state" style="padding:40px"><div class="empty-icon">🎯</div><h3>No goals yet</h3><p>Click "+ New Goal" to get started.</p></div></td></tr>`;
-    return;
-  }
-  const rows = goals.map(g => {
-    const pct = g.progress?.percent ?? 0;
-    return `
-    <tr style="cursor:pointer" onclick="openGoalDetail('${escHtml(g.id)}')">
-      <td><b style="color:var(--text)">${escHtml(g.name||'—')}</b></td>
-      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)">${escHtml((g.goal||'').slice(0,80))}</td>
-      <td><span class="badge ${statusBadgeClass(g.status)}">${escHtml(g.status||'?')}</span></td>
-      <td style="min-width:120px">
-        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-        <div style="font-size:11px;color:var(--text3);margin-top:3px">${pct}% · ${g.completed_tasks||0}/${g.total_tasks||0}</div>
-      </td>
-      <td style="font-size:12px;color:var(--text2)">${fmtCost(g.spent_usd)}</td>
-      <td style="font-size:12px;color:var(--text2)">${g.total_tasks||0}</td>
-      <td onclick="event.stopPropagation()">
-        <button class="btn btn-sm btn-danger" onclick="deleteGoal('${escHtml(g.id)}')">✕</button>
-      </td>
-    </tr>`;
-  }).join('');
-  document.getElementById('goals-tbody').innerHTML = rows;
-}
-
-function openGoalModal() { document.getElementById('goal-modal').style.display = 'block'; }
-function closeGoalModal() { document.getElementById('goal-modal').style.display = 'none'; }
-
-async function submitGoal() {
-  const name = document.getElementById('gm-name').value.trim();
-  const goal = document.getElementById('gm-goal').value.trim();
-  if (!name || !goal) { toast('Name and goal are required', 'error'); return; }
-  const payload = {
-    name, goal,
-    background: document.getElementById('gm-background').checked,
-    parallel:   document.getElementById('gm-parallel').checked,
-    collaboration_mode: document.getElementById('gm-collab').checked,
-  };
-  const cost    = document.getElementById('gm-cost').value;
-  const runtime = document.getElementById('gm-runtime').value;
-  if (cost)    payload.max_cost_usd          = parseFloat(cost);
-  if (runtime) payload.max_runtime_seconds   = parseInt(runtime);
-
-  const btn = document.getElementById('gm-submit-btn');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Submitting…';
-  try {
-    await apiFetch('/api/goals', { method: 'POST', body: JSON.stringify(payload) });
-    toast('Goal submitted!', 'success');
-    closeGoalModal();
-    loadGoals();
-  } catch (e) { toast(e.message, 'error'); }
-  btn.disabled = false; btn.innerHTML = '▶ Submit Goal';
-}
-
-async function deleteGoal(id) {
-  if (!confirm('Delete this goal/project?')) return;
-  try {
-    await apiFetch('/api/projects/' + id, { method: 'DELETE' });
-    toast('Deleted', 'success');
-    loadGoals();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-async function openGoalDetail(id) {
-  try {
-    const r = await apiFetch('/api/goals/' + id);
-    const g = r.data;
-    document.getElementById('goal-detail').style.display = 'block';
-    document.getElementById('gd-name').textContent = g.name || '—';
-    document.getElementById('gd-goal').textContent = g.goal || '—';
-    document.getElementById('gd-status-badge').className = 'badge ' + statusBadgeClass(g.status);
-    document.getElementById('gd-status-badge').textContent = g.status || '?';
-    const pct = g.progress?.percent ?? 0;
-    document.getElementById('gd-pct').textContent = pct + '%';
-    document.getElementById('gd-progress-fill').style.width = pct + '%';
-
-    document.getElementById('gd-stats').innerHTML = [
-      ['Tasks Done', g.completed_tasks||0],
-      ['Tasks Failed', g.failed_tasks||0],
-      ['Total Tasks', g.total_tasks||0],
-      ['Cost', fmtCost(g.spent_usd)],
-    ].map(([k,v]) => `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">${k}</div><div style="font-size:20px;font-weight:800;color:var(--text)">${v}</div></div>`).join('');
-
-    if (g.plan_summary) {
-      document.getElementById('gd-summary').innerHTML = `<div class="card" style="font-size:13px;color:var(--text2);line-height:1.7"><b style="color:var(--text)">Summary:</b><br>${escHtml(g.plan_summary)}</div>`;
-    } else { document.getElementById('gd-summary').innerHTML = ''; }
-
-    const tasks = g.tasks || [];
-    document.getElementById('gd-task-count').textContent = tasks.length;
-    document.getElementById('gd-task-list').innerHTML = tasks.map(t => {
-      const iconMap = { completed:'✓ ',done:'✓ ', failed:'✗ ', running:'⟳ ', pending:'· ' };
-      const clsMap  = { completed:'done',done:'done', failed:'fail', running:'run', pending:'pend' };
-      const ic = iconMap[t.status]||'· ';
-      const cl = clsMap[t.status]||'pend';
-      return `<div class="task-item">
-        <div class="task-icon ${cl}">${ic}</div>
-        <div class="task-body">
-          <div class="task-title">${escHtml(t.title||'Task #'+(t.index+1))}</div>
-          <div class="task-desc">${escHtml(t.description||'')}</div>
-          <div class="task-agent">${escHtml(t.agent_type||'')}</div>
-        </div>
-        <span class="badge ${statusBadgeClass(t.status)}" style="flex-shrink:0">${escHtml(t.status||'?')}</span>
-      </div>`;
-    }).join('') || '<div style="color:var(--text3);font-size:13px">No tasks recorded yet.</div>';
-
-    document.getElementById('goal-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  } catch (e) { toast('Load error: ' + e.message, 'error'); }
-}
-
-function closeGoalDetail() { document.getElementById('goal-detail').style.display = 'none'; }
-
-/* Auto-poll running goals */
-setInterval(async () => {
-  if (currentPage !== 'goals') return;
-  const running = _allGoals.filter(g => g.status === 'running' || g.status === 'pending');
-  if (running.length) loadGoals();
-}, 5000);
-
-/* ══ Agents ═════════════════════════════════════════════════════════ */
-let _selectedAgent = null;
-
-async function loadAgents() {
-  try {
-    const r = await apiFetch('/api/agents');
-    renderAgentsGrid(r.data || []);
-  } catch (e) { toast('Failed to load agents: ' + e.message, 'error'); }
-}
-
-function renderAgentsGrid(agents) {
-  const grid = document.getElementById('agents-grid');
-  const empty = document.getElementById('agents-empty');
-  if (!agents.length) {
-    grid.innerHTML = ''; empty.style.display = 'flex'; return;
-  }
-  empty.style.display = 'none';
-  grid.innerHTML = agents.map(a => `
-    <div class="card" style="cursor:default">
-      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px">
-        <div style="width:38px;height:38px;border-radius:10px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">🤖</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:14px;color:var(--text)">${escHtml(a.name)}</div>
-          <div style="font-size:12px;color:var(--text3);margin-top:2px">${escHtml(a.role||'Agent')}</div>
-        </div>
+<!-- ══ AUTH MODAL ════════════════════════════════════════════════════ -->
+<div id="auth-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <button class="modal-close-x" onclick="closeAuthModal()">✕</button>
+    <div class="modal-header">
+      <h2 id="auth-modal-title">Sign In</h2>
+      <p id="auth-modal-subtitle">Access your Tecbunny-built AetheerAI workspace</p>
+    </div>
+    <div class="auth-intro">
+      <span class="auth-pill">Secure operator access</span>
+      <p>Designed by Tecbunny Solutions for teams that need visibility, control, and a cleaner AI operations experience.</p>
+    </div>
+    
+    <div id="auth-login-form">
+      <div class="form-group">
+        <label for="auth-email">Email</label>
+        <input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" />
       </div>
-      ${a.tools?.length ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Tools: ${a.tools.map(t=>`<span class="badge badge-purple" style="margin:1px">${escHtml(t)}</span>`).join('')}</div>` : ''}
-      <div style="display:flex;gap:6px;margin-top:auto">
-        <button class="btn btn-primary btn-sm" onclick="openAgentRunner('${escHtml(a.name)}')">▶ Run Task</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteAgent('${escHtml(a.name)}')">✕</button>
+      <div class="form-group">
+        <label for="auth-password">Password</label>
+        <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password" />
       </div>
-    </div>`).join('');
-}
-
-function openAgentPanel() { document.getElementById('agent-panel').style.display = 'block'; }
-function closeAgentPanel() { document.getElementById('agent-panel').style.display = 'none'; }
-
-async function createAgent() {
-  const name = document.getElementById('ag-name').value.trim();
-  if (!name) { toast('Agent name is required', 'error'); return; }
-  const tools = document.getElementById('ag-tools').value.split(',').map(s=>s.trim()).filter(Boolean);
-  const perm  = parseInt(document.getElementById('ag-perm').value) || 1;
-  const role  = document.getElementById('ag-role').value.trim();
-  try {
-    await apiFetch('/api/agents', {
-      method: 'POST',
-      body: JSON.stringify({ name, role: role||null, tools, permission_level: perm })
-    });
-    toast(`Agent "${name}" created!`, 'success');
-    closeAgentPanel(); loadAgents();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-async function designAgent() {
-  const name = document.getElementById('agd-name').value.trim();
-  const role = document.getElementById('agd-role').value.trim();
-  const goal = document.getElementById('agd-goal').value.trim();
-  if (!name || !role || !goal) { toast('All fields required', 'error'); return; }
-  const perm = parseInt(document.getElementById('agd-perm').value) || 2;
-  try {
-    await apiFetch('/api/agents/design', {
-      method: 'POST',
-      body: JSON.stringify({ name, role_description: role, goal, permission_level: perm })
-    });
-    toast(`Agent "${name}" designed!`, 'success');
-    closeAgentPanel(); loadAgents();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-async function deleteAgent(name) {
-  if (!confirm(`Delete agent "${name}"?`)) return;
-  try {
-    await apiFetch('/api/agents/' + encodeURIComponent(name), { method: 'DELETE' });
-    toast('Deleted', 'success'); loadAgents();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-function openAgentRunner(name) {
-  _selectedAgent = name;
-  document.getElementById('runner-agent-name').textContent = name;
-  document.getElementById('runner-result').innerHTML = '';
-  document.getElementById('runner-task').value = '';
-  document.getElementById('agent-runner').style.display = 'block';
-  document.getElementById('agent-runner').scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-function closeAgentRunner() { document.getElementById('agent-runner').style.display = 'none'; _selectedAgent = null; }
-
-async function runAgentTask() {
-  const task = document.getElementById('runner-task').value.trim();
-  if (!task || !_selectedAgent) { toast('Enter a task', 'error'); return; }
-  const btn = document.getElementById('runner-run-btn');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Running…';
-  try {
-    const r = await apiFetch(`/api/agents/${encodeURIComponent(_selectedAgent)}/run`, {
-      method: 'POST', body: JSON.stringify({ task })
-    });
-    const result = r.data?.result || JSON.stringify(r.data, null, 2);
-    document.getElementById('runner-result').innerHTML = `<div class="alert alert-success"><b>Result:</b><pre style="margin-top:8px;white-space:pre-wrap">${escHtml(String(result))}</pre></div>`;
-  } catch (e) {
-    document.getElementById('runner-result').innerHTML = `<div class="alert alert-error">Error: ${escHtml(e.message)}</div>`;
-  }
-  btn.disabled = false; btn.innerHTML = '▶ Run';
-}
-
-/* ══ Chat ════════════════════════════════════════════════════════════ */
-let _chatHistory = [];
-
-function clearChat() {
-  _chatHistory = [];
-  document.getElementById('chat-messages').innerHTML = `
-    <div class="msg"><div class="msg-avatar">✨</div><div class="msg-bubble">Hi! I'm AetheerAI. Ask me anything or describe a task and I'll help you out.</div></div>`;
-}
-
-function appendChatMsg(role, text) {
-  const el = document.createElement('div');
-  el.className = 'msg ' + (role === 'user' ? 'user' : '');
-  el.innerHTML = `
-    <div class="msg-avatar">${role === 'user' ? '👤' : '✨'}</div>
-    <div class="msg-bubble">${escHtml(text)}</div>`;
-  const container = document.getElementById('chat-messages');
-  container.appendChild(el);
-  container.scrollTop = container.scrollHeight;
-}
-
-async function sendChat() {
-  const input = document.getElementById('chat-input');
-  const msg   = input.value.trim();
-  if (!msg) return;
-  input.value = '';
-  appendChatMsg('user', msg);
-  _chatHistory.push({ role: 'user', content: msg });
-
-  const btn = document.getElementById('chat-send-btn');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
-
-  // Typing indicator
-  const typing = document.createElement('div');
-  typing.className = 'msg'; typing.id = 'chat-typing';
-  typing.innerHTML = `<div class="msg-avatar">✨</div><div class="msg-bubble" style="color:var(--text3)">Thinking…</div>`;
-  document.getElementById('chat-messages').appendChild(typing);
-  document.getElementById('chat-messages').scrollTop = 9999;
-
-  try {
-    const r = await apiFetch('/api/chat', {
-      method: 'POST',
-      body: JSON.stringify({ message: msg, history: _chatHistory.slice(-20) })
-    });
-    typing.remove();
-    const reply = r.data?.reply || '(no reply)';
-    appendChatMsg('assistant', reply);
-    _chatHistory.push({ role: 'assistant', content: reply });
-  } catch (e) {
-    typing.remove();
-    appendChatMsg('assistant', '⚠ Error: ' + e.message);
-  }
-  btn.disabled = false; btn.textContent = 'Send';
-}
-
-/* ══ Collaborate ═════════════════════════════════════════════════════ */
-async function loadCollaborations() {
-  try {
-    const r = await apiFetch('/api/collaborations?limit=50');
-    renderCollabTable(r.data || []);
-  } catch (e) { toast('Failed: ' + e.message, 'error'); }
-}
-
-function renderCollabTable(sessions) {
-  if (!sessions.length) {
-    document.getElementById('collab-tbody').innerHTML = `<tr><td colspan="6"><div class="empty-state" style="padding:30px"><div class="empty-icon">👥</div><h3>No sessions</h3></div></td></tr>`;
-    return;
-  }
-  document.getElementById('collab-tbody').innerHTML = sessions.map(s => `
-    <tr>
-      <td style="font-size:12px;color:var(--text3)">${escHtml((s.session_id||s.id||'—').slice(0,12))}…</td>
-      <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml((s.goal||'—').slice(0,80))}</td>
-      <td>${(s.agents||[]).map(a=>`<span class="badge badge-purple">${escHtml(a)}</span>`).join(' ')}</td>
-      <td>${s.rounds||'—'}</td>
-      <td><span class="badge badge-blue">${escHtml(s.mode||'standard')}</span></td>
-      <td style="font-size:11px;color:var(--text3)">${timeAgo(s.created_at)}</td>
-    </tr>`).join('');
-}
-
-async function runCollaboration() {
-  const goal = document.getElementById('cf-goal').value.trim();
-  if (!goal) { toast('Goal is required', 'error'); return; }
-  const team    = document.getElementById('cf-team').value.trim();
-  const agentNs = document.getElementById('cf-agents').value.split(',').map(s=>s.trim()).filter(Boolean);
-  const rounds  = parseInt(document.getElementById('cf-rounds').value) || 2;
-  const btn = document.getElementById('cf-submit-btn');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Running…';
-  try {
-    await apiFetch('/api/collaborations', {
-      method: 'POST',
-      body: JSON.stringify({ goal, team_name: team||null, agent_names: agentNs, rounds })
-    });
-    toast('Collaboration complete!', 'success');
-    document.getElementById('collab-form-wrap').style.display = 'none';
-    loadCollaborations();
-  } catch (e) { toast(e.message, 'error'); }
-  btn.disabled = false; btn.innerHTML = '▶ Start Collaboration';
-}
-
-/* ══ Memory ══════════════════════════════════════════════════════════ */
-async function loadMemory() {
-  const ns = document.getElementById('memory-ns').value.trim() || 'global';
-  try {
-    const r = await apiFetch(`/api/memory?namespace=${encodeURIComponent(ns)}`);
-    renderMemoryTable(r.data || {});
-  } catch (e) { toast('Memory load failed: ' + e.message, 'error'); }
-}
-
-function renderMemoryTable(data) {
-  const keys = Object.keys(data);
-  if (!keys.length) {
-    document.getElementById('memory-tbody').innerHTML = `<tr><td colspan="3"><div class="empty-state" style="padding:30px"><div class="empty-icon">🧠</div><h3>Empty namespace</h3></div></td></tr>`;
-    return;
-  }
-  document.getElementById('memory-tbody').innerHTML = keys.map(k => {
-    const preview = JSON.stringify(data[k]).slice(0, 120);
-    return `<tr>
-      <td style="font-weight:600;font-family:monospace;font-size:12px;color:var(--accent2)">${escHtml(k)}</td>
-      <td style="font-size:12px;color:var(--text2);max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(preview)}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="deleteMemoryKey('${escHtml(k)}')">✕ Delete</button></td>
-    </tr>`;
-  }).join('');
-}
-
-async function deleteMemoryKey(key) {
-  const ns = document.getElementById('memory-ns').value.trim() || 'global';
-  if (!confirm(`Delete key "${key}" from namespace "${ns}"?`)) return;
-  try {
-    await apiFetch(`/api/memory/${encodeURIComponent(key)}?namespace=${encodeURIComponent(ns)}`, { method: 'DELETE' });
-    toast('Deleted', 'success'); loadMemory();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-/* ══ Logs ════════════════════════════════════════════════════════════ */
-let _allLogs = [];
-
-async function loadLogs() {
-  try {
-    const r = await apiFetch('/api/logs?limit=300');
-    _allLogs = r.data || [];
-    renderLogs(_allLogs);
-  } catch (e) { toast('Logs load failed: ' + e.message, 'error'); }
-}
-
-function renderLogs(logs) {
-  const box = document.getElementById('log-box');
-  if (!logs.length) { box.innerHTML = '<span style="color:var(--text3)">No log entries found.</span>'; return; }
-  box.innerHTML = logs.map(entry => {
-    const ts  = entry.timestamp || entry.ts || '';
-    const lvl = entry.level || entry.lvl || 'INFO';
-    const msg = entry.message || entry.msg || entry.raw || JSON.stringify(entry);
-    return `<div class="log-entry"><span class="log-ts">${escHtml(ts)}</span> <span class="log-lvl-${lvl}">[${lvl}]</span> ${escHtml(msg)}</div>`;
-  }).join('');
-  box.scrollTop = box.scrollHeight;
-}
-
-function filterLogs() {
-  const q = document.getElementById('log-filter').value.toLowerCase();
-  if (!q) { renderLogs(_allLogs); return; }
-  renderLogs(_allLogs.filter(e => JSON.stringify(e).toLowerCase().includes(q)));
-}
-
-/* ══ Settings ════════════════════════════════════════════════════════ */
-async function loadSettings() {
-  document.getElementById('settings-api-url').value = API_BASE;
-  document.getElementById('settings-api-key').value = _API_KEY;
-  const base = API_BASE;
-  document.getElementById('link-swagger').href = base + '/docs';
-  document.getElementById('link-redoc').href   = base + '/redoc';
-  try {
-    const r = await apiFetch('/api/health');
-    const d = r.data;
-    document.getElementById('settings-sysinfo').innerHTML = [
-      ['API Version', 'v2.0.0'],
-      ['Provider', d.provider],
-      ['Model', d.model],
-      ['Offline Provider', d.offline_provider],
-      ['Offline Model', d.offline_model],
-    ].map(([k,v]) => `<div><span style="color:var(--text3)">${k}:</span> <b style="color:var(--text)">${escHtml(String(v||'—'))}</b></div>`).join('');
-  } catch (_) {}
-}
-
-function saveApiUrl() {
-  const url = document.getElementById('settings-api-url').value.trim().replace(/\/+$/, '');
-  const apiKey = document.getElementById('settings-api-key').value.trim();
-  if (!url) return;
-  API_BASE = url;
-  _API_KEY = apiKey;
-  localStorage.setItem('aetheer_api_url', url);
-  if (_API_KEY) localStorage.setItem('aetheer_api_key', _API_KEY);
-  else localStorage.removeItem('aetheer_api_key');
-  toast('Connection settings saved — reconnecting…', 'success');
-  loadDashboard();
-  loadSettings();
-}
-
-function openDocs(type) {
-  const url = API_BASE + (type === 'swagger' ? '/docs' : '/redoc');
-  window.open(url, '_blank', 'noopener');
-}
-
-/* ══ Playground (Input → Output) ════════════════════════════════════ */
-let _pgMode = 'chat';
-let _pgHistory = [];
-
-// Wire mode buttons
-document.querySelectorAll('.pg-mode').forEach(btn => {
-  btn.addEventListener('click', () => {
-    _pgMode = btn.dataset.mode;
-    document.querySelectorAll('.pg-mode').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    ['chat', 'goal', 'agent'].forEach(m => {
-      const el = document.getElementById('pg-opts-' + m);
-      if (el) el.style.display = (m === _pgMode) ? '' : 'none';
-    });
-    const ph = {
-      chat:  'Type your message or question here…',
-      goal:  'Describe the goal for AetheerAI to accomplish… e.g. Build a REST API for a todo app',
-      agent: 'Describe the task for the agent to execute…',
-    };
-    document.getElementById('pg-input').placeholder = ph[_pgMode] || '…';
-  });
-});
-
-async function pgLoadAgents() {
-  try {
-    const r = await apiFetch('/api/agents');
-    const dl = document.getElementById('pg-agents-list');
-    if (dl) dl.innerHTML = (r.data || []).map(a => `<option value="${escHtml(a.name)}">`).join('');
-  } catch (_) {}
-}
-
-async function pgRun() {
-  const input = document.getElementById('pg-input').value.trim();
-  if (!input) { toast('Enter something first', 'error'); return; }
-
-  const btn     = document.getElementById('pg-run-btn');
-  const btnText = document.getElementById('pg-btn-text');
-  btn.disabled  = true;
-  btnText.innerHTML = '<span class="spinner"></span> Running…';
-
-  const elapsedEl = document.getElementById('pg-elapsed');
-  const t0 = Date.now();
-  const timer = setInterval(() => {
-    elapsedEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + 's';
-  }, 100);
-
-  const outputEl = document.getElementById('pg-output');
-  const emptyEl  = document.getElementById('pg-output-empty');
-  if (emptyEl) emptyEl.style.display = 'none';
-  outputEl.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;padding:20px 0;color:var(--text3);font-size:13px">
-      <span class="spinner" style="width:20px;height:20px;border-width:3px"></span>
-      Processing — please wait…
-    </div>`;
-
-  try {
-    let resultText = '';
-    let outputHtml = '';
-
-    if (_pgMode === 'chat') {
-      const system = document.getElementById('pg-system').value.trim();
-      const r = await apiFetch('/api/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message: input, system_prompt: system || null, history: [] })
-      });
-      resultText = r.data?.reply || '(no reply)';
-      outputHtml = `
-        <div>
-          <div class="pg-col-label" style="margin-bottom:10px">💬 Chat Response</div>
-          <div class="pg-stream-text" style="font-size:14px;line-height:1.85;color:var(--text)">${escHtml(resultText)}</div>
-        </div>`;
-
-    } else if (_pgMode === 'goal') {
-      const name     = document.getElementById('pg-goal-name').value.trim() || ('pg-' + Date.now());
-      const parallel = document.getElementById('pg-parallel').checked;
-      const bg       = document.getElementById('pg-bg').checked;
-      const r = await apiFetch('/api/goals', {
-        method: 'POST',
-        body: JSON.stringify({ name, goal: input, background: bg, parallel })
-      });
-      const g = r.data || {};
-      resultText = g.plan_summary || g.goal || input;
-      outputHtml = pgRenderGoalOutput(g);
-
-    } else if (_pgMode === 'agent') {
-      const agentName = document.getElementById('pg-agent-name').value.trim();
-      if (!agentName) { toast('Enter an agent name in the options above', 'error'); throw new Error('_noagent'); }
-      const r = await apiFetch(`/api/agents/${encodeURIComponent(agentName)}/run`, {
-        method: 'POST',
-        body: JSON.stringify({ task: input })
-      });
-      resultText = r.data?.result || JSON.stringify(r.data, null, 2);
-      outputHtml = `
-        <div>
-          <div class="pg-col-label" style="margin-bottom:10px">🤖 Agent Result — <span style="color:var(--accent);text-transform:none;letter-spacing:0">${escHtml(agentName)}</span></div>
-          <pre style="background:transparent;border:none;padding:0;font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-word;margin:0;font-family:inherit">${escHtml(String(resultText))}</pre>
-        </div>`;
-    }
-
-    clearInterval(timer);
-    const took = ((Date.now() - t0) / 1000).toFixed(2);
-    elapsedEl.textContent = `✓ Done in ${took}s`;
-
-    outputEl.innerHTML = outputHtml;
-
-    _pgHistory.unshift({ mode: _pgMode, input, output: resultText, took, ts: Date.now() });
-    if (_pgHistory.length > 20) _pgHistory.pop();
-    pgRenderHistory();
-
-  } catch (e) {
-    clearInterval(timer);
-    elapsedEl.textContent = '';
-    if (e.message !== '_noagent') {
-      outputEl.innerHTML = `<div class="alert alert-error" style="margin:0">⚠ ${escHtml(e.message)}</div>`;
-    } else {
-      outputEl.innerHTML = `<div class="alert alert-warn" style="margin:0">Enter an agent name in the options panel above, then try again.</div>`;
-    }
-  }
-
-  btn.disabled = false;
-  btnText.textContent = '▶ Run';
-}
-
-function pgRenderGoalOutput(g) {
-  if (!g || !g.id) return `<div class="alert alert-warn" style="margin:0">Goal submitted — check Goals &amp; Projects for status.</div>`;
-  const pct    = g.progress?.percent ?? 0;
-  const status = g.status || 'pending';
-  return `
-    <div>
-      <div class="pg-col-label" style="margin-bottom:12px">🎯 Goal Result</div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-        <span class="badge ${statusBadgeClass(status)}">${statusIcon(status)} ${escHtml(status)}</span>
-        <span style="font-size:11.5px;color:var(--text3)">ID: ${escHtml((g.id||'').slice(0,12))}…</span>
-        ${g.spent_usd != null ? `<span style="margin-left:auto;font-size:12px;color:var(--text3)">${fmtCost(g.spent_usd)}</span>` : ''}
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button class="btn btn-secondary btn-sm" onclick="switchToRegister()">Create Account</button>
+        <button class="btn btn-primary" onclick="submitLogin()">Sign In</button>
       </div>
+    </div>
 
-      ${pct > 0 ? `
-      <div style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:5px">
-          <span>Progress</span><span>${pct}%</span>
-        </div>
-        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-      </div>` : ''}
-
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px">
-        ${[['Done', g.completed_tasks||0, 'var(--green)'],
-           ['Failed', g.failed_tasks||0, 'var(--red)'],
-           ['Total', g.total_tasks||0, 'var(--text)'],
-          ].map(([k,v,c]) => `
-          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
-            <div style="font-size:20px;font-weight:800;color:${c}">${v}</div>
-            <div style="font-size:10px;color:var(--text3);margin-top:2px">${k}</div>
-          </div>`).join('')}
+    <div id="auth-register-form" style="display:none;">
+      <div class="form-group">
+        <label for="reg-email">Email *</label>
+        <input id="reg-email" type="email" placeholder="you@example.com" autocomplete="email" />
       </div>
-
-      ${g.plan_summary ? `
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text3);margin-bottom:8px">Summary</div>
-        <div style="font-size:13px;color:var(--text2);line-height:1.75">${escHtml(g.plan_summary)}</div>
-      </div>` : ''}
-
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-sm btn-secondary" onclick="nav('goals')">View in Goals →</button>
-        ${g.id ? `<button class="btn btn-sm btn-secondary" onclick="openGoalDetail('${escHtml(g.id)}');nav('goals')">Details</button>` : ''}
+      <div class="form-group">
+        <label for="reg-password">Password *</label>
+        <input id="reg-password" type="password" placeholder="••••••••" autocomplete="new-password" />
       </div>
-    </div>`;
-}
-
-function pgRenderHistory() {
-  const wrap = document.getElementById('pg-history-wrap');
-  const container = document.getElementById('pg-history');
-  if (!_pgHistory.length) { wrap.style.display = 'none'; return; }
-  wrap.style.display = 'block';
-  const modeIcon = { chat: '💬', goal: '🎯', agent: '🤖' };
-  container.innerHTML = _pgHistory.slice(0, 8).map((item, i) => `
-    <div class="pg-history-item" onclick="pgRerun(${i})">
-      <div style="font-size:16px;flex-shrink:0">${modeIcon[item.mode] || '⚡'}</div>
-      <div style="flex:1;min-width:0">
-        <div class="pg-history-input">${escHtml(item.input.slice(0, 100))}</div>
-        <div class="pg-history-output">${escHtml(String(item.output || '').slice(0, 130))}</div>
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button class="btn btn-secondary btn-sm" onclick="switchToLogin()">Back to Sign In</button>
+        <button class="btn btn-primary" onclick="submitRegister()">Create Account</button>
       </div>
-      <div style="font-size:11px;color:var(--text3);flex-shrink:0">${item.took}s</div>
-    </div>`).join('');
-}
+    </div>
+  </div>
+</div>
 
-function pgRerun(i) {
-  const item = _pgHistory[i];
-  if (!item) return;
-  document.getElementById('pg-input').value = item.input;
-  const modeBtn = document.querySelector(`.pg-mode[data-mode="${item.mode}"]`);
-  if (modeBtn) modeBtn.click();
-  document.getElementById('pg-input').focus();
-}
+<!-- ══ SUPABASE ONBOARDING MODAL ════════════════════════════════════ -->
+<div id="onboard-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-box" style="max-width:660px;">
+    <div class="modal-header">
+      <h2>Connect Your Supabase Project</h2>
+      <p>Link your own Supabase project to store and sync your AetheerAI goals, tasks, and analytics.</p>
+    </div>
 
-function pgClear() {
-  document.getElementById('pg-input').value = '';
-  document.getElementById('pg-elapsed').textContent = '';
-  document.getElementById('pg-output').innerHTML = `
-    <div class="empty-state" style="padding:40px" id="pg-output-empty">
-      <div class="empty-icon">⚡</div>
-      <h3>Output appears here</h3>
-      <p>Type something and click Run</p>
-    </div>`;
-}
+    <div class="alert alert-info">
+      <span>ℹ️</span>
+      <span>Enter your Supabase project credentials below. We'll automatically configure the necessary tables on first connection.</span>
+    </div>
 
-/* ══ Init ════════════════════════════════════════════════════════════ */
-(async function init() {
-  loadDashboard();
-  // Poll dashboard every 30s
-  setInterval(() => { if (currentPage === 'dashboard') loadDashboard(); }, 30000);
-})();
-</script>
+    <div class="modal-split">Your Supabase credentials</div>
+
+    <div class="form-group">
+      <label for="onboard-url">Supabase Project URL</label>
+      <input id="onboard-url" type="url" placeholder="https://xxxxx.supabase.co" />
+    </div>
+    <div class="form-group">
+      <label for="onboard-anon-key">Anon / Public Key</label>
+      <input id="onboard-anon-key" type="text" placeholder="eyJhbGciOi..." autocomplete="off" />
+    </div>
+    <div class="form-group">
+      <label for="onboard-key">Service Role Key <span style="color:var(--text3);font-weight:400;">(optional — enables full sync)</span></label>
+      <input id="onboard-key" type="password" placeholder="eyJhbGciOi..." autocomplete="off" />
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="skipOnboarding()">Skip for Now</button>
+      <button class="btn btn-primary" onclick="saveSupabaseConfig()">Save &amp; Continue</button>
+    </div>
+  </div>
+</div>
+
+<script src="/ui/app.js"></script>
 </body>
 </html>
+

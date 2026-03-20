@@ -43,6 +43,7 @@ pydantic>=2.0.0
 
 # --- Data & analytics tools ---
 pandas>=2.0.0                  # csv_tool, analytics_tool
+pytz>=2024.1                   # required by pandas/streamlit dataframe rendering paths
 numpy>=1.26.0                  # analytics_tool
 pillow>=10.0.0                 # media_tool, image handling
 

@@ -167,3 +167,30 @@ def test_setup_supabase_missing_platform_tables_returns_clear_hint(auth_client, 
 
     assert response.status_code == 503
     assert "platform bootstrap tables" in response.json()["detail"]
+
+
+def test_me_recovers_local_user_when_cache_is_wiped(auth_client, monkeypatch):
+    register = auth_client.post(
+        "/api/auth/register",
+        json={"email": "dave@example.com", "password": "password123"},
+    )
+    assert register.status_code == 201
+    token = register.json()["access_token"]
+
+    # Simulate serverless cold-start cache loss.
+    db = db_mod.SessionLocal()
+    try:
+        db.query(db_mod.User).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    # Simulate Supabase profile-table lookup failure so token-claim fallback is exercised.
+    monkeypatch.setattr(auth_mod, "_sb_get_user", lambda **kwargs: None)
+
+    me = auth_client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me.status_code == 200
+    assert me.json()["data"]["email"] == "dave@example.com"

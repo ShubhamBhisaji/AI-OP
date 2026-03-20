@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from html import escape as _escape
+from pathlib import Path
 
 # Make sure the project root is importable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -32,217 +34,25 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS — premium workspace design ────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
+_APP_DIR = Path(__file__).resolve().parent
+_UI_DIR = _APP_DIR / "ui"
+_STREAMLIT_THEME_PATH = _UI_DIR / "streamlit_theme.css"
 
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-}
 
-/* ── Hide Streamlit chrome ─────────────────────────────────────────── */
-#MainMenu, footer { visibility: hidden; }
-header { visibility: hidden; }
-[data-testid="stHeader"], [data-testid="stToolbar"] { display: none !important; }
-div[data-testid="stStatusWidget"] { display: none; }
+def _load_text_asset(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
-/* ── Main app background ───────────────────────────────────────────── */
-.stApp {
-    background-color: #FCFCFD;
-}
 
-/* ── Sidebar ─────────────────────────────────────────────────────── */
-[data-testid="stSidebar"] {
-    background-color: rgba(245, 245, 247, 0.8) !important;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border-right: 1px solid rgba(226, 232, 240, 0.6) !important;
-}
-[data-testid="stSidebarContent"] { padding: 0 !important; }
+def _inject_streamlit_theme() -> None:
+    css = _load_text_asset(_STREAMLIT_THEME_PATH)
+    if css:
+        st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
-/* ── Sidebar brand block ──────────────────────────────────────────── */
-.sidebar-brand {
-    padding: 20px 18px 16px;
-    border-bottom: 1px solid #f1f5f9;
-    margin-bottom: 4px;
-}
-.sidebar-brand-title {
-    font-size: 14px; font-weight: 700;
-    color: #0f172a; line-height: 1.3;
-}
-.sidebar-brand-sub { font-size: 10px; color: #94a3b8; font-weight: 500; margin-top: 3px; }
 
-/* ── Sidebar section labels ───────────────────────────────────────── */
-.nav-section-label {
-    font-size: 10px; font-weight: 700;
-    letter-spacing: 1.2px; color: #94a3b8;
-    padding: 14px 18px 4px; text-transform: uppercase;
-}
-
-/* ── Nav radio — styled as nav links ──────────────────────────────── */
-[data-testid="stSidebar"] input[type="radio"] { display: none !important; }
-[data-testid="stSidebar"] .stRadio > label { display: none !important; }
-[data-testid="stSidebar"] .stRadio > div {
-    display: flex; flex-direction: column;
-    gap: 2px; padding: 2px 12px;
-}
-[data-testid="stSidebar"] .stRadio label {
-    display: flex !important; align-items: center;
-    padding: 9px 14px !important;
-    border-radius: 8px !important;
-    color: #64748b !important;
-    font-size: 13.5px !important; font-weight: 500 !important;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-    border: 1px solid transparent !important;
-    margin: 1px 0;
-}
-[data-testid="stSidebar"] .stRadio label:hover {
-    background: rgba(255,255,255,0.7) !important;
-    color: #0f172a !important;
-}
-[data-testid="stSidebar"] .stRadio label[data-selected="true"],
-[data-testid="stSidebar"] .stRadio label[aria-checked="true"] {
-    background: rgba(255,255,255,0.9) !important;
-    color: #1d4ed8 !important;
-    font-weight: 600 !important;
-}
-
-/* ── Agent chip ───────────────────────────────────────────────────── */
-.agent-chip {
-    display: flex; align-items: center; gap: 8px;
-    padding: 7px 14px; border-radius: 6px;
-    background: rgba(255,255,255,0.6); border: 1px solid rgba(226,232,240,0.7);
-    margin: 2px 0; font-size: 12px; color: #64748b;
-}
-
-/* ── Content area ─────────────────────────────────────────────────── */
-.block-container {
-    padding-top: 1.5rem !important;
-    padding-bottom: 3rem !important;
-    max-width: 1100px;
-}
-
-/* ── Premium heading classes ──────────────────────────────────────── */
-.premium-title {
-    text-align: center;
-    color: #0f172a;
-    font-weight: 900;
-    font-size: 2.5rem;
-    letter-spacing: -0.025em;
-    margin-top: 2rem;
-    margin-bottom: 0.5rem;
-    line-height: 1.15;
-}
-.premium-subtitle {
-    text-align: center;
-    color: #64748b;
-    font-weight: 500;
-    font-size: 1rem;
-    margin-bottom: 3rem;
-}
-
-/* ── Typography ───────────────────────────────────────────────────── */
-h1 { font-size: 26px !important; font-weight: 800 !important; color: #0f172a !important; margin-bottom: 4px !important; }
-h2 { color: #1e293b !important; font-weight: 700 !important; }
-h3 { color: #334155 !important; }
-p, li { color: #64748b; }
-
-/* ── Buttons ──────────────────────────────────────────────────────── */
-.stButton > button {
-    border-radius: 8px !important; font-weight: 600 !important;
-    font-size: 13px !important; transition: all 0.18s !important;
-}
-.stButton > button[kind="primary"] {
-    background: #2563eb !important;
-    border: none !important; color: #fff !important;
-    box-shadow: 0 2px 8px rgba(37,99,235,0.2) !important;
-}
-.stButton > button[kind="primary"]:hover {
-    background: #1d4ed8 !important;
-    box-shadow: 0 4px 16px rgba(37,99,235,0.3) !important;
-    transform: translateY(-1px);
-}
-.stButton > button[kind="secondary"] {
-    background: rgba(255,255,255,0.8) !important; border: 1px solid #e2e8f0 !important; color: #475569 !important;
-}
-.stButton > button[kind="secondary"]:hover {
-    border-color: #3b82f6 !important; color: #2563eb !important; background: #eff6ff !important;
-}
-
-/* ── Inputs ───────────────────────────────────────────────────────── */
-.stTextInput > div > div > input,
-.stTextArea > div > div > textarea {
-    border-radius: 10px !important; background: #ffffff !important;
-    border: 1px solid #e2e8f0 !important; color: #0f172a !important; font-size: 14px !important;
-}
-.stTextInput > div > div > input:focus,
-.stTextArea > div > div > textarea:focus {
-    border-color: #3b82f6 !important; box-shadow: 0 0 0 2px rgba(59,130,246,0.12) !important;
-}
-.stTextInput > div > div > input::placeholder,
-.stTextArea > div > div > textarea::placeholder { color: #94a3b8 !important; }
-[data-testid="stSelectbox"] > div > div {
-    background: #ffffff !important; border: 1px solid #e2e8f0 !important;
-    border-radius: 10px !important; color: #0f172a !important;
-}
-
-/* ── Expanders ────────────────────────────────────────────────────── */
-[data-testid="stExpander"] {
-    background: #ffffff !important; border: 1px solid #e2e8f0 !important; border-radius: 12px !important;
-}
-
-/* ── Chat ─────────────────────────────────────────────────────────── */
-.stChatMessage {
-    background: #ffffff !important; border: 1px solid #e2e8f0 !important; border-radius: 14px !important;
-    color: #0f172a !important;
-}
-[data-testid="stChatMessage"] p { color: #374151 !important; }
-[data-testid="stChatInputContainer"] > div {
-    background: #ffffff !important; border: 1px solid #e2e8f0 !important;
-    border-radius: 16px !important;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.06) !important;
-}
-[data-testid="stChatInputContainer"] textarea {
-    background: transparent !important; color: #0f172a !important;
-}
-[data-testid="stChatInputContainer"] textarea::placeholder { color: #94a3b8 !important; }
-
-/* ── Suggestion cards ─────────────────────────────────────────────── */
-.suggestion-card {
-    background: #ffffff; border: 1.5px solid #e2e8f0; border-radius: 16px;
-    padding: 16px 18px; transition: all 0.2s; cursor: pointer;
-}
-.suggestion-card:hover { border-color: #3b82f6; box-shadow: 0 6px 20px rgba(0,0,0,0.07); }
-.suggestion-card h4 { font-size: 13px; font-weight: 600; color: #1e293b; margin: 0 0 4px; }
-.suggestion-card p  { font-size: 11.5px; color: #94a3b8; margin: 0; }
-
-/* ── Progress ─────────────────────────────────────────────────────── */
-.stProgress > div > div > div > div {
-    background: linear-gradient(90deg, #2563eb, #7c3aed) !important; border-radius: 4px !important;
-}
-
-/* ── Dividers ─────────────────────────────────────────────────────── */
-hr { border-color: #e2e8f0 !important; }
-
-/* ── Alert boxes ──────────────────────────────────────────────────── */
-[data-testid="stInfo"]    { background: rgba(59,130,246,0.05)  !important; border: 1px solid rgba(59,130,246,0.15)  !important; border-radius: 8px !important; }
-[data-testid="stSuccess"] { background: rgba(16,185,129,0.05)  !important; border: 1px solid rgba(16,185,129,0.15)  !important; border-radius: 8px !important; }
-[data-testid="stWarning"] { background: rgba(245,158,11,0.05)  !important; border: 1px solid rgba(245,158,11,0.15)  !important; border-radius: 8px !important; }
-[data-testid="stError"]   { background: rgba(239,68,68,0.05)   !important; border: 1px solid rgba(239,68,68,0.15)   !important; border-radius: 8px !important; }
-
-/* ── Dataframe ────────────────────────────────────────────────────── */
-[data-testid="stDataFrame"] { border-radius: 10px !important; overflow: hidden; border: 1px solid #e2e8f0 !important; }
-
-/* ── Tabs ─────────────────────────────────────────────────────────── */
-[data-testid="stTabs"] [role="tab"] { color: #64748b !important; font-weight: 500 !important; }
-[data-testid="stTabs"] [role="tab"][aria-selected="true"] { color: #2563eb !important; border-bottom-color: #2563eb !important; }
-
-/* ── Code blocks ──────────────────────────────────────────────────── */
-.stCode, pre { background: #f8fafc !important; border: 1px solid #e2e8f0 !important; border-radius: 8px !important; }
-</style>
-""", unsafe_allow_html=True)
+_inject_streamlit_theme()
 
 # ── AetheerAI SVG icon ─ unique gradient IDs per placement ────────────────
 _NAV_SVG = ('<svg width="30" height="30" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"'
@@ -337,14 +147,70 @@ def _run_agent_sync(agent_obj, task: str) -> str:
         loop.close()
 
 
+def _render_workspace_shell(
+    kicker: str,
+    title: str,
+    subtitle: str,
+    metrics: list[tuple[str, str | int]] | None = None,
+) -> None:
+    metric_html = ""
+    if metrics:
+        metric_html = '<div class="workspace-metrics">' + ''.join(
+            (
+                '<div class="workspace-metric">'
+                f'<span class="workspace-metric-label">{_escape(str(label))}</span>'
+                f'<strong class="workspace-metric-value">{_escape(str(value))}</strong>'
+                '</div>'
+            )
+            for label, value in metrics
+        ) + '</div>'
+
+    st.markdown(
+        (
+            '<section class="workspace-shell">'
+            f'<div class="workspace-kicker">{_escape(kicker)}</div>'
+            f'<div class="workspace-title">{_escape(title)}</div>'
+            f'<p class="workspace-subtitle">{_escape(subtitle)}</p>'
+            f'{metric_html}'
+            '</section>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _render_section_shell(kicker: str, title: str, copy: str) -> None:
+    st.markdown(
+        (
+            '<section class="section-shell">'
+            f'<div class="section-kicker">{_escape(kicker)}</div>'
+            f'<div class="section-title">{_escape(title)}</div>'
+            f'<p class="section-copy">{_escape(copy)}</p>'
+            '</section>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────
 with st.sidebar:
     # ── Brand block ───────────────────────────────────────────────────
-    st.markdown("### ✨ AetheerAI\n**WORKSPACE**")
-    st.markdown("---")
+    st.markdown(
+        (
+            '<div class="sidebar-brand">'
+            f'<div class="sidebar-brand-visual">{_SB_SVG}</div>'
+            '<div class="sidebar-brand-copy">'
+            '<div class="sidebar-brand-kicker">Tecbunny AI Platform</div>'
+            '<div class="sidebar-brand-title">AetheerAI Workspace</div>'
+            '<div class="sidebar-brand-sub">Autonomous operations console for governed agent execution.</div>'
+            '<a class="sidebar-brand-link" href="https://www.tecbunny.com" target="_blank" rel="noreferrer">tecbunny.com ↗</a>'
+            '</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
 
     # ── Navigation ────────────────────────────────────────────────────
-    st.markdown('<p style="font-size: 0.75rem; color: #94a3b8; font-weight: 700; letter-spacing: 0.1em;">MAIN MENU</p>', unsafe_allow_html=True)
+    st.markdown('<p class="nav-section-label">Main Menu</p>', unsafe_allow_html=True)
 
     page = st.radio("nav", [
         "💬 Task Executor",
@@ -376,24 +242,25 @@ with st.sidebar:
         "🎭 Personality Engine",
     ], label_visibility="collapsed")
 
-    st.markdown("---")
-
     # ── Registered Agents ─────────────────────────────────────────────
-    st.markdown('<p style="font-size: 0.75rem; color: #94a3b8; font-weight: 700; letter-spacing: 0.1em;">ACTIVE AGENTS</p>', unsafe_allow_html=True)
+    st.markdown('<p class="nav-section-label">Active Agents</p>', unsafe_allow_html=True)
     names = _agent_names()
     if names:
         for n in names:
             st.markdown(f'<div class="agent-chip">🤖 <span>{n}</span></div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div style="font-size:11.5px;color:#94a3b8;padding:4px 2px 6px;">No agents — use Agent Factory</div>', unsafe_allow_html=True)
-
-    st.markdown("---")
+        st.markdown('<div class="muted-note" style="margin: 0 2px 10px;">No agents yet. Use Agent Factory to provision your first specialist.</div>', unsafe_allow_html=True)
 
     # ── Provider info ─────────────────────────────────────────────────
     st.markdown(
-        f'<div style="font-size:11px;color:#94a3b8;padding:2px 0 6px;">'
-        f'AI &nbsp;<span style="color:#2563eb;font-weight:600;">{kernel.ai_adapter.provider}</span>'
-        f' &nbsp;/&nbsp; <span style="color:#7c3aed;font-weight:600;">{kernel.ai_adapter.model}</span></div>',
+        (
+            '<div class="sidebar-pill">'
+            '<div class="sidebar-pill-label">AI Runtime</div>'
+            f'<div style="margin-top: 6px;"><b>{_escape(str(kernel.ai_adapter.provider))}</b> '
+            '<span style="color: var(--tb-text-muted);">/</span> '
+            f'<b style="color: var(--tb-accent);">{_escape(str(kernel.ai_adapter.model))}</b></div>'
+            '</div>'
+        ),
         unsafe_allow_html=True,
     )
 
@@ -405,15 +272,18 @@ with st.sidebar:
         import os as _os; _os._exit(0)
 
     # ── Bottom user profile strip ─────────────────────────────────────
-    st.markdown("""
-    <div style='display: flex; align-items: center; gap: 10px; padding: 10px; background: white; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.05); margin-top: 8px;'>
-        <div style='width: 32px; height: 32px; border-radius: 50%; background: #f1f5f9; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #334155; font-size: 12px;'>TB</div>
-        <div>
-            <div style='font-size: 14px; font-weight: 700; color: #0f172a;'>Tecbunny</div>
-            <div style='font-size: 10px; font-weight: 600; color: #10b981; text-transform: uppercase;'>🟢 Pro Tier</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        (
+            '<div class="sidebar-user-strip">'
+            '<div class="sidebar-avatar">TB</div>'
+            '<div>'
+            '<div class="sidebar-user-name">Tecbunny</div>'
+            '<div class="sidebar-user-tier">Operator tier</div>'
+            '</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -423,12 +293,20 @@ if page == "💬 Task Executor":
     # ── Hero heading (only when chat is empty) ────────────────────────
     history_key_check = f"chat_{_agent_names()[0] if _agent_names() else 'none'}"
     _chat_is_empty = not bool(st.session_state.get(history_key_check))
+    names = _agent_names()
 
     if _chat_is_empty:
-        st.markdown("<div class='premium-title'>What's next on the agenda?</div>", unsafe_allow_html=True)
-        st.markdown("<div class='premium-subtitle'>Deploy autonomous agents to execute complex workflows, generate assets, or analyze data in real-time.</div>", unsafe_allow_html=True)
+        _render_workspace_shell(
+            "Tecbunny Mission Control",
+            "Assign work to your agent team.",
+            "Run direct execution from one operator console, with the same governed, high-clarity feel as the packaged web workspace.",
+            [
+                ("Provider", kernel.ai_adapter.provider),
+                ("Model", kernel.ai_adapter.model),
+                ("Agents ready", len(names)),
+            ],
+        )
 
-    names = _agent_names()
     if not names:
         st.warning("No agents found. Go to **Agent Factory** to create one first.")
         st.stop()
@@ -449,13 +327,13 @@ if page == "💬 Task Executor":
         _s1, _s2 = st.columns(2)
         _suggestion_prompt = None
         with _s1:
-            st.markdown('<div class="suggestion-card"><h4>Build a landing page</h4><p>For a new tech startup with a modern design...</p></div>', unsafe_allow_html=True)
+            st.markdown('<div class="suggestion-card"><h4>Launch a Tecbunny-style product page</h4><p>Shape a bold landing experience with a clearer offer, trust signals, and stronger CTA flow.</p></div>', unsafe_allow_html=True)
             if st.button("Try this →", key="sug1", use_container_width=True, type="secondary"):
-                _suggestion_prompt = "Build a landing page for my new tech startup"
+                _suggestion_prompt = "Build a bold product landing page with stronger messaging, trust signals, and a premium conversion-focused layout"
         with _s2:
-            st.markdown('<div class="suggestion-card"><h4>Analyze Q3 Data</h4><p>Focus on user retention and conversion metrics...</p></div>', unsafe_allow_html=True)
+            st.markdown('<div class="suggestion-card"><h4>Audit workflow operations</h4><p>Review runtime health, retention signals, and delivery bottlenecks to guide the next sprint.</p></div>', unsafe_allow_html=True)
             if st.button("Try this →", key="sug2", use_container_width=True, type="secondary"):
-                _suggestion_prompt = "Analyze the Q3 user retention data and highlight key trends"
+                _suggestion_prompt = "Analyze recent workflow performance, highlight bottlenecks, and suggest the top operational improvements"
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
         if _suggestion_prompt:
@@ -502,10 +380,10 @@ if page == "💬 Task Executor":
 # 2. AGENT FACTORY
 # ═══════════════════════════════════════════════════════════════════════════
 elif page == "🏭 Agent Factory":
-    st.header("🏭 Agent Factory")
-    st.markdown(
-        "Describe the role of the agent you want. "
-        "AetheerAI will automatically research, provision, and register it."
+    _render_section_shell(
+        "Agent Design",
+        "Build specialist agents for the work ahead.",
+        "Describe the role and AetheerAI will research, provision, and register the right specialist for your workspace.",
     )
 
     col1, col2 = st.columns([1, 2])
@@ -599,7 +477,11 @@ elif page == "🏭 Agent Factory":
 # 3. SYSTEM ORCHESTRATOR
 # ═══════════════════════════════════════════════════════════════════════════
 elif page == "👥 System Orchestrator":
-    st.header("👥 System Orchestrator")
+    _render_section_shell(
+        "Coordination Modes",
+        "Compose systems, pipelines, and debates.",
+        "Move from single-agent execution to managed teams without losing clarity over handoffs, sequencing, or outcomes.",
+    )
 
     _orch_tab1, _orch_tab2, _orch_tab3 = st.tabs([
         "🏗️ Build AI System",
@@ -770,10 +652,10 @@ elif page == "👥 System Orchestrator":
 # 4. TRAIN AI
 # ═══════════════════════════════════════════════════════════════════════════
 elif page == "🎓 Train AI":
-    st.header("🎓 Train AI")
-    st.markdown(
-        "Shape how AetheerAI and individual agents think, respond, and behave. "
-        "Instructions you write here are injected directly into every AI prompt."
+    _render_section_shell(
+        "Instruction Layer",
+        "Train behavior, not just outputs.",
+        "Shape how AetheerAI and individual agents think, respond, and behave with system-wide and per-agent guidance.",
     )
 
     tab_global, tab_agent = st.tabs(["🌐 AetheerAI System Instructions", "🤖 Agent Instructions"])
@@ -914,7 +796,11 @@ elif page == "🎓 Train AI":
 # 5. SETTINGS & EXPORT
 # ═══════════════════════════════════════════════════════════════════════════
 elif page == "⚙️ Settings & Export":
-    st.header("⚙️ Settings & Export")
+    _render_section_shell(
+        "Runtime Configuration",
+        "Tune providers, models, and export settings.",
+        "Keep the operator view consistent while managing credentials, model routing, and deployment-facing configuration.",
+    )
 
     import json as _json
     import urllib.request as _urllib_req
