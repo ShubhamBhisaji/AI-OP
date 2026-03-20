@@ -782,6 +782,20 @@ def upsert_my_customer_supabase_config(
             supabase_service_role_key=req.supabase_service_role_key,
             schema=req.schema,
         )
+    except APIRequestError as exc:
+        if getattr(exc, "status_code", None) == 404:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AetheerAI Supabase is missing the platform bootstrap tables. "
+                    "Run the platform_supabase_sql from /api/auth/setup/sql in the "
+                    "AetheerAI Supabase SQL editor, then retry."
+                ),
+            ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to save customer Supabase config in AetheerAI Supabase: {exc}",
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=502,

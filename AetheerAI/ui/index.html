@@ -1116,11 +1116,11 @@ pre {
 
     <div class="alert alert-info">
       <span>ℹ️</span>
-      <span>Run the SQL below <b>once</b> in your Supabase SQL editor, then enter your project credentials.</span>
+      <span>Run both SQL blocks below <b>once</b> in the matching Supabase SQL editors, then enter your project credentials.</span>
     </div>
 
     <div class="form-group">
-      <label>Setup SQL — run this in your Supabase SQL editor</label>
+      <label>Customer bootstrap SQL — run this in your Supabase SQL editor</label>
       <div style="position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
         <textarea id="onboard-customer-sql" readonly
           style="width:100%;min-height:160px;max-height:260px;resize:vertical;font-family:monospace;font-size:11.5px;padding:12px 12px 12px 12px;background:var(--bg2);color:var(--text1);border:none;outline:none;box-sizing:border-box;overflow-y:auto;">-- Loading SQL...</textarea>
@@ -1129,6 +1129,23 @@ pre {
           Copy
         </button>
       </div>
+    </div>
+
+    <div class="form-group">
+      <label>Platform bootstrap SQL — run this once in AetheerAI Supabase</label>
+      <div style="position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+        <textarea id="onboard-platform-sql" readonly
+          style="width:100%;min-height:160px;max-height:260px;resize:vertical;font-family:monospace;font-size:11.5px;padding:12px 12px 12px 12px;background:var(--bg2);color:var(--text1);border:none;outline:none;box-sizing:border-box;overflow-y:auto;">-- Loading SQL...</textarea>
+        <button onclick="copyPlatformSQL()"
+          style="position:absolute;top:8px;right:8px;padding:4px 12px;font-size:12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;">
+          Copy
+        </button>
+      </div>
+    </div>
+
+    <div class="alert alert-warning">
+      <span>⚠️</span>
+      <span>If Save &amp; Continue returns a 404, the platform bootstrap table is still missing in AetheerAI Supabase.</span>
     </div>
 
     <div class="modal-split">Your Supabase credentials</div>
@@ -2420,15 +2437,28 @@ async function showOnboardingModal() {
   try {
     const res = await apiFetch('/api/auth/setup/sql');
     // API returns { customer_supabase_sql, platform_supabase_sql }
-    const sql = (res.data && res.data.customer_supabase_sql) || res.data || '-- No SQL required --';
-    document.getElementById('onboard-customer-sql').value = typeof sql === 'string' ? sql : JSON.stringify(sql, null, 2);
+    const data = res.data || {};
+    const customerSql = data.customer_supabase_sql || '-- No customer SQL required --';
+    const platformSql = data.platform_supabase_sql || '-- No platform SQL required --';
+    document.getElementById('onboard-customer-sql').value = typeof customerSql === 'string' ? customerSql : JSON.stringify(customerSql, null, 2);
+    document.getElementById('onboard-platform-sql').value = typeof platformSql === 'string' ? platformSql : JSON.stringify(platformSql, null, 2);
   } catch (e) {
     document.getElementById('onboard-customer-sql').value = '-- Could not load SQL: ' + e.message;
+    document.getElementById('onboard-platform-sql').value = '-- Could not load SQL: ' + e.message;
   }
 }
 
 function copyCustomerSQL() {
   const el = document.getElementById('onboard-customer-sql');
+  const sql = el.value;
+  if (!sql) return;
+  navigator.clipboard.writeText(sql)
+    .then(() => toast('SQL copied to clipboard!', 'success'))
+    .catch(() => { el.select(); document.execCommand('copy'); toast('SQL copied!', 'success'); });
+}
+
+function copyPlatformSQL() {
+  const el = document.getElementById('onboard-platform-sql');
   const sql = el.value;
   if (!sql) return;
   navigator.clipboard.writeText(sql)

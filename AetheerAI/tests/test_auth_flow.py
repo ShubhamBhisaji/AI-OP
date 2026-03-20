@@ -136,3 +136,34 @@ def test_login_logout_revokes_token(auth_client):
     )
     assert revoked.status_code == 401
     assert revoked.json()["detail"] == "Token revoked"
+
+
+def test_setup_supabase_missing_platform_tables_returns_clear_hint(auth_client, monkeypatch):
+    register = auth_client.post(
+        "/api/auth/register",
+        json={"email": "carol@example.com", "password": "password123"},
+    )
+    assert register.status_code == 201
+    token = register.json()["access_token"]
+
+    def _raise_missing_table(**kwargs):
+        raise auth_mod.APIRequestError(
+            "supabase",
+            "insert failed for table 'aetheer_customer_supabase_configs'",
+            status_code=404,
+        )
+
+    monkeypatch.setattr(auth_mod, "save_customer_supabase_config", _raise_missing_table)
+
+    response = auth_client.put(
+        "/api/auth/setup/supabase",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "supabase_url": "https://example.supabase.co",
+            "supabase_anon_key": "anon-key-value",
+            "supabase_service_role_key": "service-role-key-value",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "platform bootstrap tables" in response.json()["detail"]
