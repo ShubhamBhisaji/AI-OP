@@ -1153,7 +1153,7 @@ pre {
           <button class="btn btn-primary btn-sm" onclick="saveApiUrl()">Save Connection</button>
         </div>
         <div class="card">
-          <div class="card-title">AI Runtime</div>
+          <div class="card-title">AI Configuration</div>
           <div class="form-group mt12">
             <label>Provider</label>
             <select id="settings-ai-provider">
@@ -1167,9 +1167,18 @@ pre {
           <div class="form-group mt12">
             <label>Model (optional)</label>
             <input id="settings-ai-model" placeholder="Leave blank to use provider default" />
-            <div style="font-size:12px;color:var(--text3);margin-top:6px">Requires admin privileges when authentication is enabled.</div>
           </div>
-          <button class="btn btn-primary btn-sm" onclick="saveAiRuntime()">Apply AI Runtime</button>
+          <div class="form-group mt12">
+            <label>API Key (optional)</label>
+            <input id="settings-ai-api-key" type="password" placeholder="Paste a new key to update" autocomplete="off" />
+            <div id="settings-ai-key-status" style="font-size:12px;color:var(--text3);margin-top:6px">No API key saved for this user.</div>
+          </div>
+          <div class="form-group mt12">
+            <label>AI API Endpoint (optional)</label>
+            <input id="settings-ai-base-url" placeholder="https://api.openai.com/v1" autocomplete="off" />
+            <div style="font-size:12px;color:var(--text3);margin-top:6px">Leave API Key blank to keep the existing saved key.</div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="saveAiRuntime()">Save AI Configuration</button>
         </div>
         <div class="card">
           <div class="card-title">System Info</div>
@@ -1247,41 +1256,12 @@ pre {
   <div class="modal-box" style="max-width:660px;">
     <div class="modal-header">
       <h2>Connect Your Supabase Project</h2>
-      <p>AetheerAI can mirror your goals &amp; tasks to your own Supabase project for backup and analytics.</p>
+      <p>Link your own Supabase project to store and sync your AetheerAI goals, tasks, and analytics.</p>
     </div>
 
     <div class="alert alert-info">
       <span>ℹ️</span>
-      <span>Run both SQL blocks below <b>once</b> in the matching Supabase SQL editors, then enter your project credentials.</span>
-    </div>
-
-    <div class="form-group">
-      <label>Customer bootstrap SQL — run this in your Supabase SQL editor</label>
-      <div style="position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-        <textarea id="onboard-customer-sql" readonly
-          style="width:100%;min-height:160px;max-height:260px;resize:vertical;font-family:monospace;font-size:11.5px;padding:12px 12px 12px 12px;background:var(--bg2);color:var(--text1);border:none;outline:none;box-sizing:border-box;overflow-y:auto;">-- Loading SQL...</textarea>
-        <button onclick="copyCustomerSQL()"
-          style="position:absolute;top:8px;right:8px;padding:4px 12px;font-size:12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;">
-          Copy
-        </button>
-      </div>
-    </div>
-
-    <div class="form-group">
-      <label>Platform bootstrap SQL — run this once in AetheerAI Supabase</label>
-      <div style="position:relative;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-        <textarea id="onboard-platform-sql" readonly
-          style="width:100%;min-height:160px;max-height:260px;resize:vertical;font-family:monospace;font-size:11.5px;padding:12px 12px 12px 12px;background:var(--bg2);color:var(--text1);border:none;outline:none;box-sizing:border-box;overflow-y:auto;">-- Loading SQL...</textarea>
-        <button onclick="copyPlatformSQL()"
-          style="position:absolute;top:8px;right:8px;padding:4px 12px;font-size:12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;">
-          Copy
-        </button>
-      </div>
-    </div>
-
-    <div class="alert alert-warning">
-      <span>⚠️</span>
-      <span>If Save &amp; Continue returns a 404, the platform bootstrap table is still missing in AetheerAI Supabase.</span>
+      <span>Enter your Supabase project credentials below. We'll automatically configure the necessary tables on first connection.</span>
     </div>
 
     <div class="modal-split">Your Supabase credentials</div>
@@ -1356,13 +1336,15 @@ function _resolveApiBase() {
 let API_BASE = _resolveApiBase();
 let _JWT_TOKEN = localStorage.getItem('aetheer_jwt_token') || '';
 let _CURRENT_USER = null;
+let _authCheckInProgress = false;
 const _DEFAULT_AI_PROVIDERS = ['github', 'openai', 'claude', 'gemini', 'ollama'];
 
 /* ══ API helper ════════════════════════════════════════════════════ */
 async function apiFetch(path, opts = {}) {
   const url = API_BASE + path;
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-  const isPublicPath = path === '/api/health' || path.startsWith('/api/auth');
+  const isPublicPath = path === '/api/health' || path.startsWith('/api/auth/login') || path.startsWith('/api/auth/register');
+  const isAuthStateCheck = path === '/api/auth/me';
 
   if (!_JWT_TOKEN && !isPublicPath) {
     throw new Error('Unauthorized (401): please sign in to access protected endpoints.');
@@ -1378,16 +1360,14 @@ async function apiFetch(path, opts = {}) {
   if (!res.ok) {
     let msg = json.detail || json.error || `HTTP ${res.status}`;
     if (res.status === 401) {
-      if (_JWT_TOKEN) {
+      if (_JWT_TOKEN && isAuthStateCheck) {
         msg = 'Session expired or invalid token. Please sign in again.';
-        // Clear token and show landing page
         _JWT_TOKEN = '';
         _CURRENT_USER = null;
         localStorage.removeItem('aetheer_jwt_token');
         showLandingPage();
-      } else {
+      } else if (!_JWT_TOKEN) {
         msg = 'Unauthorized (401): please sign in to access protected endpoints.';
-        showLandingPage();
       }
     }
     throw new Error(msg);
@@ -2073,6 +2053,9 @@ async function loadSettings() {
   document.getElementById('link-swagger').href = base + '/docs';
   document.getElementById('link-redoc').href   = base + '/redoc';
   setAiProviderOptions(_DEFAULT_AI_PROVIDERS);
+  document.getElementById('settings-ai-api-key').value = '';
+  document.getElementById('settings-ai-base-url').value = '';
+  document.getElementById('settings-ai-key-status').textContent = 'No API key saved for this user.';
   
   // Show user info if authenticated
   const userInfoEl = document.getElementById('settings-user-info');
@@ -2113,6 +2096,32 @@ async function loadSettings() {
       ['Offline Model', d.offline_model],
     ].map(([k,v]) => `<div><span style="color:var(--text3)">${k}:</span> <b style="color:var(--text)">${escHtml(String(v||'—'))}</b></div>`).join('');
   } catch (_) {}
+
+  try {
+    const r = await apiFetch('/api/auth/settings/ai-api');
+    const d = r.data || {};
+    const savedProvider = String(d.provider || '').trim().toLowerCase();
+    if (savedProvider) {
+      const select = document.getElementById('settings-ai-provider');
+      const hasOption = Array.from(select.options).some(opt => opt.value === savedProvider);
+      if (!hasOption) {
+        const option = document.createElement('option');
+        option.value = savedProvider;
+        option.textContent = savedProvider;
+        select.appendChild(option);
+      }
+      select.value = savedProvider;
+    }
+    if (d.model != null) {
+      document.getElementById('settings-ai-model').value = String(d.model || '').trim();
+    }
+    if (d.base_url) {
+      document.getElementById('settings-ai-base-url').value = String(d.base_url).trim();
+    }
+    if (d.api_key) {
+      document.getElementById('settings-ai-key-status').textContent = 'Saved key: ' + String(d.api_key);
+    }
+  } catch (_) {}
 }
 
 function saveApiUrl() {
@@ -2147,25 +2156,66 @@ function saveApiUrl() {
 async function saveAiRuntime() {
   const provider = document.getElementById('settings-ai-provider').value.trim().toLowerCase();
   const model = document.getElementById('settings-ai-model').value.trim();
+  const apiKey = document.getElementById('settings-ai-api-key').value.trim();
+  const baseUrlRaw = document.getElementById('settings-ai-base-url').value.trim();
 
   if (!provider) {
     toast('Select a provider first.', 'error');
     return;
   }
 
+  let baseUrl = null;
+  if (baseUrlRaw) {
+    try {
+      baseUrl = new URL(baseUrlRaw).toString().replace(/\/+$/, '');
+    } catch (_) {
+      toast('Enter a valid AI API endpoint URL.', 'error');
+      return;
+    }
+  }
+
+  const configPayload = {
+    provider,
+    model: model || null,
+  };
+  if (apiKey) {
+    configPayload.api_key = apiKey;
+  }
+  if (baseUrl) {
+    configPayload.base_url = baseUrl;
+  }
+
   try {
-    const r = await apiFetch('/api/system/ai/runtime', {
-      method: 'POST',
-      body: JSON.stringify({ provider, model: model || null }),
+    await apiFetch('/api/auth/settings/ai-api', {
+      method: 'PUT',
+      body: JSON.stringify(configPayload),
     });
-    const d = r.data || {};
-    const activeProvider = d.provider || provider;
-    const activeModel = d.model || model || 'default';
-    toast(`AI runtime switched to ${activeProvider}/${activeModel}`, 'success');
-    loadDashboard();
+
+    if (apiKey) {
+      const masked = apiKey.length <= 9 ? '***' : `${apiKey.slice(0, 4)}***${apiKey.slice(-2)}`;
+      document.getElementById('settings-ai-key-status').textContent = 'Saved key: ' + masked;
+    } else {
+      document.getElementById('settings-ai-key-status').textContent = 'API key unchanged.';
+    }
+    document.getElementById('settings-ai-api-key').value = '';
+
+    try {
+      const r = await apiFetch('/api/system/ai/runtime', {
+        method: 'POST',
+        body: JSON.stringify({ provider, model: model || null }),
+      });
+      const d = r.data || {};
+      const activeProvider = d.provider || provider;
+      const activeModel = d.model || model || 'default';
+      toast(`AI configuration saved. Runtime active: ${activeProvider}/${activeModel}`, 'success');
+      loadDashboard();
+    } catch (runtimeErr) {
+      toast('AI configuration saved, but runtime switch failed: ' + runtimeErr.message, 'info');
+    }
+
     loadSettings();
   } catch (e) {
-    toast('AI runtime update failed: ' + e.message, 'error');
+    toast('AI configuration update failed: ' + e.message, 'error');
   }
 }
 
@@ -2178,553 +2228,502 @@ function openDocs(type) {
 let _pgMode = 'chat';
 let _pgHistory = [];
 
-// Wire mode buttons
-document.querySelectorAll('.pg-mode').forEach(btn => {
-  btn.addEventListener('click', () => {
-    _pgMode = btn.dataset.mode;
-    document.querySelectorAll('.pg-mode').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    ['chat', 'goal', 'agent'].forEach(m => {
-      const el = document.getElementById('pg-opts-' + m);
-      if (el) el.style.display = (m === _pgMode) ? '' : 'none';
+  // Wire mode buttons
+  document.querySelectorAll('.pg-mode').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _pgMode = btn.dataset.mode;
+      document.querySelectorAll('.pg-mode').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      ['chat', 'goal', 'agent'].forEach(m => {
+        const el = document.getElementById('pg-opts-' + m);
+        if (el) el.style.display = (m === _pgMode) ? '' : 'none';
+      });
+      const ph = {
+        chat:  'Type your message or question here…',
+        goal:  'Describe the goal for AetheerAI to accomplish… e.g. Build a REST API for a todo app',
+        agent: 'Describe the task for the agent to execute…',
+      };
+      document.getElementById('pg-input').placeholder = ph[_pgMode] || '…';
     });
-    const ph = {
-      chat:  'Type your message or question here…',
-      goal:  'Describe the goal for AetheerAI to accomplish… e.g. Build a REST API for a todo app',
-      agent: 'Describe the task for the agent to execute…',
-    };
-    document.getElementById('pg-input').placeholder = ph[_pgMode] || '…';
   });
-});
 
-async function pgLoadAgents() {
-  try {
-    const r = await apiFetch('/api/agents');
-    const dl = document.getElementById('pg-agents-list');
-    if (dl) dl.innerHTML = (r.data || []).map(a => `<option value="${escHtml(a.name)}">`).join('');
-  } catch (_) {}
-}
-
-async function pgRun() {
-  const input = document.getElementById('pg-input').value.trim();
-  if (!input) { toast('Enter something first', 'error'); return; }
-
-  const btn     = document.getElementById('pg-run-btn');
-  const btnText = document.getElementById('pg-btn-text');
-  btn.disabled  = true;
-  btnText.innerHTML = '<span class="spinner"></span> Running…';
-
-  const elapsedEl = document.getElementById('pg-elapsed');
-  const t0 = Date.now();
-  const timer = setInterval(() => {
-    elapsedEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + 's';
-  }, 100);
-
-  const outputEl = document.getElementById('pg-output');
-  const emptyEl  = document.getElementById('pg-output-empty');
-  if (emptyEl) emptyEl.style.display = 'none';
-  outputEl.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;padding:20px 0;color:var(--text3);font-size:13px">
-      <span class="spinner" style="width:20px;height:20px;border-width:3px"></span>
-      Processing — please wait…
-    </div>`;
-
-  try {
-    let resultText = '';
-    let outputHtml = '';
-
-    if (_pgMode === 'chat') {
-      const system = document.getElementById('pg-system').value.trim();
-      const r = await apiFetch('/api/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message: input, system_prompt: system || null, history: [] })
-      });
-      resultText = r.data?.reply || '(no reply)';
-      outputHtml = `
-        <div>
-          <div class="pg-col-label" style="margin-bottom:10px">💬 Chat Response</div>
-          <div class="pg-stream-text" style="font-size:14px;line-height:1.85;color:var(--text)">${escHtml(resultText)}</div>
-        </div>`;
-
-    } else if (_pgMode === 'goal') {
-      const name     = document.getElementById('pg-goal-name').value.trim() || ('pg-' + Date.now());
-      const parallel = document.getElementById('pg-parallel').checked;
-      const bg       = document.getElementById('pg-bg').checked;
-      const r = await apiFetch('/api/goals', {
-        method: 'POST',
-        body: JSON.stringify({ name, goal: input, background: bg, parallel })
-      });
-      const g = r.data || {};
-      resultText = g.plan_summary || g.goal || input;
-      outputHtml = pgRenderGoalOutput(g);
-
-    } else if (_pgMode === 'agent') {
-      const agentName = document.getElementById('pg-agent-name').value.trim();
-      if (!agentName) { toast('Enter an agent name in the options above', 'error'); throw new Error('_noagent'); }
-      const r = await apiFetch(`/api/agents/${encodeURIComponent(agentName)}/run`, {
-        method: 'POST',
-        body: JSON.stringify({ task: input })
-      });
-      resultText = r.data?.result || JSON.stringify(r.data, null, 2);
-      outputHtml = `
-        <div>
-          <div class="pg-col-label" style="margin-bottom:10px">🤖 Agent Result — <span style="color:var(--accent);text-transform:none;letter-spacing:0">${escHtml(agentName)}</span></div>
-          <pre style="background:transparent;border:none;padding:0;font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-word;margin:0;font-family:inherit">${escHtml(String(resultText))}</pre>
-        </div>`;
-    }
-
-    clearInterval(timer);
-    const took = ((Date.now() - t0) / 1000).toFixed(2);
-    elapsedEl.textContent = `✓ Done in ${took}s`;
-
-    outputEl.innerHTML = outputHtml;
-
-    _pgHistory.unshift({ mode: _pgMode, input, output: resultText, took, ts: Date.now() });
-    if (_pgHistory.length > 20) _pgHistory.pop();
-    pgRenderHistory();
-
-  } catch (e) {
-    clearInterval(timer);
-    elapsedEl.textContent = '';
-    if (e.message !== '_noagent') {
-      outputEl.innerHTML = `<div class="alert alert-error" style="margin:0">⚠ ${escHtml(e.message)}</div>`;
-    } else {
-      outputEl.innerHTML = `<div class="alert alert-warn" style="margin:0">Enter an agent name in the options panel above, then try again.</div>`;
-    }
-  }
-
-  btn.disabled = false;
-  btnText.textContent = '▶ Run';
-}
-
-function pgRenderGoalOutput(g) {
-  if (!g || !g.id) return `<div class="alert alert-warn" style="margin:0">Goal submitted — check Goals &amp; Projects for status.</div>`;
-  const pct    = g.progress?.percent ?? 0;
-  const status = g.status || 'pending';
-  return `
-    <div>
-      <div class="pg-col-label" style="margin-bottom:12px">🎯 Goal Result</div>
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-        <span class="badge ${statusBadgeClass(status)}">${statusIcon(status)} ${escHtml(status)}</span>
-        <span style="font-size:11.5px;color:var(--text3)">ID: ${escHtml((g.id||'').slice(0,12))}…</span>
-        ${g.spent_usd != null ? `<span style="margin-left:auto;font-size:12px;color:var(--text3)">${fmtCost(g.spent_usd)}</span>` : ''}
-      </div>
-
-      ${pct > 0 ? `
-      <div style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:5px">
-          <span>Progress</span><span>${pct}%</span>
-        </div>
-        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-      </div>` : ''}
-
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px">
-        ${[['Done', g.completed_tasks||0, 'var(--green)'],
-           ['Failed', g.failed_tasks||0, 'var(--red)'],
-           ['Total', g.total_tasks||0, 'var(--text)'],
-          ].map(([k,v,c]) => `
-          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center">
-            <div style="font-size:20px;font-weight:800;color:${c}">${v}</div>
-            <div style="font-size:10px;color:var(--text3);margin-top:2px">${k}</div>
-          </div>`).join('')}
-      </div>
-
-      ${g.plan_summary ? `
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text3);margin-bottom:8px">Summary</div>
-        <div style="font-size:13px;color:var(--text2);line-height:1.75">${escHtml(g.plan_summary)}</div>
-      </div>` : ''}
-
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-sm btn-secondary" onclick="nav('goals')">View in Goals →</button>
-        ${g.id ? `<button class="btn btn-sm btn-secondary" onclick="openGoalDetail('${escHtml(g.id)}');nav('goals')">Details</button>` : ''}
-      </div>
-    </div>`;
-}
-
-function pgRenderHistory() {
-  const wrap = document.getElementById('pg-history-wrap');
-  const container = document.getElementById('pg-history');
-  if (!_pgHistory.length) { wrap.style.display = 'none'; return; }
-  wrap.style.display = 'block';
-  const modeIcon = { chat: '💬', goal: '🎯', agent: '🤖' };
-  container.innerHTML = _pgHistory.slice(0, 8).map((item, i) => `
-    <div class="pg-history-item" onclick="pgRerun(${i})">
-      <div style="font-size:16px;flex-shrink:0">${modeIcon[item.mode] || '⚡'}</div>
-      <div style="flex:1;min-width:0">
-        <div class="pg-history-input">${escHtml(item.input.slice(0, 100))}</div>
-        <div class="pg-history-output">${escHtml(String(item.output || '').slice(0, 130))}</div>
-      </div>
-      <div style="font-size:11px;color:var(--text3);flex-shrink:0">${item.took}s</div>
-    </div>`).join('');
-}
-
-function pgRerun(i) {
-  const item = _pgHistory[i];
-  if (!item) return;
-  document.getElementById('pg-input').value = item.input;
-  const modeBtn = document.querySelector(`.pg-mode[data-mode="${item.mode}"]`);
-  if (modeBtn) modeBtn.click();
-  document.getElementById('pg-input').focus();
-}
-
-function pgClear() {
-  document.getElementById('pg-input').value = '';
-  document.getElementById('pg-elapsed').textContent = '';
-  document.getElementById('pg-output').innerHTML = `
-    <div class="empty-state" style="padding:40px" id="pg-output-empty">
-      <div class="empty-icon">⚡</div>
-      <h3>Output appears here</h3>
-      <p>Type something and click Run</p>
-    </div>`;
-}
-
-/* ══ Auth Management ════════════════════════════════════════════════ */
-
-// Track if we're already checking auth to prevent recursion
-let _authCheckInProgress = false;
-let _hasShownOnce = false;
-
-async function checkAuth() {
-  // Prevent recursive checkAuth calls
-  if (_authCheckInProgress) return false;
-  _authCheckInProgress = true;
-  
-  try {
-    if (!_JWT_TOKEN) {
-      showLandingPage();
-      return false;
-    }
-    
+  async function pgLoadAgents() {
+    const select = document.getElementById('pg-agent');
+    if (!select) return;
     try {
-      const r = await apiFetch('/api/auth/me');
-      _CURRENT_USER = r.data;
-      updateAuthUI();
-      hideLandingPage();
-      return true;
-    } catch (e) {
-      const message = String((e && e.message) || '');
-      
-      // Only logout and show auth modal on actual 401 errors
-      if (message.includes('401')) {
-        _JWT_TOKEN = '';
-        _CURRENT_USER = null;
-        localStorage.removeItem('aetheer_jwt_token');
-        showLandingPage();
-        return false;
+      const r = await apiFetch('/api/agents');
+      const agents = r.data || [];
+      if (!agents.length) {
+        select.innerHTML = '<option value="">No agents available</option>';
+        return;
       }
-      
-      // For network errors, just show landing page without clearing token
-      if (_NETWORK_ERROR_RE.test(message)) {
-        toast('Cannot reach API at ' + API_BASE + '. Update Backend API URL in Settings.', 'error');
-        showLandingPage();
-        return false;
-      }
-      
-      // For other errors, show landing page
-      showLandingPage();
-      return false;
+      select.innerHTML = agents.map(a => `<option value="${escHtml(a.name)}">${escHtml(a.name)}</option>`).join('');
+    } catch (_) {
+      select.innerHTML = '<option value="">Failed to load</option>';
     }
-  } finally {
-    _authCheckInProgress = false;
   }
-}
 
-function showLandingPage() {
-  document.getElementById('landing-page').classList.remove('hidden');
-  document.getElementById('sidebar').style.display = 'none';
-  document.getElementById('main').style.display = 'none';
-}
+  async function pgRun() {
+    const input = document.getElementById('pg-input').value.trim();
+    if (!input) { toast('Enter some input first.', 'error'); return; }
 
-function hideLandingPage() {
-  document.getElementById('landing-page').classList.add('hidden');
-  document.getElementById('sidebar').style.display = 'flex';
-  document.getElementById('main').style.display = 'flex';
-}
+    const runBtn = document.getElementById('pg-run-btn');
+    const outputEl = document.getElementById('pg-output');
+    const elapsedEl = document.getElementById('pg-elapsed');
 
-function updateAuthUI() {
-  const user = _CURRENT_USER;
-  const sidebarBottom = document.querySelector('.sidebar-bottom');
-  if (!sidebarBottom) return;
+    runBtn.disabled = true;
+    runBtn.innerHTML = '<span class="spinner"></span> Running…';
+    outputEl.innerHTML = '<div class="pg-stream-text">Working…</div>';
 
-  if (!user) {
+    const t0 = performance.now();
+    let outputText = '';
+
+    try {
+      if (_pgMode === 'chat') {
+        const temperature = parseFloat(document.getElementById('pg-temp').value || '0.7');
+        const stream = document.getElementById('pg-stream').checked;
+
+        if (stream) {
+          const resp = await fetch(API_BASE + '/api/chat/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': _JWT_TOKEN ? ('Bearer ' + _JWT_TOKEN) : '' },
+            body: JSON.stringify({ message: input, temperature, stream: true }),
+          });
+
+          if (!resp.ok || !resp.body) {
+            throw new Error('Streaming failed');
+          }
+
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          outputText = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            outputText += chunk;
+            outputEl.innerHTML = `<div class="pg-stream-text">${escHtml(outputText)}</div>`;
+          }
+        } else {
+          const r = await apiFetch('/api/chat', {
+            method: 'POST',
+            body: JSON.stringify({ message: input, temperature }),
+          });
+          outputText = String(r.data?.response ?? r.response ?? '');
+          outputEl.innerHTML = `<div class="pg-stream-text">${escHtml(outputText)}</div>`;
+        }
+      }
+      else if (_pgMode === 'goal') {
+        const name = document.getElementById('pg-goal-name').value.trim() || 'Playground Goal';
+        const r = await apiFetch('/api/goals', {
+          method: 'POST',
+          body: JSON.stringify({ name, goal: input, background: true, parallel: true }),
+        });
+        const g = r.data || {};
+        outputText = renderGoalSummary(g);
+        outputEl.innerHTML = outputText;
+        loadDashboard();
+      }
+      else if (_pgMode === 'agent') {
+        const agent = document.getElementById('pg-agent').value;
+        if (!agent) throw new Error('Select an agent first.');
+        const r = await apiFetch('/api/agents/' + encodeURIComponent(agent) + '/run', {
+          method: 'POST',
+          body: JSON.stringify({ task: input }),
+        });
+        outputText = typeof r.data === 'string' ? r.data : JSON.stringify(r.data, null, 2);
+        outputEl.innerHTML = `<pre>${escHtml(outputText)}</pre>`;
+      }
+
+      const took = ((performance.now() - t0) / 1000).toFixed(2);
+      elapsedEl.textContent = `Completed in ${took}s`;
+
+      _pgHistory.unshift({
+        mode: _pgMode,
+        input,
+        output: outputText,
+        took,
+        ts: Date.now(),
+      });
+      _pgHistory = _pgHistory.slice(0, 20);
+      pgRenderHistory();
+    } catch (e) {
+      outputEl.innerHTML = `<div class="alert alert-error">${escHtml(e.message || 'Run failed')}</div>`;
+      toast(e.message || 'Run failed', 'error');
+    }
+
+    runBtn.disabled = false;
+    runBtn.innerHTML = '▶ Run';
+  }
+
+  function renderGoalSummary(g) {
+    return `<div class="card" style="padding:14px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <span class="badge ${statusBadgeClass(g.status || 'pending')}">${escHtml(g.status || 'pending')}</span>
+          <b style="font-size:14px;color:var(--text)">${escHtml(g.name || 'Goal')}</b>
+          <span style="font-size:11px;color:var(--text3);margin-left:auto">ID: ${escHtml((g.id || '').slice(0, 12))}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.7;margin-bottom:10px">${escHtml(g.goal || '')}</div>
+        ${g.plan_summary ? `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:var(--text3);margin-bottom:8px">Summary</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.75">${escHtml(g.plan_summary)}</div>
+        </div>` : ''}
+
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm btn-secondary" onclick="nav('goals')">View in Goals →</button>
+          ${g.id ? `<button class="btn btn-sm btn-secondary" onclick="openGoalDetail('${escHtml(g.id)}');nav('goals')">Details</button>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function pgRenderHistory() {
+    const wrap = document.getElementById('pg-history-wrap');
+    const container = document.getElementById('pg-history');
+    if (!_pgHistory.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    const modeIcon = { chat: '💬', goal: '🎯', agent: '🤖' };
+    container.innerHTML = _pgHistory.slice(0, 8).map((item, i) => `
+      <div class="pg-history-item" onclick="pgRerun(${i})">
+        <div style="font-size:16px;flex-shrink:0">${modeIcon[item.mode] || '⚡'}</div>
+        <div style="flex:1;min-width:0">
+          <div class="pg-history-input">${escHtml(item.input.slice(0, 100))}</div>
+          <div class="pg-history-output">${escHtml(String(item.output || '').slice(0, 130))}</div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);flex-shrink:0">${item.took}s</div>
+      </div>`).join('');
+  }
+
+  function pgRerun(i) {
+    const item = _pgHistory[i];
+    if (!item) return;
+    document.getElementById('pg-input').value = item.input;
+    const modeBtn = document.querySelector(`.pg-mode[data-mode="${item.mode}"]`);
+    if (modeBtn) modeBtn.click();
+    document.getElementById('pg-input').focus();
+  }
+
+  function pgClear() {
+    document.getElementById('pg-input').value = '';
+    document.getElementById('pg-elapsed').textContent = '';
+    document.getElementById('pg-output').innerHTML = `
+      <div class="empty-state" style="padding:40px" id="pg-output-empty">
+        <div class="empty-icon">⚡</div>
+        <h3>Output appears here</h3>
+        <p>Type something and click Run</p>
+      </div>`;
+  }
+
+  /* ══ Auth Management ════════════════════════════════════════════════ */
+  async function checkAuth() {
+    // Prevent recursive checkAuth calls
+    if (_authCheckInProgress) return false;
+    _authCheckInProgress = true;
+  
+    try {
+      if (!_JWT_TOKEN) {
+        showLandingPage();
+        return false;
+      }
+    
+      try {
+        const r = await apiFetch('/api/auth/me');
+        _CURRENT_USER = r.data;
+        updateAuthUI();
+        hideLandingPage();
+        return true;
+      } catch (e) {
+        const message = String((e && e.message) || '');
+      
+        // Only logout and show auth modal on actual 401 errors
+        if (message.includes('401')) {
+          _JWT_TOKEN = '';
+          _CURRENT_USER = null;
+          localStorage.removeItem('aetheer_jwt_token');
+          showLandingPage();
+          return false;
+        }
+      
+        // For network errors, just show landing page without clearing token
+        if (_NETWORK_ERROR_RE.test(message)) {
+          toast('Cannot reach API at ' + API_BASE + '. Update Backend API URL in Settings.', 'error');
+          showLandingPage();
+          return false;
+        }
+      
+        // For other errors, show landing page
+        showLandingPage();
+        return false;
+      }
+    } finally {
+      _authCheckInProgress = false;
+    }
+  }
+
+  function showLandingPage() {
+    document.getElementById('landing-page').classList.remove('hidden');
+    document.getElementById('sidebar').style.display = 'none';
+    document.getElementById('main').style.display = 'none';
+  }
+
+  function hideLandingPage() {
+    document.getElementById('landing-page').classList.add('hidden');
+    document.getElementById('sidebar').style.display = 'flex';
+    document.getElementById('main').style.display = 'flex';
+  }
+
+  function updateAuthUI() {
+    const user = _CURRENT_USER;
+    const sidebarBottom = document.querySelector('.sidebar-bottom');
+    if (!sidebarBottom) return;
+
+    if (!user) {
+      sidebarBottom.innerHTML = `
+        <div class="provider-pill">
+          <span class="dot" id="status-dot"></span>
+          <span>API: </span>
+          <b id="sidebar-provider">—</b>
+          <span style="color:var(--text3)">/</span>
+          <b id="sidebar-model" style="color:var(--accent2)">—</b>
+        </div>
+      `;
+      return;
+    }
+
     sidebarBottom.innerHTML = `
-      <div class="provider-pill">
+      <div class="provider-pill" style="margin-bottom:8px;">
         <span class="dot" id="status-dot"></span>
+        <span>User:</span>
+        <b>${escHtml(user.username || user.email || 'User')}</b>
+      </div>
+      <div class="provider-pill">
         <span>API: </span>
         <b id="sidebar-provider">—</b>
         <span style="color:var(--text3)">/</span>
         <b id="sidebar-model" style="color:var(--accent2)">—</b>
       </div>
     `;
-    return;
   }
 
-  sidebarBottom.innerHTML = `
-    <div class="provider-pill" style="margin-bottom:8px;">
-      <span class="dot" id="status-dot"></span>
-      <span>User:</span>
-      <b>${escHtml(user.username || user.email || 'User')}</b>
-    </div>
-    <div class="provider-pill">
-      <span>API: </span>
-      <b id="sidebar-provider">—</b>
-      <span style="color:var(--text3)">/</span>
-      <b id="sidebar-model" style="color:var(--accent2)">—</b>
-    </div>
-  `;
-}
-
-function showAuthModal() {
-  document.getElementById('auth-modal').style.display = 'flex';
-  document.getElementById('auth-login-form').style.display = 'block';
-  document.getElementById('auth-register-form').style.display = 'none';
-  document.getElementById('auth-modal-title').textContent = 'Sign In';
-  document.getElementById('auth-modal-subtitle').textContent = 'Access your AetheerAI workspace';
-  document.getElementById('auth-email').focus();
-}
-
-function closeAuthModal() {
-  document.getElementById('auth-modal').style.display = 'none';
-  ['auth-email', 'auth-password', 'reg-email', 'reg-password'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
-}
-
-function switchToRegister() {
-  document.getElementById('auth-login-form').style.display = 'none';
-  document.getElementById('auth-register-form').style.display = 'block';
-  document.getElementById('auth-modal-title').textContent = 'Create Account';
-  document.getElementById('auth-modal-subtitle').textContent = 'Join AetheerAI';
-  // Clear and focus
-  document.getElementById('reg-email').value = '';
-  document.getElementById('reg-password').value = '';
-  document.getElementById('reg-email').focus();
-}
-
-function switchToLogin() {
-  document.getElementById('auth-register-form').style.display = 'none';
-  document.getElementById('auth-login-form').style.display = 'block';
-  document.getElementById('auth-modal-title').textContent = 'Sign In';
-  document.getElementById('auth-modal-subtitle').textContent = 'Access your AetheerAI workspace';
-  // Clear and focus
-  document.getElementById('auth-email').value = '';
-  document.getElementById('auth-password').value = '';
-  document.getElementById('auth-email').focus();
-}
-
-async function submitLogin() {
-  const email = document.getElementById('auth-email').value.trim();
-  const password = document.getElementById('auth-password').value.trim();
-
-  if (!email || !password) {
-    toast('Enter email and password', 'error');
-    return;
+  function showAuthModal() {
+    document.getElementById('auth-modal').style.display = 'flex';
+    document.getElementById('auth-login-form').style.display = 'block';
+    document.getElementById('auth-register-form').style.display = 'none';
+    document.getElementById('auth-modal-title').textContent = 'Sign In';
+    document.getElementById('auth-modal-subtitle').textContent = 'Access your AetheerAI workspace';
+    document.getElementById('auth-email').focus();
   }
 
-  try {
-    const r = await fetch(API_BASE + '/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+  function closeAuthModal() {
+    document.getElementById('auth-modal').style.display = 'none';
+    ['auth-email', 'auth-password', 'reg-email', 'reg-password'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
     });
-
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      throw new Error(err.detail || 'Login failed');
-    }
-
-    const data = await r.json();
-    _JWT_TOKEN = data.access_token;
-    _CURRENT_USER = data.user;
-    localStorage.setItem('aetheer_jwt_token', _JWT_TOKEN);
-
-    toast('Welcome back!', 'success');
-    closeAuthModal();
-    updateAuthUI();
-    hideLandingPage();
-
-    if (data.requires_supabase_setup) {
-      showOnboardingModal();
-    } else {
-      loadDashboard();
-    }
-
-  } catch (e) {
-    toast('Login failed: ' + e.message, 'error');
-  }
-}
-
-async function submitRegister() {
-  const email = document.getElementById('reg-email').value.trim();
-  const password = document.getElementById('reg-password').value.trim();
-
-  if (!email || !password) {
-    toast('Fill in email and password', 'error');
-    return;
   }
 
-  try {
-    const r = await fetch(API_BASE + '/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      throw new Error(err.detail || 'Registration failed');
-    }
-
-    const data = await r.json();
-    _JWT_TOKEN = data.access_token;
-    _CURRENT_USER = data.user;
-    localStorage.setItem('aetheer_jwt_token', _JWT_TOKEN);
-
-    toast('Account created successfully!', 'success');
-    closeAuthModal();
-    updateAuthUI();
-    hideLandingPage();
-
-    if (data.requires_supabase_setup) {
-      showOnboardingModal();
-    } else {
-      loadDashboard();
-    }
-
-  } catch (e) {
-    toast('Registration failed: ' + e.message, 'error');
+  function switchToRegister() {
+    document.getElementById('auth-login-form').style.display = 'none';
+    document.getElementById('auth-register-form').style.display = 'block';
+    document.getElementById('auth-modal-title').textContent = 'Create Account';
+    document.getElementById('auth-modal-subtitle').textContent = 'Join AetheerAI';
+    // Clear and focus
+    document.getElementById('reg-email').value = '';
+    document.getElementById('reg-password').value = '';
+    document.getElementById('reg-email').focus();
   }
-}
 
-async function logout() {
-  try {
-    // Use a timeout for the logout request (10 seconds)
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-    
+  function switchToLogin() {
+    document.getElementById('auth-register-form').style.display = 'none';
+    document.getElementById('auth-login-form').style.display = 'block';
+    document.getElementById('auth-modal-title').textContent = 'Sign In';
+    document.getElementById('auth-modal-subtitle').textContent = 'Access your AetheerAI workspace';
+    // Clear and focus
+    document.getElementById('auth-email').value = '';
+    document.getElementById('auth-password').value = '';
+    document.getElementById('auth-email').focus();
+  }
+
+  async function submitLogin() {
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value.trim();
+
+    if (!email || !password) {
+      toast('Enter email and password', 'error');
+      return;
+    }
+
     try {
-      await fetch(API_BASE + '/api/auth/logout', {
+      const r = await fetch(API_BASE + '/api/auth/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + _JWT_TOKEN,
-        },
-        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       });
-    } finally {
-      clearTimeout(timeoutId);
+
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || 'Login failed');
+      }
+
+      const data = await r.json();
+      _JWT_TOKEN = data.access_token;
+      _CURRENT_USER = data.user;
+      localStorage.setItem('aetheer_jwt_token', _JWT_TOKEN);
+
+      toast('Welcome back!', 'success');
+      closeAuthModal();
+      updateAuthUI();
+      hideLandingPage();
+
+      if (data.requires_supabase_setup) {
+        showOnboardingModal();
+      } else {
+        loadDashboard();
+      }
+
+    } catch (e) {
+      toast('Login failed: ' + e.message, 'error');
     }
-  } catch (err) {
-    // Timeout or network error - log but continue with local logout
-    if (err.name !== 'AbortError') {
-      console.warn('Logout request error (continuing with local logout):', err.message);
+  }
+
+  async function submitRegister() {
+    const email = document.getElementById('reg-email').value.trim();
+    const password = document.getElementById('reg-password').value.trim();
+
+    if (!email || !password) {
+      toast('Fill in email and password', 'error');
+      return;
+    }
+
+    try {
+      const r = await fetch(API_BASE + '/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || 'Registration failed');
+      }
+
+      const data = await r.json();
+      _JWT_TOKEN = data.access_token;
+      _CURRENT_USER = data.user;
+      localStorage.setItem('aetheer_jwt_token', _JWT_TOKEN);
+
+      toast('Account created successfully!', 'success');
+      closeAuthModal();
+      updateAuthUI();
+      hideLandingPage();
+
+      if (data.requires_supabase_setup) {
+        showOnboardingModal();
+      } else {
+        loadDashboard();
+      }
+
+    } catch (e) {
+      toast('Registration failed: ' + e.message, 'error');
     }
   }
 
-  // Clear local session state
-  _JWT_TOKEN = '';
-  _CURRENT_USER = null;
-  localStorage.removeItem('aetheer_jwt_token');
-  updateAuthUI();
+  async function logout() {
+    try {
+      // Use a timeout for the logout request (10 seconds)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
+      try {
+        await fetch(API_BASE + '/api/auth/logout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + _JWT_TOKEN,
+          },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } catch (err) {
+      // Timeout or network error - log but continue with local logout
+      if (err.name !== 'AbortError') {
+        console.warn('Logout request error (continuing with local logout):', err.message);
+      }
+    }
+
+    // Clear local session state
+    _JWT_TOKEN = '';
+    _CURRENT_USER = null;
+    localStorage.removeItem('aetheer_jwt_token');
+    updateAuthUI();
   
-  // Close any open modals
-  document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
+    // Close any open modals
+    document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
   
-  // Show landing page (not auth modal)
-  showLandingPage();
+    // Show landing page (not auth modal)
+    showLandingPage();
   
-  toast('Signed out successfully', 'success');
-}
-
-/* ══ Supabase Onboarding ═════════════════════════════════════════════ */
-async function showOnboardingModal() {
-  document.getElementById('onboard-modal').style.display = 'flex';
-
-  try {
-    const res = await apiFetch('/api/auth/setup/sql');
-    // API returns { customer_supabase_sql, platform_supabase_sql }
-    const data = res.data || {};
-    const customerSql = data.customer_supabase_sql || '-- No customer SQL required --';
-    const platformSql = data.platform_supabase_sql || '-- No platform SQL required --';
-    document.getElementById('onboard-customer-sql').value = typeof customerSql === 'string' ? customerSql : JSON.stringify(customerSql, null, 2);
-    document.getElementById('onboard-platform-sql').value = typeof platformSql === 'string' ? platformSql : JSON.stringify(platformSql, null, 2);
-  } catch (e) {
-    document.getElementById('onboard-customer-sql').value = '-- Could not load SQL: ' + e.message;
-    document.getElementById('onboard-platform-sql').value = '-- Could not load SQL: ' + e.message;
-  }
-}
-
-function copyCustomerSQL() {
-  const el = document.getElementById('onboard-customer-sql');
-  const sql = el.value;
-  if (!sql) return;
-  navigator.clipboard.writeText(sql)
-    .then(() => toast('SQL copied to clipboard!', 'success'))
-    .catch(() => { el.select(); document.execCommand('copy'); toast('SQL copied!', 'success'); });
-}
-
-function copyPlatformSQL() {
-  const el = document.getElementById('onboard-platform-sql');
-  const sql = el.value;
-  if (!sql) return;
-  navigator.clipboard.writeText(sql)
-    .then(() => toast('SQL copied to clipboard!', 'success'))
-    .catch(() => { el.select(); document.execCommand('copy'); toast('SQL copied!', 'success'); });
-}
-
-async function saveSupabaseConfig() {
-  const url     = document.getElementById('onboard-url').value.trim();
-  const anonKey = document.getElementById('onboard-anon-key').value.trim();
-  const svcKey  = document.getElementById('onboard-key').value.trim();
-
-  if (!url || !anonKey) {
-    toast('Supabase URL and Anon Key are required', 'error');
-    return;
+    toast('Signed out successfully', 'success');
   }
 
-  try {
-    await apiFetch('/api/auth/setup/supabase', {
-      method: 'PUT',
-      body: JSON.stringify({
-        supabase_url: url,
-        supabase_anon_key: anonKey,
-        supabase_service_role_key: svcKey || undefined,
-      }),
-    });
+  /* ══ Supabase Onboarding ═════════════════════════════════════════════ */
+  async function showOnboardingModal() {
+    document.getElementById('onboard-modal').style.display = 'flex';
+    // Supabase setup is now automated - no SQL needed to be shown
+  }
 
-    toast('Supabase configuration saved!', 'success');
+  async function saveSupabaseConfig() {
+    const url     = document.getElementById('onboard-url').value.trim();
+    const anonKey = document.getElementById('onboard-anon-key').value.trim();
+    const svcKey  = document.getElementById('onboard-key').value.trim();
+
+    if (!url || !anonKey) {
+      toast('Supabase URL and Anon Key are required', 'error');
+      return;
+    }
+
+    try {
+      await apiFetch('/api/auth/setup/supabase', {
+        method: 'PUT',
+        body: JSON.stringify({
+          supabase_url: url,
+          supabase_anon_key: anonKey,
+          supabase_service_role_key: svcKey || undefined,
+        }),
+      });
+
+      toast('Supabase configuration saved!', 'success');
+      document.getElementById('onboard-modal').style.display = 'none';
+      loadDashboard();
+    } catch (e) {
+      toast('Failed to save: ' + e.message, 'error');
+    }
+  }
+
+  function skipOnboarding() {
     document.getElementById('onboard-modal').style.display = 'none';
     loadDashboard();
-  } catch (e) {
-    toast('Failed to save: ' + e.message, 'error');
   }
-}
 
-function skipOnboarding() {
-  document.getElementById('onboard-modal').style.display = 'none';
-  loadDashboard();
-}
-
-/* ══ Init ════════════════════════════════════════════════════════════ */
-(async function init() {
-  // Check auth first - this will show landing page if not authenticated
-  const isAuthenticated = await checkAuth();
-  if (isAuthenticated) {
-    loadDashboard();
-  } else {
-    // Make sure landing page is visible
-    showLandingPage();
-  }
-  
-  // Poll dashboard every 30s (only if authenticated)
-  setInterval(() => { 
-    if (_JWT_TOKEN && currentPage === 'dashboard') {
+  /* ══ Init ════════════════════════════════════════════════════════════ */
+  (async function init() {
+    // Check auth first - this will show landing page if not authenticated
+    const isAuthenticated = await checkAuth();
+    if (isAuthenticated) {
       loadDashboard();
+    } else {
+      // Make sure landing page is visible
+      showLandingPage();
     }
-  }, 30000);
-})();
+
+    // Poll dashboard every 30s (only if authenticated)
+    setInterval(() => {
+      if (_JWT_TOKEN && currentPage === 'dashboard') {
+        loadDashboard();
+      }
+    }, 30000);
+  })();
 </script>
 </body>
 </html>

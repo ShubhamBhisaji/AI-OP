@@ -30,6 +30,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
+from core.env_loader import load_env
 from api.customer_supabase import (
     get_customer_ai_api_settings,
     get_customer_setup_status,
@@ -43,6 +44,9 @@ from api.customer_supabase import (
 from api.database import ActivityLog, RevokedAuthToken, User, get_db
 from integrations.errors import APIRequestError
 from integrations.supabase_client import SupabaseClient
+
+# Ensure .env variables are loaded before reading auth configuration.
+load_env()
 
 logger = logging.getLogger("aetheer.api.auth")
 
@@ -94,7 +98,10 @@ _SECRET = (os.getenv("JWT_SECRET") or "").strip()
 if not _SECRET:
     # Avoid a static default secret; generate a process-local key if unset.
     _SECRET = secrets.token_urlsafe(48)
-    logger.warning("JWT_SECRET not set; generated ephemeral signing key for this process.")
+    logger.warning(
+        "JWT_SECRET not set; generated an ephemeral signing key for this process. "
+        "Sessions will be invalid across restarts/workers. Set JWT_SECRET to a stable value."
+    )
 
 _ALG      = "HS256"
 try:
@@ -830,15 +837,31 @@ def update_my_ai_api_settings(
     req: AIAPISettingsRequest,
     current_user: User = Depends(get_current_user),
 ):
+    if hasattr(req, "model_dump"):
+        provided = req.model_dump(exclude_unset=True)
+    else:  # pydantic v1 compatibility
+        provided = req.dict(exclude_unset=True)
+
+    existing: dict[str, object] = {}
+    if {"model", "api_key", "base_url", "extra"} - set(provided.keys()):
+        existing_row = get_customer_ai_api_settings(user_id=current_user.id, include_secret=True)
+        if isinstance(existing_row, dict):
+            existing = existing_row
+
+    model = provided.get("model", existing.get("model"))
+    api_key = provided.get("api_key", existing.get("api_key"))
+    base_url = provided.get("base_url", existing.get("base_url"))
+    extra = provided.get("extra", existing.get("extra") or {})
+
     try:
         row = save_customer_ai_api_settings(
             user_id=current_user.id,
             username=current_user.username,
             provider=req.provider,
-            model=req.model,
-            api_key=req.api_key,
-            base_url=req.base_url,
-            extra=req.extra,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            extra=extra,
         )
     except Exception as exc:
         raise HTTPException(
