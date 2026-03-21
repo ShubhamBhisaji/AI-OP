@@ -340,6 +340,29 @@ function renderRecentGoals(goals) {
   el.innerHTML = rows;
 }
 
+async function submitGoalWithQueueFallback(payload) {
+  try {
+    return await apiFetch('/api/goals', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e || '');
+    if (!/Direct goal execution is disabled on Vercel/i.test(msg)) {
+      throw e;
+    }
+    return await apiFetch('/api/queue/jobs', {
+      method: 'POST',
+      body: JSON.stringify({
+        task_type: 'goal',
+        task_data: payload,
+        priority: 'normal',
+        stream_results: true
+      })
+    });
+  }
+}
+
 /* Quick Goal */
 document.getElementById('quick-submit-btn').addEventListener('click', async () => {
   const name = document.getElementById('quick-name').value.trim();
@@ -348,13 +371,13 @@ document.getElementById('quick-submit-btn').addEventListener('click', async () =
   const btn = document.getElementById('quick-submit-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Running…';
   try {
-    const r = await apiFetch('/api/goals', {
-      method: 'POST',
-      body: JSON.stringify({ name, goal, background: true, parallel: true })
-    });
-    toast(`Goal accepted — ID: ${r.data?.id?.slice(0,8)}…`, 'success');
+    const payload = { name, goal, background: true, parallel: true };
+    const r = await submitGoalWithQueueFallback(payload);
+    const goalId = r.data?.id || r.data?.job_id || '';
+    const idText = goalId ? ` ID: ${String(goalId).slice(0, 8)}...` : '';
+    toast(`Goal accepted${idText}`, 'success');
     document.getElementById('quick-result').style.display = 'block';
-    document.getElementById('quick-result').innerHTML = `<div class="alert alert-success">✓ Goal submitted! <button class="btn btn-sm btn-secondary" onclick="nav('goals')" style="margin-left:8px">View →</button></div>`;
+    document.getElementById('quick-result').innerHTML = `<div class="alert alert-success">Goal submitted successfully. <button class="btn btn-sm btn-secondary" onclick="nav('goals')" style="margin-left:8px">View -></button></div>`;
     loadDashboard();
   } catch (e) { toast(e.message, 'error'); }
   btn.disabled = false; btn.innerHTML = '▶ Run Goal';
@@ -421,7 +444,7 @@ async function submitGoal() {
   const btn = document.getElementById('gm-submit-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Submitting…';
   try {
-    await apiFetch('/api/goals', { method: 'POST', body: JSON.stringify(payload) });
+    await submitGoalWithQueueFallback(payload);
     toast('Goal submitted!', 'success');
     closeGoalModal();
     loadGoals();

@@ -2535,8 +2535,15 @@ def design_agent(req: AgentDesignRequest, request: Request):
          summary="List agents",
          description="Returns all registered agents with their tools, skills, objectives, and permission level.")
 def list_agents():
-    kernel = _get_kernel()
-    return APIResponse(data=kernel.registry.list_all())
+    try:
+        kernel = _get_kernel()
+        data = kernel.registry.list_all()
+        if not isinstance(data, list):
+            data = []
+        return APIResponse(data=data)
+    except Exception as exc:
+        logger.warning("Agents list degraded: %s", exc)
+        return APIResponse(data=[], message="Agents are temporarily unavailable. Please try again shortly.")
 
 
 @app.get("/api/agents/{agent_name}", tags=["Agents"], response_model=APIResponse,
@@ -2697,7 +2704,16 @@ def chat(req: ChatRequest, request: Request):
             },
         )
         _attempt_runtime_failover(exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.warning("Chat degraded response due to adapter error: %s", exc)
+        return APIResponse(
+            data={
+                "reply": (
+                    "I am temporarily unable to reach the configured AI provider. "
+                    "Please try again in a moment or check Settings -> AI Configuration."
+                )
+            },
+            message="Chat response returned in degraded mode.",
+        )
 
 
 @app.get("/api/memory", tags=["Memory"], response_model=APIResponse,
@@ -2705,11 +2721,12 @@ def chat(req: ChatRequest, request: Request):
          description="Returns all key/value pairs in the specified memory namespace. "
                      "Default namespace is `global`. Agent-specific namespaces use the agent name.")
 def get_memory(namespace: str = "global"):
-    kernel = _get_kernel()
     try:
+        kernel = _get_kernel()
         data = kernel.memory.all(namespace=namespace)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.warning("Memory read degraded for namespace '%s': %s", namespace, exc)
+        return APIResponse(data={}, message="Memory is temporarily unavailable for this namespace.")
     return APIResponse(data=data)
 
 
