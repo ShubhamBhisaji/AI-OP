@@ -1202,6 +1202,12 @@ a {
   cursor: not-allowed;
 }
 
+.topbar-provider-apply {
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 999px;
+}
+
 .topbar-user {
   padding: 9px 12px;
   border-radius: 999px;

@@ -812,6 +812,7 @@ def save_customer_ai_api_settings(
         payload=payload,
         use_service_role=True,
         upsert=True,
+        on_conflict="user_id",
     )
     rows = _rows_from_response(response)
     return rows[0] if rows else payload

@@ -134,16 +134,22 @@ class SupabaseClient(BaseServiceClient):
         payload: Mapping[str, Any] | list[Mapping[str, Any]],
         use_service_role: bool = True,
         upsert: bool = False,
+        on_conflict: str | None = None,
     ) -> Any:
         headers = self._service_headers(use_service_role=use_service_role)
         headers["Prefer"] = "return=representation"
         if upsert:
             headers["Prefer"] = "return=representation,resolution=merge-duplicates"
 
+        params: dict[str, Any] = {}
+        if on_conflict:
+            params["on_conflict"] = str(on_conflict)
+
         return self._request(
             "POST",
             f"{self.config.rest_url}/{table}",
             headers=headers,
+            params=params or None,
             json_body=payload,
             expected_statuses=(200, 201),
             error_context=f"Supabase insert failed for table '{table}'",

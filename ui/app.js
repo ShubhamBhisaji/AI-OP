@@ -53,6 +53,7 @@ let _JWT_TOKEN = localStorage.getItem('aetheer_jwt_token') || '';
 let _CURRENT_USER = null;
 let _authCheckInProgress = false;
 let _authBusy = false;
+let _activeAiProvider = '';
 const _DEFAULT_AI_PROVIDERS = ['github', 'openai', 'claude', 'gemini', 'ollama'];
 const _PROVIDER_DEFAULT_MODEL = {
   openai: 'gpt-4o',
@@ -77,6 +78,29 @@ function updateApiConnectionState() {
   status.textContent = _usingCustomApiBase()
     ? 'Custom backend active. Change this only if your API lives on a different domain.'
     : 'Using the current app backend. You do not need to change this unless the API is hosted separately.';
+}
+
+function _normalizeProviderName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function setActiveAiProvider(provider) {
+  _activeAiProvider = _normalizeProviderName(provider);
+}
+
+function updateTopbarProviderApplyState() {
+  const topbarSelect = document.getElementById('topbar-provider-select');
+  const topbarApplyBtn = document.getElementById('topbar-provider-apply');
+  if (!topbarSelect || !topbarApplyBtn) return;
+
+  if (!_CURRENT_USER || _providerSwitchBusy) {
+    topbarApplyBtn.disabled = true;
+    return;
+  }
+
+  const selected = _normalizeProviderName(topbarSelect.value);
+  const active = _normalizeProviderName(_activeAiProvider);
+  topbarApplyBtn.disabled = !selected || !active || selected === active;
 }
 
 /* ══ API helper ════════════════════════════════════════════════════ */
@@ -226,6 +250,11 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
   else nav(currentPage);
 });
 
+const _topbarProviderSelect = document.getElementById('topbar-provider-select');
+if (_topbarProviderSelect) {
+  _topbarProviderSelect.addEventListener('change', updateTopbarProviderApplyState);
+}
+
 /* ══ Tab switcher ═══════════════════════════════════════════════════ */
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -306,12 +335,14 @@ async function loadDashboard() {
     setText('dash-uptime', `uptime ${uptimeText}`);
     document.getElementById('sidebar-provider').textContent = d.provider || '—';
     document.getElementById('sidebar-model').textContent    = d.model || '—';
+    setActiveAiProvider(d.provider);
     const quickProviderSelect = document.getElementById('topbar-provider-select');
     if (quickProviderSelect && d.provider) {
       const nextProvider = String(d.provider).trim().toLowerCase();
       const hasProvider = Array.from(quickProviderSelect.options).some(opt => opt.value === nextProvider);
       if (hasProvider) quickProviderSelect.value = nextProvider;
     }
+    updateTopbarProviderApplyState();
     setText('hero-provider', d.provider ? `${d.provider}${d.model ? ` · ${d.model}` : ''}` : 'No provider');
     setText('hero-uptime', uptimeText);
     setText('hero-running', String(projects.running ?? '—'));
@@ -905,10 +936,12 @@ function setAiProviderOptions(providers) {
       select.value = current;
     }
   });
+
+  updateTopbarProviderApplyState();
 }
 
 async function quickSwitchProvider(provider) {
-  const normalized = String(provider || '').trim().toLowerCase();
+  const normalized = _normalizeProviderName(provider);
   if (!normalized || _providerSwitchBusy) return;
   if (!_CURRENT_USER || !_JWT_TOKEN) {
     toast('Sign in first to switch providers.', 'error');
@@ -926,13 +959,21 @@ async function quickSwitchProvider(provider) {
 
   _providerSwitchBusy = true;
   if (topbarSelect) topbarSelect.disabled = true;
+  updateTopbarProviderApplyState();
   try {
     await saveAiRuntime();
     if (topbarSelect) topbarSelect.value = normalized;
   } finally {
     _providerSwitchBusy = false;
     if (topbarSelect) topbarSelect.disabled = !_CURRENT_USER;
+    updateTopbarProviderApplyState();
   }
+}
+
+async function quickApplyProvider() {
+  const topbarSelect = document.getElementById('topbar-provider-select');
+  if (!topbarSelect) return;
+  await quickSwitchProvider(topbarSelect.value);
 }
 
 function _setSupabaseSettingsStatus(message, tone = 'neutral') {
@@ -1016,13 +1057,16 @@ async function loadSettings() {
     const d = r.data;
     setAiProviderOptions(d.supported_providers);
     if (d.provider) {
-      document.getElementById('settings-ai-provider').value = String(d.provider).trim().toLowerCase();
+      const normalizedProvider = _normalizeProviderName(d.provider);
+      document.getElementById('settings-ai-provider').value = normalizedProvider;
+      setActiveAiProvider(normalizedProvider);
       const quickProviderSelect = document.getElementById('topbar-provider-select');
       if (quickProviderSelect) {
-        const activeProvider = String(d.provider).trim().toLowerCase();
+        const activeProvider = normalizedProvider;
         const hasProvider = Array.from(quickProviderSelect.options).some(opt => opt.value === activeProvider);
         if (hasProvider) quickProviderSelect.value = activeProvider;
       }
+      updateTopbarProviderApplyState();
     }
     if (d.model) {
       document.getElementById('settings-ai-model').value = String(d.model).trim();
@@ -1289,6 +1333,14 @@ async function saveAiRuntime() {
       const d = r.data || {};
       const activeProvider = d.provider || provider;
       const activeModel = d.model || model || 'default';
+      setActiveAiProvider(activeProvider);
+      const quickProviderSelect = document.getElementById('topbar-provider-select');
+      if (quickProviderSelect) {
+        const normalizedActiveProvider = _normalizeProviderName(activeProvider);
+        const hasOption = Array.from(quickProviderSelect.options).some(opt => opt.value === normalizedActiveProvider);
+        if (hasOption) quickProviderSelect.value = normalizedActiveProvider;
+      }
+      updateTopbarProviderApplyState();
       if (settingsStoredOnServer) {
         toast(`AI configuration saved. Runtime active: ${activeProvider}/${activeModel}`, 'success');
       } else {
@@ -1572,6 +1624,7 @@ let _pgHistory = [];
     const sidebarBottom = document.querySelector('.sidebar-bottom');
     const topbarProviderSelect = document.getElementById('topbar-provider-select');
     if (topbarProviderSelect) topbarProviderSelect.disabled = !user;
+    updateTopbarProviderApplyState();
     if (!sidebarBottom) return;
     setText('topbar-user', user ? (user.username || user.email || 'Operator') : 'Guest');
 

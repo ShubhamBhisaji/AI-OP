@@ -109,6 +109,8 @@ class AIAdapter:
             "completion_tokens": 0,
             "total_tokens": 0,
         }
+        self._provider_api_keys: dict[str, str] = {}
+        self._provider_api_bases: dict[str, str] = {}
         # ISSUE 7: optional EconomicGuardrails reference; set by the kernel
         # after both objects are constructed to avoid circular imports.
         self._guardrails: Any | None = None
@@ -252,6 +254,31 @@ class AIAdapter:
         self.model = (model or "").strip() or self._default_model(provider)
         logger.info("AIAdapter switched: provider=%s model=%s", self.provider, self.model)
 
+    def configure_provider(
+        self,
+        provider: str,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        provider_name = str(provider or "").strip().lower()
+        if provider_name not in SUPPORTED_PROVIDERS:
+            return
+
+        if api_key is not None:
+            cleaned_key = str(api_key).strip()
+            if cleaned_key:
+                self._provider_api_keys[provider_name] = cleaned_key
+            else:
+                self._provider_api_keys.pop(provider_name, None)
+
+        if base_url is not None:
+            cleaned_base = str(base_url).strip()
+            if cleaned_base:
+                self._provider_api_bases[provider_name] = cleaned_base
+            else:
+                self._provider_api_bases.pop(provider_name, None)
+
     def provider_health(self) -> dict[str, dict[str, Any]]:
         """Return provider failure and circuit-breaker state for troubleshooting."""
         now = time.monotonic()
@@ -338,18 +365,26 @@ class AIAdapter:
             )
         )
 
-    @staticmethod
-    def _provider_has_required_credentials(provider: str) -> bool:
+    def _provider_has_required_credentials(self, provider: str) -> bool:
         required_env = {
             "github": "GITHUB_TOKEN",
             "openai": "OPENAI_API_KEY",
             "claude": "ANTHROPIC_API_KEY",
             "gemini": "GEMINI_API_KEY",
         }
+        if (self._provider_api_keys.get(provider) or "").strip():
+            return True
         env_name = required_env.get(provider)
         if not env_name:
             return True
         return bool((os.environ.get(env_name) or "").strip())
+
+    def _provider_api_key(self, provider: str, env_name: str) -> str | None:
+        override = (self._provider_api_keys.get(provider) or "").strip()
+        if override:
+            return override
+        value = (os.environ.get(env_name) or "").strip()
+        return value or None
 
     @staticmethod
     def _load_failover_chain() -> tuple[str, ...]:
@@ -426,7 +461,7 @@ class AIAdapter:
         **kwargs,
     ) -> str:
         """GitHub Models — free AI via GitHub PAT. litellm routes as openai-compatible."""
-        token = os.environ.get("GITHUB_TOKEN")
+        token = self._provider_api_key("github", "GITHUB_TOKEN")
         if not token:
             raise EnvironmentError(
                 "GITHUB_TOKEN not set.\n"
@@ -471,7 +506,7 @@ class AIAdapter:
 
     def _chat_openai(self, messages: list[dict], **kwargs) -> str:
         model_override = kwargs.pop("model_override", None)
-        api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = self._provider_api_key("openai", "OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError("OPENAI_API_KEY environment variable not set.")
         call_kwargs = dict(kwargs)
@@ -488,7 +523,7 @@ class AIAdapter:
 
     def _chat_claude(self, messages: list[dict], **kwargs) -> str:
         model_override = kwargs.pop("model_override", None)
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        api_key = self._provider_api_key("claude", "ANTHROPIC_API_KEY")
         if not api_key:
             raise EnvironmentError("ANTHROPIC_API_KEY environment variable not set.")
         # litellm auto-detects Anthropic from the "claude-" prefix; add it if missing
@@ -508,7 +543,7 @@ class AIAdapter:
 
     def _chat_gemini(self, messages: list[dict], **kwargs) -> str:
         model_override = kwargs.pop("model_override", None)
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = self._provider_api_key("gemini", "GEMINI_API_KEY")
         if not api_key:
             raise EnvironmentError(
                 "GEMINI_API_KEY not set.\n"
@@ -560,8 +595,10 @@ class AIAdapter:
         """Reset the session token counters to zero."""
         self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    @staticmethod
-    def _provider_api_base(provider: str) -> str | None:
+    def _provider_api_base(self, provider: str) -> str | None:
+        override = (self._provider_api_bases.get(provider) or "").strip()
+        if override:
+            return override
         env_key = _PROVIDER_API_BASE_ENV_KEYS.get(provider)
         if not env_key:
             return None

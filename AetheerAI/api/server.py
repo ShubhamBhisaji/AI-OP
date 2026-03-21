@@ -38,10 +38,12 @@ from api.auth import (
     router as auth_router,
 )
 from api.customer_supabase import (
+    get_customer_ai_api_settings,
     is_customer_supabase_configured,
     record_user_agent_profile_best_effort,
     record_user_analytics_log_best_effort,
     record_user_token_usage_best_effort,
+    save_customer_ai_api_settings,
 )
 from api.database import GoalRun, SessionLocal, SystemLog, Task, init_db
 from api.db_router import router as db_router
@@ -90,6 +92,9 @@ _ml_engine = None
 _local_predictor = None
 _sqlite_log_handler: logging.Handler | None = None
 _ai_switch_lock = threading.RLock()
+_user_ai_runtime_cache: dict[int, tuple[float, str, str | None, str | None, str | None]] = {}
+_user_ai_runtime_cache_lock = threading.Lock()
+_user_ai_runtime_overrides: dict[int, tuple[float, str, str | None, str | None, str | None]] = {}
 _kill_switch_active = False
 _kill_switch_lock = threading.Lock()
 
@@ -441,6 +446,83 @@ def _runtime_active_provider_model() -> tuple[str, str]:
     if _kernel is not None:
         return _kernel.ai_adapter.provider, _kernel.ai_adapter.model
     return _resolve_ai_runtime()
+
+
+def _load_user_ai_runtime_preference(
+    user_id: int,
+) -> tuple[str, str | None, str | None, str | None] | None:
+    ttl_seconds = 15.0
+    now = time.time()
+    with _user_ai_runtime_cache_lock:
+        override = _user_ai_runtime_overrides.get(int(user_id))
+    if override is not None:
+        _, provider, model, api_key, base_url = override
+        return provider, model, api_key, base_url
+
+    with _user_ai_runtime_cache_lock:
+        cached = _user_ai_runtime_cache.get(int(user_id))
+    if cached is not None:
+        cached_at, provider, model, api_key, base_url = cached
+        if now - cached_at <= ttl_seconds:
+            return provider, model, api_key, base_url
+
+    try:
+        row = get_customer_ai_api_settings(user_id=int(user_id), include_secret=True)
+    except Exception:
+        return None
+    if not isinstance(row, dict):
+        return None
+
+    provider = str(row.get("provider") or "").strip().lower()
+    if provider not in set(SUPPORTED_PROVIDERS):
+        return None
+    model_raw = str(row.get("model") or "").strip()
+    model = model_raw or None
+    api_key_raw = str(row.get("api_key") or "").strip()
+    api_key = api_key_raw or None
+    base_url_raw = str(row.get("base_url") or "").strip()
+    base_url = base_url_raw or None
+
+    with _user_ai_runtime_cache_lock:
+        _user_ai_runtime_cache[int(user_id)] = (now, provider, model, api_key, base_url)
+    return provider, model, api_key, base_url
+
+
+def _invalidate_user_ai_runtime_preference(user_id: int | None) -> None:
+    if user_id is None:
+        return
+    with _user_ai_runtime_cache_lock:
+        _user_ai_runtime_cache.pop(int(user_id), None)
+        _user_ai_runtime_overrides.pop(int(user_id), None)
+
+
+def _apply_user_ai_runtime_preference(request: Request) -> None:
+    user_id = _connection_user_id(request)
+    if user_id is None:
+        return
+
+    preferred = _load_user_ai_runtime_preference(user_id)
+    if preferred is None:
+        return
+
+    preferred_provider, preferred_model, preferred_api_key, preferred_base_url = preferred
+    kernel = _get_kernel()
+    with _ai_switch_lock:
+        kernel.ai_adapter.configure_provider(
+            preferred_provider,
+            api_key=preferred_api_key,
+            base_url=preferred_base_url,
+        )
+        current_provider = str(kernel.ai_adapter.provider or "").strip().lower()
+        current_model = str(kernel.ai_adapter.model or "").strip()
+        target_model = preferred_model or AIAdapter._default_model(preferred_provider)
+
+        if current_provider == preferred_provider and current_model == target_model:
+            return
+
+        kernel.ai_adapter.switch(preferred_provider, preferred_model)
+        _response_cache.invalidate("health")
+        _response_cache.invalidate("system_status")
 
 
 def _attempt_runtime_failover(error: Exception | str) -> None:
@@ -1111,6 +1193,10 @@ async def security_middleware(request: Request, call_next):
 
             user_context_tokens = set_request_user(int(auth_user.id), str(auth_user.username))
             request.state.api_role = "admin" if auth_user.is_admin else "user"
+            try:
+                _apply_user_ai_runtime_preference(request)
+            except Exception as exc:
+                logger.warning("Unable to apply user AI runtime preference for user=%s: %s", auth_user.id, exc)
         else:
             # No API key fallback - require JWT authentication
             return _build_rejection(401, "Authentication required")
@@ -2138,6 +2224,9 @@ def switch_ai_runtime(req: AIRuntimeRequest, request: Request):
 
     target_model = (req.model or "").strip() or None
 
+    persisted = False
+    persist_error: str | None = None
+
     try:
         with _ai_switch_lock:
             if _kernel is not None:
@@ -2147,22 +2236,64 @@ def switch_ai_runtime(req: AIRuntimeRequest, request: Request):
             else:
                 active_provider = target_provider
                 active_model = target_model or AIAdapter._default_model(target_provider)
-
-            os.environ["AI_PROVIDER"] = active_provider
-            os.environ["AI_MODEL"] = active_model
             _response_cache.invalidate("health")
             _response_cache.invalidate("system_status")
+
+            user_id = _connection_user_id(request)
+            username = str(getattr(request.state, "current_username", "") or "")
+            if user_id is not None and username:
+                try:
+                    existing = get_customer_ai_api_settings(user_id=user_id, include_secret=True) or {}
+                    existing_provider = str(existing.get("provider") or "").strip().lower() if isinstance(existing, dict) else ""
+                    carry_api_key = (existing.get("api_key") if isinstance(existing, dict) and existing_provider == active_provider else None)
+                    carry_base_url = (existing.get("base_url") if isinstance(existing, dict) and existing_provider == active_provider else None)
+                    save_customer_ai_api_settings(
+                        user_id=user_id,
+                        username=username,
+                        provider=active_provider,
+                        model=active_model,
+                        api_key=carry_api_key,
+                        base_url=carry_base_url,
+                        extra=(existing.get("extra") if isinstance(existing, dict) else {}),
+                    )
+                    kernel = _get_kernel()
+                    kernel.ai_adapter.configure_provider(
+                        active_provider,
+                        api_key=carry_api_key,
+                        base_url=carry_base_url,
+                    )
+                    persisted = True
+                    _invalidate_user_ai_runtime_preference(user_id)
+                except Exception as exc:
+                    persist_error = str(exc)
+                    logger.warning("Runtime switch persistence skipped: %s", exc)
+                finally:
+                    with _user_ai_runtime_cache_lock:
+                        _user_ai_runtime_overrides[int(user_id)] = (
+                            time.time(),
+                            active_provider,
+                            active_model,
+                            locals().get("carry_api_key"),
+                            locals().get("carry_base_url"),
+                        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Runtime switch failed: {exc}")
+
+    message = "Runtime AI settings updated for this server process."
+    if persisted:
+        message = "Runtime AI settings updated and persisted to customer Supabase."
+    elif persist_error:
+        message = "Runtime AI settings updated for this server process. Persistent save is unavailable."
 
     return APIResponse(
         data={
             "provider": active_provider,
             "model": active_model,
             "supported_providers": list(SUPPORTED_PROVIDERS),
-            "persisted": False,
+            "persisted": persisted,
+            "persist_error": persist_error,
         },
-        message="Runtime AI settings updated for this server process.",
+        message=message,
     )
 
 
@@ -2363,8 +2494,15 @@ def run_collaboration(req: CollaborationRequest):
          summary="List collaboration sessions",
          description="Returns the most recent `limit` collaboration sessions (default: 50).")
 def list_collaborations(limit: int = 50):
-    kernel = _get_kernel()
-    return APIResponse(data=kernel.collaboration_sessions(limit=limit))
+    try:
+        kernel = _get_kernel()
+        data = kernel.collaboration_sessions(limit=limit)
+        if not isinstance(data, list):
+            data = []
+        return APIResponse(data=data)
+    except Exception as exc:
+        logger.warning("Collaborations list degraded: %s", exc)
+        return APIResponse(data=[], message="Collaborations are temporarily unavailable. Please try again shortly.")
 
 
 @app.get("/api/collaborations/{session_id}", tags=["Collaboration"], response_model=APIResponse,
