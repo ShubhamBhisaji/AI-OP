@@ -720,13 +720,54 @@ AI-OP/
 ├── src/                 Canonical package namespace (src-layout)
 ├── models/              Data pipelines, configs, and trained artifacts
 ├── api/                 Top-level API entry point (`api.server:app`)
-├── ui/                  Top-level static UI assets (`ui/index.html`)
+├── ui/                  Mirror copy of the packaged UI (synced from `AetheerAI/ui/`)
 ├── main.py              Unified root entry point
 └── AetheerAI/           Legacy implementation modules (kept for compatibility)
 ```
 
 The runtime remains backward-compatible: the `AetheerAI/` implementation stays
 intact while clean top-level architecture is exposed at repository root.
+
+## UI Source Of Truth
+
+- The deployed built-in web UI is served from `AetheerAI/ui/`.
+- Treat `AetheerAI/ui/index.html`, `AetheerAI/ui/styles.css`, and `AetheerAI/ui/app.js` as the only hand-edited UI files.
+- The top-level `ui/` folder is a mirror copy kept for compatibility and should be refreshed with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\sync_ui.ps1
+```
+
+- Do not make primary UI changes in the top-level `ui/` folder; rerun the sync script after editing `AetheerAI/ui/`.
+- VS Code workspace automation:
+
+**Available Workspace Commands** (after installing `ryuta46.multi-command` extension):
+
+| Command | Action | Use Case |
+|---------|--------|----------|
+| `multiCommand.syncUiMirrorAndOpenScm` | Sync + open Source Control view | Review git diff and staged changes |
+| `multiCommand.syncUiMirrorAndOpenProblems` | Sync + open Problems panel | Check lint/build errors after sync |
+
+- Optional user keybinding snippets for `keybindings.json`:
+
+```json
+[
+  {
+    "key": "ctrl+alt+u",
+    "command": "extension.multiCommand.execute",
+    "args": {
+      "command": "multiCommand.syncUiMirrorAndOpenScm"
+    }
+  },
+  {
+    "key": "ctrl+alt+shift+u",
+    "command": "extension.multiCommand.execute",
+    "args": {
+      "command": "multiCommand.syncUiMirrorAndOpenProblems"
+    }
+  }
+]
+```
 
 ---
 

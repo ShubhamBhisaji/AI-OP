@@ -72,8 +72,8 @@
           </div>
         </div>
         <div class="landing-cta">
-          <button class="btn btn-secondary" onclick="switchToRegister(); showAuthModal()">Create Account</button>
-          <button class="btn btn-primary" onclick="switchToLogin(); showAuthModal()">Sign In</button>
+          <button class="btn btn-secondary" onclick="showAuthModal('register')">Create Account</button>
+          <button class="btn btn-primary" onclick="showAuthModal('login')">Sign In</button>
         </div>
         <div class="landing-meta">
           <span>Human oversight stays in the loop.</span>
@@ -855,45 +855,87 @@
 
 <!-- ══ AUTH MODAL ════════════════════════════════════════════════════ -->
 <div id="auth-modal" class="modal-overlay" style="display:none;">
-  <div class="modal-box">
+  <div class="modal-box modal-box-auth">
     <button class="modal-close-x" onclick="closeAuthModal()">✕</button>
-    <div class="modal-header">
-      <h2 id="auth-modal-title">Sign In</h2>
-      <p id="auth-modal-subtitle">Access your Tecbunny-built AetheerAI workspace</p>
-    </div>
-    <div class="auth-intro">
-      <span class="auth-pill">Secure operator access</span>
-      <p>Designed by Tecbunny Solutions for teams that need visibility, control, and a cleaner AI operations experience.</p>
-    </div>
-    
-    <div id="auth-login-form">
-      <div class="form-group">
-        <label for="auth-email">Email</label>
-        <input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" />
-      </div>
-      <div class="form-group">
-        <label for="auth-password">Password</label>
-        <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password" />
-      </div>
-      <div class="modal-footer" style="justify-content: space-between;">
-        <button class="btn btn-secondary btn-sm" onclick="switchToRegister()">Create Account</button>
-        <button class="btn btn-primary" onclick="submitLogin()">Sign In</button>
-      </div>
-    </div>
+    <div class="auth-layout">
+      <section class="auth-showcase">
+        <span class="auth-pill">Secure operator access</span>
+        <h3>Run autonomous work with visible human oversight.</h3>
+        <p class="auth-copy">AetheerAI is built for operators who need governed execution, memory visibility, and a cleaner front door into the workspace.</p>
+        <div class="auth-highlights">
+          <div class="auth-highlight">
+            <strong>Mission control first</strong>
+            <span>Goals, agents, memory, and audit logs stay connected in one operator surface.</span>
+          </div>
+          <div class="auth-highlight">
+            <strong>Secure by default</strong>
+            <span>JWT-backed sessions keep access scoped to authenticated workspace members.</span>
+          </div>
+          <div class="auth-highlight">
+            <strong>Ready for setup</strong>
+            <span>New workspaces can connect Supabase immediately after account creation.</span>
+          </div>
+        </div>
+        <div class="auth-meta-row">
+          <span class="auth-meta-chip">Built by Tecbunny Solutions</span>
+          <span class="auth-meta-chip">Goals + Agents + Audit</span>
+        </div>
+      </section>
 
-    <div id="auth-register-form" style="display:none;">
-      <div class="form-group">
-        <label for="reg-email">Email *</label>
-        <input id="reg-email" type="email" placeholder="you@example.com" autocomplete="email" />
-      </div>
-      <div class="form-group">
-        <label for="reg-password">Password *</label>
-        <input id="reg-password" type="password" placeholder="••••••••" autocomplete="new-password" />
-      </div>
-      <div class="modal-footer" style="justify-content: space-between;">
-        <button class="btn btn-secondary btn-sm" onclick="switchToLogin()">Back to Sign In</button>
-        <button class="btn btn-primary" onclick="submitRegister()">Create Account</button>
-      </div>
+      <section class="auth-panel">
+        <div class="modal-header auth-header">
+          <span id="auth-modal-eyebrow" class="auth-overline">Operator sign in</span>
+          <h2 id="auth-modal-title">Sign In</h2>
+          <p id="auth-modal-subtitle">Access your Tecbunny-built AetheerAI workspace</p>
+        </div>
+
+        <div class="auth-mode-switch" role="tablist" aria-label="Authentication mode">
+          <button id="auth-tab-login" class="auth-mode-btn active" type="button" role="tab" aria-controls="auth-login-form" aria-selected="true" tabindex="0" onclick="switchToLogin()">Sign In</button>
+          <button id="auth-tab-register" class="auth-mode-btn" type="button" role="tab" aria-controls="auth-register-form" aria-selected="false" tabindex="-1" onclick="switchToRegister()">Create Account</button>
+        </div>
+
+        <div id="auth-login-form">
+          <p class="auth-form-copy"><strong>Welcome back.</strong> Sign in to resume your workspace, active goals, and runtime history.</p>
+          <div class="form-group">
+            <label for="auth-email">Email</label>
+            <input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" onkeydown="handleAuthKey(event, 'login')" />
+          </div>
+          <div class="form-group">
+            <label for="auth-password">Password</label>
+            <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="handleAuthKey(event, 'login')" />
+          </div>
+          <div class="auth-helper-row">
+            <span>Use the operator account linked to this workspace.</span>
+            <span>Protected with JWT sessions.</span>
+          </div>
+          <div class="modal-footer auth-footer" style="justify-content: space-between;">
+            <button id="auth-register-alt" class="btn btn-secondary btn-sm" type="button" onclick="switchToRegister()">Create Account</button>
+            <button id="auth-login-submit" class="btn btn-primary auth-submit" type="button" onclick="submitLogin()">Sign In</button>
+          </div>
+        </div>
+
+        <div id="auth-register-form" style="display:none;">
+          <p class="auth-form-copy"><strong>Create an operator account.</strong> You can connect your storage backend right after signup if this workspace still needs setup.</p>
+          <div class="form-group">
+            <label for="reg-email">Email *</label>
+            <input id="reg-email" type="email" placeholder="you@example.com" autocomplete="email" onkeydown="handleAuthKey(event, 'register')" />
+          </div>
+          <div class="form-group">
+            <label for="reg-password">Password *</label>
+            <input id="reg-password" type="password" placeholder="Use at least 8 characters" autocomplete="new-password" onkeydown="handleAuthKey(event, 'register')" />
+          </div>
+          <div class="auth-helper-row">
+            <span>Use a strong password for your operator account.</span>
+            <span>Supabase setup can continue after signup.</span>
+          </div>
+          <div class="modal-footer auth-footer" style="justify-content: space-between;">
+            <button id="auth-login-alt" class="btn btn-secondary btn-sm" type="button" onclick="switchToLogin()">Back to Sign In</button>
+            <button id="auth-register-submit" class="btn btn-primary auth-submit" type="button" onclick="submitRegister()">Create Account</button>
+          </div>
+        </div>
+
+        <p class="auth-note">Human oversight stays in the loop. Once signed in, you can inspect memory, review logs, and launch governed goal runs from one workspace.</p>
+      </section>
     </div>
   </div>
 </div>

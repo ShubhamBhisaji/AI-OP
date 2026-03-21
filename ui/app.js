@@ -52,6 +52,7 @@ let API_BASE = _resolveApiBase();
 let _JWT_TOKEN = localStorage.getItem('aetheer_jwt_token') || '';
 let _CURRENT_USER = null;
 let _authCheckInProgress = false;
+let _authBusy = false;
 const _DEFAULT_AI_PROVIDERS = ['github', 'openai', 'claude', 'gemini', 'ollama'];
 const AUTH_LOGIN_SUBTITLE = 'Access your Tecbunny-built AetheerAI workspace';
 const AUTH_REGISTER_SUBTITLE = 'Create your Tecbunny operator account';
@@ -1514,46 +1515,101 @@ let _pgHistory = [];
     `;
   }
 
-  function showAuthModal() {
-    document.getElementById('auth-modal').style.display = 'flex';
-    document.getElementById('auth-login-form').style.display = 'block';
-    document.getElementById('auth-register-form').style.display = 'none';
-    document.getElementById('auth-modal-title').textContent = 'Sign In';
-    document.getElementById('auth-modal-subtitle').textContent = AUTH_LOGIN_SUBTITLE;
-    document.getElementById('auth-email').focus();
+  function _setAuthModalState(open) {
+    const authModal = document.getElementById('auth-modal');
+    if (!authModal) return;
+    authModal.style.display = open ? 'flex' : 'none';
+    document.body.classList.toggle('auth-modal-open', open);
   }
 
-  function closeAuthModal() {
-    document.getElementById('auth-modal').style.display = 'none';
+  function _focusAuthField(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    requestAnimationFrame(() => el.focus());
+  }
+
+  function _setAuthMode(mode, shouldFocus = true) {
+    const isRegister = mode === 'register';
+    const loginForm = document.getElementById('auth-login-form');
+    const registerForm = document.getElementById('auth-register-form');
+    const title = document.getElementById('auth-modal-title');
+    const subtitle = document.getElementById('auth-modal-subtitle');
+    const eyebrow = document.getElementById('auth-modal-eyebrow');
+    const loginTab = document.getElementById('auth-tab-login');
+    const registerTab = document.getElementById('auth-tab-register');
+
+    if (!loginForm || !registerForm || !title || !subtitle || !eyebrow || !loginTab || !registerTab) return;
+
+    loginForm.style.display = isRegister ? 'none' : 'block';
+    registerForm.style.display = isRegister ? 'block' : 'none';
+    title.textContent = isRegister ? 'Create Account' : 'Sign In';
+    subtitle.textContent = isRegister ? AUTH_REGISTER_SUBTITLE : AUTH_LOGIN_SUBTITLE;
+    eyebrow.textContent = isRegister ? 'Create operator account' : 'Operator sign in';
+    loginTab.classList.toggle('active', !isRegister);
+    registerTab.classList.toggle('active', isRegister);
+    loginTab.setAttribute('aria-selected', isRegister ? 'false' : 'true');
+    registerTab.setAttribute('aria-selected', isRegister ? 'true' : 'false');
+    loginTab.setAttribute('tabindex', isRegister ? '-1' : '0');
+    registerTab.setAttribute('tabindex', isRegister ? '0' : '-1');
+    if (shouldFocus) _focusAuthField(isRegister ? 'reg-email' : 'auth-email');
+  }
+
+  function _setAuthBusy(mode, busy) {
+    _authBusy = busy;
+    const loginSubmit = document.getElementById('auth-login-submit');
+    const registerSubmit = document.getElementById('auth-register-submit');
+    const controls = ['auth-tab-login', 'auth-tab-register', 'auth-login-alt', 'auth-register-alt'];
+
+    controls.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = busy;
+    });
+
+    if (loginSubmit) {
+      loginSubmit.disabled = busy;
+      loginSubmit.textContent = busy && mode === 'login' ? 'Signing In…' : 'Sign In';
+    }
+    if (registerSubmit) {
+      registerSubmit.disabled = busy;
+      registerSubmit.textContent = busy && mode === 'register' ? 'Creating…' : 'Create Account';
+    }
+  }
+
+  function showAuthModal(mode = 'login') {
+    if (!_JWT_TOKEN) showLandingPage();
+    _setAuthBusy(mode, false);
+    _setAuthModalState(true);
+    _setAuthMode(mode);
+  }
+
+  function closeAuthModal(force = false) {
+    if (_authBusy && !force) return;
+    _setAuthModalState(false);
     ['auth-email', 'auth-password', 'reg-email', 'reg-password'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
+    _setAuthMode('login', false);
   }
 
   function switchToRegister() {
-    document.getElementById('auth-login-form').style.display = 'none';
-    document.getElementById('auth-register-form').style.display = 'block';
-    document.getElementById('auth-modal-title').textContent = 'Create Account';
-    document.getElementById('auth-modal-subtitle').textContent = AUTH_REGISTER_SUBTITLE;
-    // Clear and focus
-    document.getElementById('reg-email').value = '';
-    document.getElementById('reg-password').value = '';
-    document.getElementById('reg-email').focus();
+    _setAuthMode('register');
   }
 
   function switchToLogin() {
-    document.getElementById('auth-register-form').style.display = 'none';
-    document.getElementById('auth-login-form').style.display = 'block';
-    document.getElementById('auth-modal-title').textContent = 'Sign In';
-    document.getElementById('auth-modal-subtitle').textContent = AUTH_LOGIN_SUBTITLE;
-    // Clear and focus
-    document.getElementById('auth-email').value = '';
-    document.getElementById('auth-password').value = '';
-    document.getElementById('auth-email').focus();
+    _setAuthMode('login');
+  }
+
+  function handleAuthKey(event, mode) {
+    if (event.key !== 'Enter') return;
+    if (_authBusy) return;
+    event.preventDefault();
+    if (mode === 'register') submitRegister();
+    else submitLogin();
   }
 
   async function submitLogin() {
+    if (_authBusy) return;
     const email = document.getElementById('auth-email').value.trim();
     const password = document.getElementById('auth-password').value.trim();
 
@@ -1562,6 +1618,7 @@ let _pgHistory = [];
       return;
     }
 
+    _setAuthBusy('login', true);
     try {
       const r = await fetch(API_BASE + '/api/auth/login', {
         method: 'POST',
@@ -1579,6 +1636,7 @@ let _pgHistory = [];
       _CURRENT_USER = data.user;
       localStorage.setItem('aetheer_jwt_token', _JWT_TOKEN);
 
+      _setAuthBusy('login', false);
       toast('Welcome back!', 'success');
       closeAuthModal();
       updateAuthUI();
@@ -1592,10 +1650,13 @@ let _pgHistory = [];
 
     } catch (e) {
       toast('Login failed: ' + e.message, 'error');
+    } finally {
+      if (_authBusy) _setAuthBusy('login', false);
     }
   }
 
   async function submitRegister() {
+    if (_authBusy) return;
     const email = document.getElementById('reg-email').value.trim();
     const password = document.getElementById('reg-password').value.trim();
 
@@ -1604,6 +1665,7 @@ let _pgHistory = [];
       return;
     }
 
+    _setAuthBusy('register', true);
     try {
       const r = await fetch(API_BASE + '/api/auth/register', {
         method: 'POST',
@@ -1621,6 +1683,7 @@ let _pgHistory = [];
       _CURRENT_USER = data.user;
       localStorage.setItem('aetheer_jwt_token', _JWT_TOKEN);
 
+      _setAuthBusy('register', false);
       toast('Account created successfully!', 'success');
       closeAuthModal();
       updateAuthUI();
@@ -1634,6 +1697,8 @@ let _pgHistory = [];
 
     } catch (e) {
       toast('Registration failed: ' + e.message, 'error');
+    } finally {
+      if (_authBusy) _setAuthBusy('register', false);
     }
   }
 
@@ -1670,6 +1735,7 @@ let _pgHistory = [];
   
     // Close any open modals
     document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
+    document.body.classList.remove('auth-modal-open');
   
     // Show landing page (not auth modal)
     showLandingPage();
@@ -1682,6 +1748,20 @@ let _pgHistory = [];
     document.getElementById('onboard-modal').style.display = 'flex';
     // Supabase setup is now automated - no SQL needed to be shown
   }
+
+  const _authModal = document.getElementById('auth-modal');
+  if (_authModal) {
+    _authModal.addEventListener('click', event => {
+      if (event.target === _authModal) closeAuthModal();
+    });
+  }
+
+  document.addEventListener('keydown', event => {
+    const authModal = document.getElementById('auth-modal');
+    if (event.key === 'Escape' && authModal && authModal.style.display === 'flex') {
+      closeAuthModal();
+    }
+  });
 
   async function saveSupabaseConfig() {
     const url     = document.getElementById('onboard-url').value.trim();

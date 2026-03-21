@@ -1,3 +1,29 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+	"multiCommand.commands": [
+		{
+			"command": "multiCommand.syncUiMirrorAndOpenScm",
+			"label": "Sync UI Mirror and Open Source Control",
+			"interval": 400,
+			"sequence": [
+				{
+					"command": "workbench.action.tasks.runTask",
+					"args": "Sync UI Mirror + Review"
+				},
+				"workbench.view.scm"
+			]
+		},
+		{
+			"command": "multiCommand.syncUiMirrorAndOpenProblems",
+			"label": "Sync UI Mirror and Open Problems",
+			"interval": 400,
+			"sequence": [
+				{
+					"command": "workbench.action.tasks.runTask",
+					"args": "Sync UI Mirror + Review"
+				},
+				"workbench.action.problems.focus"
+			]
+		}
+	],
+	"python-envs.defaultEnvManager": "ms-python.python:system"
 }
