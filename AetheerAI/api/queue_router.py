@@ -971,6 +971,7 @@ def _enqueue_single_job(
 
     _enforce_payload_size_limits_for_values(task_data, metadata)
 
+    job_persisted = True
     try:
         store.create_job(
             job_id=job_id,
@@ -994,8 +995,8 @@ def _enqueue_single_job(
                     "deduplicated": True,
                 }
 
-        logger.error("Failed to create Supabase job row %s: %s", job_id, exc)
-        raise HTTPException(status_code=502, detail="Failed to persist job in Supabase") from exc
+        logger.warning("Proceeding without Supabase job row for %s: %s", job_id, exc)
+        job_persisted = False
 
     try:
         payload = build_queue_payload(
@@ -1015,10 +1016,11 @@ def _enqueue_single_job(
         queue_depth = queue.push_job(payload)
     except Exception as exc:
         logger.error("Failed to push queue payload for job %s: %s", job_id, exc)
-        try:
-            store.mark_failed(job_id, f"Queue publish failed: {exc}")
-        except Exception as update_exc:
-            logger.warning("Unable to mark job %s as failed after queue error: %s", job_id, update_exc)
+        if job_persisted:
+            try:
+                store.mark_failed(job_id, f"Queue publish failed: {exc}")
+            except Exception as update_exc:
+                logger.warning("Unable to mark job %s as failed after queue error: %s", job_id, update_exc)
         raise HTTPException(status_code=502, detail="Failed to enqueue job in Upstash Redis") from exc
 
     try:
@@ -1038,6 +1040,7 @@ def _enqueue_single_job(
         "queue_depth": queue_depth,
         "priority": priority,
         "deduplicated": False,
+        "persisted": job_persisted,
     }
 
 

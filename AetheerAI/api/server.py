@@ -2692,18 +2692,24 @@ def chat(req: ChatRequest, request: Request):
         )
         return APIResponse(data={"reply": reply})
     except Exception as exc:
-        _record_request_log_best_effort(
-            request,
-            event_type="chat",
-            action="chat_request",
-            status="error",
-            metadata={
-                "message_chars": len(str(req.message or "")),
-                "history_turns": len(req.history or []),
-                "error": str(exc)[:220],
-            },
-        )
-        _attempt_runtime_failover(exc)
+        try:
+            _record_request_log_best_effort(
+                request,
+                event_type="chat",
+                action="chat_request",
+                status="error",
+                metadata={
+                    "message_chars": len(str(req.message or "")),
+                    "history_turns": len(req.history or []),
+                    "error": str(exc)[:220],
+                },
+            )
+        except Exception:
+            pass
+        try:
+            _attempt_runtime_failover(exc)
+        except Exception as failover_exc:
+            logger.warning("Chat failover hook failed: %s", failover_exc)
         logger.warning("Chat degraded response due to adapter error: %s", exc)
         return APIResponse(
             data={
