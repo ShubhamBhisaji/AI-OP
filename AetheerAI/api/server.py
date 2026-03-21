@@ -2650,7 +2650,6 @@ Optional `history` lets you maintain multi-turn context (last 20 turns are sent)
 Optional `system_prompt` overrides the default assistant persona for this request.
 """)
 def chat(req: ChatRequest, request: Request):
-    kernel = _get_kernel()
     messages: list[dict[str, str]] = []
     if req.system_prompt:
         messages.append({"role": "system", "content": req.system_prompt})
@@ -2658,6 +2657,7 @@ def chat(req: ChatRequest, request: Request):
     messages.append({"role": "user", "content": req.message})
 
     try:
+        kernel = _get_kernel()
         reply = kernel.ai_adapter.chat(messages)
         _record_runtime_ai_success()
 

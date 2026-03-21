@@ -1186,6 +1186,22 @@ a {
   font-size: 12px;
 }
 
+.topbar-provider-select {
+  min-height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.03);
+  color: var(--text2);
+  padding: 8px 12px;
+  font-size: 12px;
+  min-width: 120px;
+}
+
+.topbar-provider-select:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 .topbar-user {
   padding: 9px 12px;
   border-radius: 999px;
@@ -1859,6 +1875,7 @@ body.auth-modal-open #landing-page .landing-shell {
 
   .topbar-user,
   .status-indicator,
+  .topbar-provider-select,
   .btn-sm {
     min-height: 42px;
   }

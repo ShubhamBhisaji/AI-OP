@@ -54,6 +54,12 @@ let _CURRENT_USER = null;
 let _authCheckInProgress = false;
 let _authBusy = false;
 const _DEFAULT_AI_PROVIDERS = ['github', 'openai', 'claude', 'gemini', 'ollama'];
+const _PROVIDER_DEFAULT_MODEL = {
+  openai: 'gpt-4o',
+  gemini: 'gemini-2.5-flash-lite',
+  ollama: 'llama3.2:1b'
+};
+let _providerSwitchBusy = false;
 const AUTH_LOGIN_SUBTITLE = 'Access your Tecbunny-built AetheerAI workspace';
 const AUTH_REGISTER_SUBTITLE = 'Create your Tecbunny operator account';
 
@@ -300,6 +306,12 @@ async function loadDashboard() {
     setText('dash-uptime', `uptime ${uptimeText}`);
     document.getElementById('sidebar-provider').textContent = d.provider || '—';
     document.getElementById('sidebar-model').textContent    = d.model || '—';
+    const quickProviderSelect = document.getElementById('topbar-provider-select');
+    if (quickProviderSelect && d.provider) {
+      const nextProvider = String(d.provider).trim().toLowerCase();
+      const hasProvider = Array.from(quickProviderSelect.options).some(opt => opt.value === nextProvider);
+      if (hasProvider) quickProviderSelect.value = nextProvider;
+    }
     setText('hero-provider', d.provider ? `${d.provider}${d.model ? ` · ${d.model}` : ''}` : 'No provider');
     setText('hero-uptime', uptimeText);
     setText('hero-running', String(projects.running ?? '—'));
@@ -341,6 +353,21 @@ function renderRecentGoals(goals) {
 }
 
 async function submitGoalWithQueueFallback(payload) {
+  const host = String(window.location.hostname || '').toLowerCase();
+  const vercelHost = host.endsWith('.vercel.app') || host === 'project-za3zh.vercel.app';
+
+  if (vercelHost) {
+    return await apiFetch('/api/queue/jobs', {
+      method: 'POST',
+      body: JSON.stringify({
+        task_type: 'goal',
+        task_data: payload,
+        priority: 'normal',
+        stream_results: true
+      })
+    });
+  }
+
   try {
     return await apiFetch('/api/goals', {
       method: 'POST',
@@ -859,22 +886,52 @@ function renderDbSystemLogs(items) {
 
 /* ══ Settings ════════════════════════════════════════════════════════ */
 function setAiProviderOptions(providers) {
-  const select = document.getElementById('settings-ai-provider');
-  if (!select) return;
-
-  const current = (select.value || '').trim().toLowerCase();
   const normalized = (Array.isArray(providers) ? providers : _DEFAULT_AI_PROVIDERS)
     .map(p => String(p || '').trim().toLowerCase())
     .filter(Boolean);
   const unique = Array.from(new Set(normalized));
   if (!unique.length) return;
 
-  select.innerHTML = unique
-    .map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`)
-    .join('');
+  ['settings-ai-provider', 'topbar-provider-select'].forEach(id => {
+    const select = document.getElementById(id);
+    if (!select) return;
 
-  if (current && unique.includes(current)) {
-    select.value = current;
+    const current = (select.value || '').trim().toLowerCase();
+    select.innerHTML = unique
+      .map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`)
+      .join('');
+
+    if (current && unique.includes(current)) {
+      select.value = current;
+    }
+  });
+}
+
+async function quickSwitchProvider(provider) {
+  const normalized = String(provider || '').trim().toLowerCase();
+  if (!normalized || _providerSwitchBusy) return;
+  if (!_CURRENT_USER || !_JWT_TOKEN) {
+    toast('Sign in first to switch providers.', 'error');
+    return;
+  }
+
+  const topbarSelect = document.getElementById('topbar-provider-select');
+  const settingsProvider = document.getElementById('settings-ai-provider');
+  const settingsModel = document.getElementById('settings-ai-model');
+
+  if (settingsProvider) settingsProvider.value = normalized;
+  if (settingsModel && !settingsModel.value.trim()) {
+    settingsModel.value = _PROVIDER_DEFAULT_MODEL[normalized] || '';
+  }
+
+  _providerSwitchBusy = true;
+  if (topbarSelect) topbarSelect.disabled = true;
+  try {
+    await saveAiRuntime();
+    if (topbarSelect) topbarSelect.value = normalized;
+  } finally {
+    _providerSwitchBusy = false;
+    if (topbarSelect) topbarSelect.disabled = !_CURRENT_USER;
   }
 }
 
@@ -960,6 +1017,12 @@ async function loadSettings() {
     setAiProviderOptions(d.supported_providers);
     if (d.provider) {
       document.getElementById('settings-ai-provider').value = String(d.provider).trim().toLowerCase();
+      const quickProviderSelect = document.getElementById('topbar-provider-select');
+      if (quickProviderSelect) {
+        const activeProvider = String(d.provider).trim().toLowerCase();
+        const hasProvider = Array.from(quickProviderSelect.options).some(opt => opt.value === activeProvider);
+        if (hasProvider) quickProviderSelect.value = activeProvider;
+      }
     }
     if (d.model) {
       document.getElementById('settings-ai-model').value = String(d.model).trim();
@@ -1507,6 +1570,8 @@ let _pgHistory = [];
   function updateAuthUI() {
     const user = _CURRENT_USER;
     const sidebarBottom = document.querySelector('.sidebar-bottom');
+    const topbarProviderSelect = document.getElementById('topbar-provider-select');
+    if (topbarProviderSelect) topbarProviderSelect.disabled = !user;
     if (!sidebarBottom) return;
     setText('topbar-user', user ? (user.username || user.email || 'Operator') : 'Guest');
 
