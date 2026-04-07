@@ -13,8 +13,18 @@ If omitted, the Purpose is used as the role.
 - skill_three
 
 ## Tools
+# ── Standard tools (no approval required) ──────────────────────────────
 - web_search
+# ── DESTRUCTIVE tools (Tier 1) — require ApprovalGate at each call ─────
+# These tools make irreversible changes (file writes, email, messaging).
+# ApprovalGate will prompt the operator before every call.
+# In headless/CI mode they are auto-rejected.
 - file_writer
+# ── HIGH-RISK tools (Tier 2) — require ApprovalGate at each call ────────
+# These tools execute code or mutate external infrastructure.
+# - code_runner
+# - terminal_tool
+# - github_tool
 
 ## Objectives
 - Clear, action-oriented objective statement
@@ -32,4 +42,5 @@ If omitted, the Purpose is used as the role.
 - https://example.com/knowledge-base
 
 ## Config
+# permission_level: 1–5  (1=STANDARD default; 3=ELEVATED for Tier-1 tools; 4=PRIVILEGED for Tier-2)
 permission_level: 1

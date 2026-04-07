@@ -655,6 +655,11 @@ class AgentFactory:
         into an :class:`~agents.agent_spec.AgentSpec` which is then handed to
         :meth:`build_from_spec`.
 
+        Security note: if the spec lists Tier 1 (DESTRUCTIVE) or Tier 2
+        (HIGH_RISK) tools, a warning is emitted at registration time.
+        Each individual tool call will still be gated by the enforcement
+        layer (``ApprovalGate``) at execution time.
+
         Parameters
         ----------
         path:
@@ -693,6 +698,7 @@ class AgentFactory:
         ```
         """
         from factory.md_agent_loader import MdAgentLoader
+        from security.approval_gate import ALL_GUARDED_TOOLS
 
         spec = MdAgentLoader.parse_file(path)
         errors = spec.validate()
@@ -700,6 +706,15 @@ class AgentFactory:
             raise ValueError(
                 f"Agent markdown spec '{path}' is invalid: {'; '.join(errors)}"
             )
+
+        guarded = [t for t in spec.tools if t in ALL_GUARDED_TOOLS]
+        if guarded:
+            logger.warning(
+                "AgentFactory.create_from_markdown: agent '%s' requests guarded "
+                "tool(s) %s — ApprovalGate will be enforced at each tool call.",
+                spec.name, guarded,
+            )
+
         logger.info(
             "AgentFactory.create_from_markdown: building agent '%s' from '%s'.",
             spec.name, path,
@@ -717,6 +732,11 @@ class AgentFactory:
         Load all ``.md`` agent definition files from *directory* and register
         the resulting agents.
 
+        Security note: if any spec lists Tier 1 (DESTRUCTIVE) or Tier 2
+        (HIGH_RISK) tools, a warning is emitted at registration time.
+        Each individual tool call will still be gated by the enforcement
+        layer (``ApprovalGate``) at execution time.
+
         Parameters
         ----------
         directory:
@@ -733,6 +753,7 @@ class AgentFactory:
             Successfully created agents.
         """
         from factory.md_agent_loader import MdAgentLoader
+        from security.approval_gate import ALL_GUARDED_TOOLS
 
         specs = MdAgentLoader.load_directory(directory, recursive=recursive)
         agents: list[BaseAgent] = []
@@ -743,6 +764,13 @@ class AgentFactory:
                     spec.name,
                 )
                 continue
+            guarded = [t for t in spec.tools if t in ALL_GUARDED_TOOLS]
+            if guarded:
+                logger.warning(
+                    "AgentFactory.load_agents_from_directory: agent '%s' requests "
+                    "guarded tool(s) %s — ApprovalGate will be enforced at each tool call.",
+                    spec.name, guarded,
+                )
             try:
                 agent = self.build_from_spec(spec)
                 agents.append(agent)

@@ -544,6 +544,18 @@ class CommandInterface:
         print(f"  Skills  : {', '.join(agent.skills[:8])}{'...' if len(agent.skills) > 8 else ''}")
         print(f"  Tools   : {', '.join(agent.tools) if agent.tools else 'none'}")
         print(f"  Level   : {agent.permission_label} ({agent.permission_level})")
+
+        # Warn about guarded tools — they require ApprovalGate at call time
+        try:
+            from security.approval_gate import ALL_GUARDED_TOOLS
+            guarded = [t for t in agent.tools if t in ALL_GUARDED_TOOLS]
+            if guarded:
+                print(f"\n  ⚠  Guarded tools detected: {', '.join(guarded)}")
+                print("     ApprovalGate will prompt before each guarded tool call.")
+                print("     In headless/CI mode these calls are auto-rejected.")
+        except ImportError:
+            pass
+
         print(f"\n  Tip: type 'run_agent {agent.name} <task>' to use this agent.")
         print()
 
@@ -575,9 +587,24 @@ class CommandInterface:
         print(f"\n  {'─'*W}")
         print(f"  LOADED {len(agents)} AGENT(S) FROM {directory}")
         print(f"  {'─'*W}")
+
+        try:
+            from security.approval_gate import ALL_GUARDED_TOOLS
+            _guarded_set: frozenset[str] = ALL_GUARDED_TOOLS
+        except ImportError:
+            _guarded_set = frozenset()
+
+        any_guarded = False
         for agent in agents:
             tools_str = ", ".join(agent.tools[:4]) + ("..." if len(agent.tools) > 4 else "")
             print(f"  • {agent.name:<30} [{agent.permission_label}]  tools: {tools_str or 'none'}")
+            if _guarded_set and any(t in _guarded_set for t in agent.tools):
+                any_guarded = True
+
+        if any_guarded:
+            print("\n  ⚠  One or more agents have guarded (DESTRUCTIVE/HIGH-RISK) tools.")
+            print("     ApprovalGate will prompt before each guarded tool call.")
+            print("     In headless/CI mode those calls are auto-rejected.")
         print()
 
     def _cmd_delete_agent(self, args: list[str]) -> None:
