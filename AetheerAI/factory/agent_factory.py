@@ -4,6 +4,7 @@ Capabilities:
 - Create agents from built-in presets
 - Save and reuse project-independent agent templates
 - Create agents from custom config dictionaries
+- Load agents from Markdown definition files
 """
 
 from __future__ import annotations
@@ -641,3 +642,117 @@ class AgentFactory:
     def list_presets() -> list[str]:
         """Return the names of all built-in agent presets."""
         return list(AGENT_PRESETS.keys())
+
+    # ------------------------------------------------------------------
+    # Markdown-driven agent creation
+    # ------------------------------------------------------------------
+
+    def create_from_markdown(self, path: str) -> BaseAgent:
+        """
+        Parse a Markdown agent definition file and create a registered agent.
+
+        The file is parsed by :class:`~factory.md_agent_loader.MdAgentLoader`
+        into an :class:`~agents.agent_spec.AgentSpec` which is then handed to
+        :meth:`build_from_spec`.
+
+        Parameters
+        ----------
+        path:
+            Path to the ``.md`` file describing the agent.
+
+        Returns
+        -------
+        BaseAgent
+            The assembled, registered agent instance.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the file does not exist.
+        ValueError
+            If the parsed spec fails validation.
+
+        Example Markdown
+        ----------------
+        ```markdown
+        # my_research_agent
+
+        ## Purpose
+        Find and summarise information from the web.
+
+        ## Skills
+        - web_research
+        - summarization
+
+        ## Tools
+        - web_search
+        - file_writer
+
+        ## Config
+        permission_level: 1
+        ```
+        """
+        from factory.md_agent_loader import MdAgentLoader
+
+        spec = MdAgentLoader.parse_file(path)
+        errors = spec.validate()
+        if errors:
+            raise ValueError(
+                f"Agent markdown spec '{path}' is invalid: {'; '.join(errors)}"
+            )
+        logger.info(
+            "AgentFactory.create_from_markdown: building agent '%s' from '%s'.",
+            spec.name, path,
+        )
+        return self.build_from_spec(spec)
+
+    def load_agents_from_directory(
+        self,
+        directory: str,
+        *,
+        recursive: bool = False,
+        skip_existing: bool = True,
+    ) -> list[BaseAgent]:
+        """
+        Load all ``.md`` agent definition files from *directory* and register
+        the resulting agents.
+
+        Parameters
+        ----------
+        directory:
+            Path to the folder containing ``.md`` agent definition files.
+        recursive:
+            If ``True``, scan sub-directories as well.
+        skip_existing:
+            If ``True`` (default), silently skip agents already in the
+            registry instead of raising an error.
+
+        Returns
+        -------
+        list[BaseAgent]
+            Successfully created agents.
+        """
+        from factory.md_agent_loader import MdAgentLoader
+
+        specs = MdAgentLoader.load_directory(directory, recursive=recursive)
+        agents: list[BaseAgent] = []
+        for spec in specs:
+            if skip_existing and self.registry.get(spec.name):
+                logger.info(
+                    "AgentFactory.load_agents_from_directory: '%s' already registered, skipping.",
+                    spec.name,
+                )
+                continue
+            try:
+                agent = self.build_from_spec(spec)
+                agents.append(agent)
+            except Exception as exc:
+                logger.warning(
+                    "AgentFactory.load_agents_from_directory: failed to build '%s': %s",
+                    spec.name, exc,
+                )
+        logger.info(
+            "AgentFactory.load_agents_from_directory: loaded %d agent(s) from '%s'.",
+            len(agents), directory,
+        )
+        return agents

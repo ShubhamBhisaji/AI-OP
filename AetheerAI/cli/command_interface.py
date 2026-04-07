@@ -78,6 +78,8 @@ Commands:
   create_agent <name> [role]       Build a smart agent — AETHEERAI researches its core
                                    function, gathers required skills, and writes a
                                    detailed system prompt automatically.
+  load_agent_md <file.md>          Load an agent from a Markdown definition file
+  load_agents_dir <directory>      Load all .md agent files from a directory
   list_agents                      List all created agents
   delete_agent <name>              Delete an agent permanently
   delete_all_agents                Delete ALL agents permanently
@@ -367,6 +369,8 @@ class CommandInterface:
 
         handlers = {
             "create_agent": self._cmd_create_agent,
+            "load_agent_md": self._cmd_load_agent_md,
+            "load_agents_dir": self._cmd_load_agents_dir,
             "list_agents": self._cmd_list_agents,
             "delete_agent": self._cmd_delete_agent,
             "delete_all_agents": self._cmd_delete_all_agents,
@@ -510,6 +514,70 @@ class CommandInterface:
             short = instr[:160].replace("\n", " ")
             print(f"  Prompt  : {short}{'...' if len(instr) > 160 else ''}")
         print(f"\n  Tip: type 'open_agent {name}' to open a dedicated window.")
+        print()
+
+    def _cmd_load_agent_md(self, args: list[str]) -> None:
+        if not args:
+            print("Usage: load_agent_md <path/to/agent.md>")
+            print("  Parses a Markdown agent definition and registers the agent.")
+            return
+        path = args[0]
+        try:
+            with Spinner(f"Loading agent from {path}"):
+                agent = self.kernel.factory.create_from_markdown(path)
+        except FileNotFoundError:
+            print(f"\n  File not found: {path}")
+            return
+        except ValueError as exc:
+            print(f"\n  Invalid agent definition: {exc}")
+            return
+        except Exception as exc:
+            print(f"\n  Error loading agent: {exc}")
+            logger.exception("load_agent_md failed for '%s'.", path)
+            return
+
+        W = 54
+        print(f"\n  {'─'*W}")
+        print(f"  AGENT LOADED: {agent.name}")
+        print(f"  {'─'*W}")
+        print(f"  Role    : {agent.role}")
+        print(f"  Skills  : {', '.join(agent.skills[:8])}{'...' if len(agent.skills) > 8 else ''}")
+        print(f"  Tools   : {', '.join(agent.tools) if agent.tools else 'none'}")
+        print(f"  Level   : {agent.permission_label} ({agent.permission_level})")
+        print(f"\n  Tip: type 'run_agent {agent.name} <task>' to use this agent.")
+        print()
+
+    def _cmd_load_agents_dir(self, args: list[str]) -> None:
+        if not args:
+            print("Usage: load_agents_dir <directory> [--recursive]")
+            print("  Loads all .md agent definition files from the directory.")
+            return
+        directory = args[0]
+        recursive = "--recursive" in args or "-r" in args
+        try:
+            with Spinner(f"Loading agents from {directory}"):
+                agents = self.kernel.factory.load_agents_from_directory(
+                    directory, recursive=recursive
+                )
+        except NotADirectoryError:
+            print(f"\n  Not a directory: {directory}")
+            return
+        except Exception as exc:
+            print(f"\n  Error: {exc}")
+            logger.exception("load_agents_dir failed for '%s'.", directory)
+            return
+
+        if not agents:
+            print(f"\n  No new agents loaded from '{directory}'.\n")
+            return
+
+        W = 54
+        print(f"\n  {'─'*W}")
+        print(f"  LOADED {len(agents)} AGENT(S) FROM {directory}")
+        print(f"  {'─'*W}")
+        for agent in agents:
+            tools_str = ", ".join(agent.tools[:4]) + ("..." if len(agent.tools) > 4 else "")
+            print(f"  • {agent.name:<30} [{agent.permission_label}]  tools: {tools_str or 'none'}")
         print()
 
     def _cmd_delete_agent(self, args: list[str]) -> None:
